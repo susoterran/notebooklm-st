@@ -7,8 +7,8 @@
 				"/c",
 				"npx",
 				"-y",
-				"@upstash/context7-mcp@0.0.78"
+				"@upstash/context7-mcp@4.0.2"
 			]
-		}	
+		}
 	}
 }
