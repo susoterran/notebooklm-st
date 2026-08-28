@@ -1,11 +1,14 @@
-"""SQLite 저장소 — 질문 템플릿과 실행 이력."""
+"""SQLite 연결과 스키마.
+
+질문 템플릿 CRUD 는 ``questions``, 실행 이력 CRUD 는
+``run_history`` 에 있다. 이 모듈은 두 모듈이 함께 쓰는 연결·스키마·
+시각 헬퍼만 담는다.
+"""
 
 import datetime
 import os
 import pathlib
 import sqlite3
-
-from notebooklm_st.core import models
 
 DB_PATH_ENV_VAR = "NOTEBOOKLM_ST_DB"
 
@@ -113,204 +116,6 @@ def connect(db_path: pathlib.Path) -> sqlite3.Connection:
     return connection
 
 
-def list_questions(
-    connection: sqlite3.Connection,
-) -> list[models.Question]:
-    """등록된 질문을 등록 순서대로 돌려준다.
-
-    Args:
-        connection: 열린 커넥션.
-
-    Returns:
-        질문 목록.
-    """
-    rows = connection.execute(
-        "SELECT id, title, text, created_at, updated_at FROM questions"
-        " ORDER BY id"
-    ).fetchall()
-    return [_to_question(row) for row in rows]
-
-
-def add_question(
-    connection: sqlite3.Connection, title: str, text: str
-) -> models.Question:
-    """새 질문을 등록한다.
-
-    제목은 질문을 목록과 답변 머리글에서 가리키는 이름이므로 중복을
-    허용하지 않는다.
-
-    Args:
-        connection: 열린 커넥션.
-        title: 목록에 보여 줄 제목. 앞뒤 공백은 지운다.
-        text: 질문 본문. 앞뒤 공백은 지운다.
-
-    Returns:
-        저장된 질문.
-
-    Raises:
-        ValueError: 제목이나 본문이 공백만으로 이루어졌거나, 같은
-            제목의 질문이 이미 있는 경우.
-    """
-    stripped_title = _require_text(title, "제목")
-    stripped_text = _require_text(text, "질문")
-    _require_unique_title(connection, stripped_title, None)
-    now = _now()
-    row = connection.execute(
-        "INSERT INTO questions (title, text, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?)"
-        " RETURNING id, title, text, created_at, updated_at",
-        (stripped_title, stripped_text, now, now),
-    ).fetchone()
-    connection.commit()
-    return _to_question(row)
-
-
-def update_question(
-    connection: sqlite3.Connection,
-    question_id: int,
-    title: str,
-    text: str,
-) -> None:
-    """질문의 제목과 본문을 바꾼다.
-
-    Args:
-        connection: 열린 커넥션.
-        question_id: 바꿀 질문의 ID.
-        title: 새 제목.
-        text: 새 본문.
-
-    Raises:
-        ValueError: 제목이나 본문이 비었거나, 다른 질문이 이미 그
-            제목을 쓰고 있거나, 그 ID 의 질문이 없는 경우.
-    """
-    stripped_title = _require_text(title, "제목")
-    stripped_text = _require_text(text, "질문")
-    _require_unique_title(connection, stripped_title, question_id)
-    cursor = connection.execute(
-        "UPDATE questions SET title = ?, text = ?, updated_at = ? WHERE id = ?",
-        (stripped_title, stripped_text, _now(), question_id),
-    )
-    connection.commit()
-    if cursor.rowcount == 0:
-        raise ValueError(f"질문 {question_id} 을 찾을 수 없습니다.")
-
-
-def delete_question(connection: sqlite3.Connection, question_id: int) -> None:
-    """질문을 지운다. 이미 없으면 조용히 넘어간다.
-
-    Args:
-        connection: 열린 커넥션.
-        question_id: 지울 질문의 ID.
-    """
-    connection.execute("DELETE FROM questions WHERE id = ?", (question_id,))
-    connection.commit()
-
-
-def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
-    """실행 결과를 이력으로 저장한다.
-
-    질문 제목과 본문을 ``questions`` 테이블 외래키가 아니라 문자열로
-    복사해 둔다. 나중에 질문을 고치거나 지워도 과거 이력이 그대로
-    남는다.
-
-    Args:
-        connection: 열린 커넥션.
-        result: 저장할 실행 결과.
-
-    Returns:
-        저장된 실행의 ID.
-    """
-    row = connection.execute(
-        "INSERT INTO runs (url, video_id, created_at)"
-        " VALUES (?, ?, ?)"
-        " RETURNING id",
-        (result.url, result.video_id, _now()),
-    ).fetchone()
-    run_id = int(row["id"])
-    connection.executemany(
-        "INSERT INTO answers"
-        " (run_id, question_title, question_text, answer, citations,"
-        " error)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            (
-                run_id,
-                item.question_title,
-                item.question_text,
-                item.answer,
-                models.citations_to_json(item.citations),
-                item.error,
-            )
-            for item in result.items
-        ],
-    )
-    connection.commit()
-    return run_id
-
-
-def list_runs(
-    connection: sqlite3.Connection, limit: int = 50
-) -> list[models.RunSummary]:
-    """최근 실행을 새 것부터 돌려준다.
-
-    Args:
-        connection: 열린 커넥션.
-        limit: 가져올 최대 개수.
-
-    Returns:
-        실행 요약 목록.
-    """
-    rows = connection.execute(
-        "SELECT r.id, r.url, r.video_id, r.created_at,"
-        " COUNT(a.id) AS answer_count"
-        " FROM runs AS r"
-        " LEFT JOIN answers AS a ON a.run_id = r.id"
-        " GROUP BY r.id"
-        " ORDER BY r.id DESC"
-        " LIMIT ?",
-        (limit,),
-    ).fetchall()
-    return [
-        models.RunSummary(
-            id=int(row["id"]),
-            url=row["url"],
-            video_id=row["video_id"],
-            created_at=row["created_at"],
-            answer_count=int(row["answer_count"]),
-        )
-        for row in rows
-    ]
-
-
-def load_run_items(
-    connection: sqlite3.Connection, run_id: int
-) -> list[models.AnswerItem]:
-    """한 실행에 속한 답변들을 저장 순서대로 돌려준다.
-
-    Args:
-        connection: 열린 커넥션.
-        run_id: 실행 ID.
-
-    Returns:
-        답변 목록. 그런 실행이 없으면 빈 목록.
-    """
-    rows = connection.execute(
-        "SELECT question_title, question_text, answer, citations, error"
-        " FROM answers WHERE run_id = ? ORDER BY id",
-        (run_id,),
-    ).fetchall()
-    return [
-        models.AnswerItem(
-            question_title=row["question_title"],
-            question_text=row["question_text"],
-            answer=row["answer"],
-            citations=models.citations_from_json(row["citations"]),
-            error=row["error"],
-        )
-        for row in rows
-    ]
-
-
 def _verify_schema(
     connection: sqlite3.Connection, db_path: pathlib.Path
 ) -> None:
@@ -341,62 +146,10 @@ def _verify_schema(
             )
 
 
-def _require_unique_title(
-    connection: sqlite3.Connection, title: str, question_id: int | None
-) -> None:
-    """같은 제목의 다른 질문이 있으면 예외를 던진다.
-
-    ``id IS NOT ?`` 는 SQLite 의 NULL 안전 비교라, ``question_id`` 가
-    ``None`` 이면 모든 행과 견주고 값이 있으면 그 행만 뺀다. 수정할 때
-    자기 제목을 그대로 두는 것을 막지 않기 위해서다.
-
-    Args:
-        connection: 열린 커넥션.
-        title: 이미 공백을 지운 제목.
-        question_id: 수정 중인 질문의 ID. 새로 등록할 때는 ``None``.
-
-    Raises:
-        ValueError: 같은 제목의 다른 질문이 이미 있는 경우.
-    """
-    row = connection.execute(
-        "SELECT id FROM questions WHERE title = ? AND id IS NOT ? LIMIT 1",
-        (title, question_id),
-    ).fetchone()
-    if row is not None:
-        raise ValueError(f"'{title}' 제목의 질문이 이미 있습니다.")
-
-
-def _require_text(text: str, subject: str) -> str:
-    """공백을 지운 값을 돌려주고, 비면 예외를 던진다.
-
-    Args:
-        text: 검사할 문자열.
-        subject: 오류 문구에 넣을 항목 이름. 조사 "이"를 붙이므로
-            받침이 있는 한글 명사여야 한다(예: "제목", "질문").
+def now() -> str:
+    """현재 로컬 시각을 초 단위 ISO 문자열로 돌려준다.
 
     Returns:
-        앞뒤 공백을 지운 문자열.
-
-    Raises:
-        ValueError: 공백을 지우면 빈 문자열이 되는 경우.
+        ``2026-08-28T10:00:00`` 형식의 문자열.
     """
-    stripped = text.strip()
-    if not stripped:
-        raise ValueError(f"{subject}이 비어 있습니다.")
-    return stripped
-
-
-def _now() -> str:
-    """현재 로컬 시각을 초 단위 ISO 문자열로 돌려준다."""
     return datetime.datetime.now().isoformat(timespec="seconds")
-
-
-def _to_question(row: sqlite3.Row) -> models.Question:
-    """DB 행을 ``Question`` 으로 바꾼다."""
-    return models.Question(
-        id=int(row["id"]),
-        title=row["title"],
-        text=row["text"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )

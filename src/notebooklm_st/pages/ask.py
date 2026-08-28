@@ -4,7 +4,7 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.core import youtube
-from notebooklm_st.services import runner, store
+from notebooklm_st.services import questions, runner, store
 
 _URL_KEY = "ask_url"
 _SELECTED_KEY = "ask_selected"
@@ -20,7 +20,7 @@ def render() -> None:
     st.title("영상 질의")
     connection = session.get_connection()
     registry = session.get_registry()
-    questions = store.list_questions(connection)
+    question_list = questions.list_questions(connection)
 
     url = st.text_input(
         "YouTube 영상 URL",
@@ -31,13 +31,13 @@ def render() -> None:
     if url and not url_ok:
         st.error("단일 YouTube 영상 URL 이 아닙니다.")
 
-    if not questions:
+    if not question_list:
         st.info("질문 관리 화면에서 질문을 먼저 등록하세요.")
         return
 
     selected = st.multiselect(
         "질문 선택",
-        options=questions,
+        options=question_list,
         format_func=lambda question: question.title,
         key=_SELECTED_KEY,
     )

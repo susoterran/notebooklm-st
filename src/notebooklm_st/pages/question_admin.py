@@ -6,7 +6,7 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.core import models
-from notebooklm_st.services import store
+from notebooklm_st.services import questions
 
 _NEW_TITLE_KEY = "admin_new_title"
 _NEW_TEXT_KEY = "admin_new_text"
@@ -37,14 +37,14 @@ def render() -> None:
     if st.button("등록", key="admin_add"):
         _add(connection, title, text)
 
-    for question in store.list_questions(connection):
+    for question in questions.list_questions(connection):
         _render_row(connection, question)
 
 
 def _add(connection: sqlite3.Connection, title: str, text: str) -> None:
     """새 질문을 저장하고 화면을 다시 그린다."""
     try:
-        store.add_question(connection, title, text)
+        questions.add_question(connection, title, text)
     except ValueError as error:
         st.error(str(error))
         return
@@ -76,7 +76,7 @@ def _render_row(
         if left.button("수정", key=f"admin_update_{question.id}"):
             _update(connection, question.id, edited_title, edited_text)
         if right.button("삭제", key=f"admin_delete_{question.id}"):
-            store.delete_question(connection, question.id)
+            questions.delete_question(connection, question.id)
             st.rerun()
 
 
@@ -88,7 +88,7 @@ def _update(
 ) -> None:
     """질문의 제목과 본문을 고치고 화면을 다시 그린다."""
     try:
-        store.update_question(connection, question_id, title, text)
+        questions.update_question(connection, question_id, title, text)
     except ValueError as error:
         st.error(str(error))
         return

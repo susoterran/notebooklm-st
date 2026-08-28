@@ -9,7 +9,7 @@ from notebooklm import exceptions
 from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import models
-from notebooklm_st.services import runner, runs, store
+from notebooklm_st.services import run_history, runner, runs, store
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -187,7 +187,7 @@ def test_save_failure_marks_the_run_as_failed(db_path, monkeypatch) -> None:
         """항상 실패하는 가짜 저장."""
         raise sqlite3.OperationalError("disk is full")
 
-    monkeypatch.setattr(store, "save_run", broken_save)
+    monkeypatch.setattr(run_history, "save_run", broken_save)
 
     started = runner.start_run(
         registry,

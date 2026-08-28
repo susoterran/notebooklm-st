@@ -3,7 +3,7 @@
 from streamlit.testing import v1
 
 from notebooklm_st.core import models
-from notebooklm_st.services import store
+from notebooklm_st.services import run_history
 
 
 def script():
@@ -43,7 +43,7 @@ def test_empty_history_shows_notice(app_db) -> None:
 
 def test_saved_run_is_selectable(app_db) -> None:
     """저장된 실행을 선택 목록에서 고를 수 있다."""
-    store.save_run(app_db, make_result())
+    run_history.save_run(app_db, make_result())
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
     assert len(app.selectbox) == 1
@@ -52,7 +52,7 @@ def test_saved_run_is_selectable(app_db) -> None:
 
 def test_selected_run_shows_its_answers(app_db) -> None:
     """선택한 실행의 답변들을 보여 준다."""
-    store.save_run(app_db, make_result())
+    run_history.save_run(app_db, make_result())
     app = v1.AppTest.from_function(script).run()
     headers = [element.value for element in app.subheader]
     assert headers == ["핵심 주장"]

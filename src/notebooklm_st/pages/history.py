@@ -5,7 +5,7 @@ import streamlit as st
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
 from notebooklm_st.core import models
-from notebooklm_st.services import store
+from notebooklm_st.services import run_history
 
 _SELECTED_KEY = "history_selected"
 
@@ -14,7 +14,7 @@ def render() -> None:
     """최근 실행을 고르고 그 답변들을 보여 준다."""
     st.title("이력")
     connection = session.get_connection()
-    runs = store.list_runs(connection)
+    runs = run_history.list_runs(connection)
     if not runs:
         st.info("아직 저장된 실행이 없습니다.")
         return
@@ -28,7 +28,9 @@ def render() -> None:
     if selected is None:
         return
     st.caption(selected.url)
-    answer_view.render_items(store.load_run_items(connection, selected.id))
+    answer_view.render_items(
+        run_history.load_run_items(connection, selected.id)
+    )
 
 
 def _format_run(run: models.RunSummary) -> str:

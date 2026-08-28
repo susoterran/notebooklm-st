@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine, Sequence
 from typing import Any
 
 from notebooklm_st.core import errors, models, youtube
-from notebooklm_st.services import nlm, runs, store
+from notebooklm_st.services import nlm, run_history, runs, store
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ def _work(
     try:
         connection = store.connect(db_path)
         try:
-            store.save_run(connection, result)
+            run_history.save_run(connection, result)
         finally:
             connection.close()
     except Exception as error:
