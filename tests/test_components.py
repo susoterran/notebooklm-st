@@ -13,6 +13,7 @@ def test_answer_view_renders_success_and_failure() -> None:
         answer_view.render_items(
             [
                 models.AnswerItem(
+                    question_title="핵심 주장",
                     question_text="핵심 주장은?",
                     answer="세 가지다.",
                     citations=(
@@ -21,6 +22,7 @@ def test_answer_view_renders_success_and_failure() -> None:
                     error=None,
                 ),
                 models.AnswerItem(
+                    question_title="결론",
                     question_text="결론은?",
                     answer=None,
                     citations=(),
@@ -107,6 +109,7 @@ def test_render_run_shows_answers_when_done() -> None:
                     video_id="dQw4w9WgXcQ",
                     items=(
                         models.AnswerItem(
+                            question_title="핵심 주장",
                             question_text="핵심 주장은?",
                             answer="세 가지다.",
                             citations=(

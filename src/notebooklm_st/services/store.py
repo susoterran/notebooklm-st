@@ -28,13 +28,14 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE TABLE IF NOT EXISTS answers (
-    id            INTEGER PRIMARY KEY,
-    run_id        INTEGER NOT NULL REFERENCES runs(id)
-                  ON DELETE CASCADE,
-    question_text TEXT NOT NULL,
-    answer        TEXT,
-    citations     TEXT,
-    error         TEXT
+    id             INTEGER PRIMARY KEY,
+    run_id         INTEGER NOT NULL REFERENCES runs(id)
+                   ON DELETE CASCADE,
+    question_title TEXT NOT NULL,
+    question_text  TEXT NOT NULL,
+    answer         TEXT,
+    citations      TEXT,
+    error          TEXT
 );
 """
 
@@ -167,8 +168,9 @@ def delete_question(connection: sqlite3.Connection, question_id: int) -> None:
 def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
     """실행 결과를 이력으로 저장한다.
 
-    질문 본문을 ``questions`` 테이블 외래키가 아니라 문자열로 복사해
-    둔다. 나중에 질문을 고치거나 지워도 과거 이력이 그대로 남는다.
+    질문 제목과 본문을 ``questions`` 테이블 외래키가 아니라 문자열로
+    복사해 둔다. 나중에 질문을 고치거나 지워도 과거 이력이 그대로
+    남는다.
 
     Args:
         connection: 열린 커넥션.
@@ -186,11 +188,13 @@ def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
     run_id = int(row["id"])
     connection.executemany(
         "INSERT INTO answers"
-        " (run_id, question_text, answer, citations, error)"
-        " VALUES (?, ?, ?, ?, ?)",
+        " (run_id, question_title, question_text, answer, citations,"
+        " error)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
         [
             (
                 run_id,
+                item.question_title,
                 item.question_text,
                 item.answer,
                 models.citations_to_json(item.citations),
@@ -250,12 +254,13 @@ def load_run_items(
         답변 목록. 그런 실행이 없으면 빈 목록.
     """
     rows = connection.execute(
-        "SELECT question_text, answer, citations, error FROM answers"
-        " WHERE run_id = ? ORDER BY id",
+        "SELECT question_title, question_text, answer, citations, error"
+        " FROM answers WHERE run_id = ? ORDER BY id",
         (run_id,),
     ).fetchall()
     return [
         models.AnswerItem(
+            question_title=row["question_title"],
             question_text=row["question_text"],
             answer=row["answer"],
             citations=models.citations_from_json(row["citations"]),

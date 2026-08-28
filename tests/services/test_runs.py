@@ -11,6 +11,7 @@ def make_result() -> models.RunResult:
         video_id="dQw4w9WgXcQ",
         items=(
             models.AnswerItem(
+                question_title="핵심 주장",
                 question_text="핵심 주장은?",
                 answer="세 가지다.",
                 citations=(),

@@ -31,8 +31,12 @@ class AnswerItem:
 
     ``answer`` 와 ``error`` 는 배타적이다. 성공한 항목은 ``error`` 가
     ``None`` 이고, 실패한 항목은 ``answer`` 가 ``None`` 이다.
+
+    ``question_title`` 과 ``question_text`` 를 둘 다 복사해 둔다.
+    화면은 제목을 머리글로 쓰고 원문은 접어서 보여준다.
     """
 
+    question_title: str
     question_text: str
     answer: str | None
     citations: tuple[Citation, ...]

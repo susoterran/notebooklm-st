@@ -10,6 +10,7 @@ from notebooklm_st.core import models
 def test_answer_item_succeeded_when_no_error():
     """오류가 없는 답변은 성공으로 판정한다."""
     item = models.AnswerItem(
+        question_title="핵심 주장",
         question_text="핵심 주장은?",
         answer="세 가지다.",
         citations=(),
@@ -21,6 +22,7 @@ def test_answer_item_succeeded_when_no_error():
 def test_answer_item_not_succeeded_when_error_present():
     """오류가 있으면 성공이 아니다."""
     item = models.AnswerItem(
+        question_title="핵심 주장",
         question_text="핵심 주장은?",
         answer=None,
         citations=(),

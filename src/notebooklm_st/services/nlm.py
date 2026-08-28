@@ -246,6 +246,7 @@ async def _ask_one(
     except exceptions.ChatError as error:
         return (
             models.AnswerItem(
+                question_title=question.title,
                 question_text=question.text,
                 answer=None,
                 citations=(),
@@ -256,6 +257,7 @@ async def _ask_one(
     citations = _to_citations(result.references)
     return (
         models.AnswerItem(
+            question_title=question.title,
             question_text=question.text,
             answer=result.answer,
             citations=citations,

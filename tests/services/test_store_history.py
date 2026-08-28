@@ -26,6 +26,7 @@ def make_result(
         video_id="dQw4w9WgXcQ",
         items=(
             models.AnswerItem(
+                question_title="핵심 주장",
                 question_text="핵심 주장은?",
                 answer="세 가지다.",
                 citations=(
@@ -34,6 +35,7 @@ def make_result(
                 error=None,
             ),
             models.AnswerItem(
+                question_title="결론",
                 question_text="결론은?",
                 answer=None,
                 citations=(),
@@ -41,6 +43,14 @@ def make_result(
             ),
         ),
     )
+
+
+def test_load_run_items_round_trips_question_title(connection) -> None:
+    """답변에 저장한 질문 제목이 그대로 돌아온다."""
+    run_id = store.save_run(connection, make_result())
+    items = store.load_run_items(connection, run_id)
+    titles = [item.question_title for item in items]
+    assert titles == ["핵심 주장", "결론"]
 
 
 def test_save_run_returns_run_id(connection) -> None:

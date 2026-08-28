@@ -60,6 +60,7 @@ def test_dashboard_shows_answers_of_a_finished_run(app_db) -> None:
                     video_id="dQw4w9WgXcQ",
                     items=(
                         models.AnswerItem(
+                            question_title="핵심 주장",
                             question_text="핵심 주장은?",
                             answer="세 가지다.",
                             citations=(),
@@ -111,6 +112,7 @@ def test_real_background_run_reaches_the_dashboard(app_db) -> None:
                 video_id="dQw4w9WgXcQ",
                 items=(
                     models.AnswerItem(
+                        question_title="핵심 주장",
                         question_text="핵심 주장은?",
                         answer="세 가지다.",
                         citations=(),

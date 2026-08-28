@@ -46,6 +46,7 @@ def main() -> int:
 
     for item in result.items:
         print("=" * 60)
+        print("제목:", item.question_title)
         print("질문:", item.question_text)
         print("오류:", item.error)
         print("답변:", item.answer)

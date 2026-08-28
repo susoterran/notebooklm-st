@@ -58,6 +58,7 @@ def test_successful_run_saves_history_and_marks_done(db_path) -> None:
             video_id="dQw4w9WgXcQ",
             items=(
                 models.AnswerItem(
+                    question_title=questions[0].title,
                     question_text=questions[0].text,
                     answer="세 가지다.",
                     citations=(),
