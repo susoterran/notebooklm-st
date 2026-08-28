@@ -1,6 +1,5 @@
 """질문 저장소 테스트."""
 
-
 import pytest
 
 from notebooklm_st.services import questions, store
