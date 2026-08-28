@@ -136,8 +136,8 @@ def add_question(
 ) -> models.Question:
     """새 질문을 등록한다.
 
-    제목 중복은 검사하지 않는다. 같은 제목의 질문을 여러 개 두는 것을
-    허용한다.
+    제목은 질문을 목록과 답변 머리글에서 가리키는 이름이므로 중복을
+    허용하지 않는다.
 
     Args:
         connection: 열린 커넥션.
@@ -148,10 +148,12 @@ def add_question(
         저장된 질문.
 
     Raises:
-        ValueError: 제목이나 본문이 공백만으로 이루어진 경우.
+        ValueError: 제목이나 본문이 공백만으로 이루어졌거나, 같은
+            제목의 질문이 이미 있는 경우.
     """
     stripped_title = _require_text(title, "제목")
     stripped_text = _require_text(text, "질문")
+    _require_unique_title(connection, stripped_title, None)
     now = _now()
     row = connection.execute(
         "INSERT INTO questions (title, text, created_at, updated_at)"
@@ -178,10 +180,12 @@ def update_question(
         text: 새 본문.
 
     Raises:
-        ValueError: 제목이나 본문이 비었거나 그 ID 의 질문이 없는 경우.
+        ValueError: 제목이나 본문이 비었거나, 다른 질문이 이미 그
+            제목을 쓰고 있거나, 그 ID 의 질문이 없는 경우.
     """
     stripped_title = _require_text(title, "제목")
     stripped_text = _require_text(text, "질문")
+    _require_unique_title(connection, stripped_title, question_id)
     cursor = connection.execute(
         "UPDATE questions SET title = ?, text = ?, updated_at = ? WHERE id = ?",
         (stripped_title, stripped_text, _now(), question_id),
@@ -335,6 +339,31 @@ def _verify_schema(
                 f"(없는 컬럼: {sorted(missing)}). 이 파일을 지우고"
                 " 다시 실행하세요."
             )
+
+
+def _require_unique_title(
+    connection: sqlite3.Connection, title: str, question_id: int | None
+) -> None:
+    """같은 제목의 다른 질문이 있으면 예외를 던진다.
+
+    ``id IS NOT ?`` 는 SQLite 의 NULL 안전 비교라, ``question_id`` 가
+    ``None`` 이면 모든 행과 견주고 값이 있으면 그 행만 뺀다. 수정할 때
+    자기 제목을 그대로 두는 것을 막지 않기 위해서다.
+
+    Args:
+        connection: 열린 커넥션.
+        title: 이미 공백을 지운 제목.
+        question_id: 수정 중인 질문의 ID. 새로 등록할 때는 ``None``.
+
+    Raises:
+        ValueError: 같은 제목의 다른 질문이 이미 있는 경우.
+    """
+    row = connection.execute(
+        "SELECT id FROM questions WHERE title = ? AND id IS NOT ? LIMIT 1",
+        (title, question_id),
+    ).fetchone()
+    if row is not None:
+        raise ValueError(f"'{title}' 제목의 질문이 이미 있습니다.")
 
 
 def _require_text(text: str, subject: str) -> str:

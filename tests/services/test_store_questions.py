@@ -176,3 +176,33 @@ def test_connect_accepts_a_fresh_database(tmp_path) -> None:
     db_path = tmp_path / "fresh.db"
     fresh_connection = store.connect(db_path)
     fresh_connection.close()
+
+
+def test_add_question_rejects_duplicate_title(connection) -> None:
+    """같은 제목의 질문을 두 번 등록할 수 없다."""
+    store.add_question(connection, "핵심 주장", "첫째 본문")
+    with pytest.raises(ValueError):
+        store.add_question(connection, "핵심 주장", "둘째 본문")
+
+
+def test_add_question_compares_titles_after_stripping(connection) -> None:
+    """앞뒤 공백만 다른 제목도 중복으로 본다."""
+    store.add_question(connection, "핵심 주장", "첫째 본문")
+    with pytest.raises(ValueError):
+        store.add_question(connection, "  핵심 주장  ", "둘째 본문")
+
+
+def test_update_question_rejects_another_questions_title(connection) -> None:
+    """다른 질문이 이미 쓰는 제목으로는 바꿀 수 없다."""
+    store.add_question(connection, "첫째 제목", "첫째 본문")
+    second = store.add_question(connection, "둘째 제목", "둘째 본문")
+    with pytest.raises(ValueError):
+        store.update_question(connection, second.id, "첫째 제목", "둘째 본문")
+
+
+def test_update_question_allows_keeping_its_own_title(connection) -> None:
+    """자기 제목을 그대로 두고 본문만 고칠 수 있다."""
+    saved = store.add_question(connection, "그대로 제목", "옛 본문")
+    store.update_question(connection, saved.id, "그대로 제목", "새 본문")
+    changed = store.list_questions(connection)[0]
+    assert (changed.title, changed.text) == ("그대로 제목", "새 본문")

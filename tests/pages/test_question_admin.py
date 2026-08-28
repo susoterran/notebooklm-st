@@ -64,13 +64,18 @@ def test_blank_question_is_rejected(app_db) -> None:
     assert store.list_questions(app_db) == []
 
 
-def test_duplicate_question_title_does_not_crash(app_db) -> None:
-    """같은 제목의 질문이 둘이어도 관리 화면이 죽지 않는다."""
+def test_duplicate_title_is_rejected(app_db) -> None:
+    """이미 있는 제목으로 등록하면 오류로 표시되고 저장되지 않는다."""
     store.add_question(app_db, "같은 제목", "첫째 본문")
-    store.add_question(app_db, "같은 제목", "둘째 본문")
-    app = v1.AppTest.from_function(script).run()
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_input[0].set_value("같은 제목").run()
+    app.text_area[0].set_value("둘째 본문").run()
+    app.button[0].click().run()
     assert not app.exception
-    assert len(app.expander) == 2
+    assert len(app.error) == 1
+    texts = [question.text for question in store.list_questions(app_db)]
+    assert texts == ["첫째 본문"]
 
 
 def test_updating_a_question_saves_title_and_text_without_swap(
