@@ -1,26 +1,25 @@
-"""질의 화면."""
-
-import asyncio
-import sqlite3
-from collections.abc import Sequence
+"""질의 화면 — 백그라운드 실행을 시작하는 트리거."""
 
 import streamlit as st
-from notebooklm import exceptions
 
 from notebooklm_st import session
-from notebooklm_st.components import answer_view, run_progress
-from notebooklm_st.core import errors, models, youtube
-from notebooklm_st.services import nlm, store
+from notebooklm_st.core import youtube
+from notebooklm_st.services import runner, store
 
 _URL_KEY = "ask_url"
 _SELECTED_KEY = "ask_selected"
-_RESULT_KEY = "ask_result"
 
 
 def render() -> None:
-    """URL 입력, 질문 선택, 실행, 답변 표시를 그린다."""
+    """URL 입력, 질문 선택, 실행 시작을 그린다.
+
+    실행은 백그라운드 스레드가 맡는다. 이 화면은 시작만 하고 즉시
+    반환하므로 페이지를 이동해도 작업이 중단되지 않는다. 진행 상황과
+    답변은 실행 현황 화면에서 본다.
+    """
     st.title("영상 질의")
     connection = session.get_connection()
+    registry = session.get_registry()
     questions = store.list_questions(connection)
 
     url = st.text_input(
@@ -43,40 +42,16 @@ def render() -> None:
         key=_SELECTED_KEY,
     )
 
+    busy = registry.running_count() > 0
+    if busy:
+        st.info(
+            "이미 실행 중인 작업이 있습니다. 실행 현황 화면에서 확인하세요."
+        )
+
     if st.button(
         "실행",
         key="ask_run",
-        disabled=not (url_ok and selected),
+        disabled=busy or not (url_ok and selected),
     ):
-        _execute(connection, url, selected)
-
-    result = st.session_state.get(_RESULT_KEY)
-    if result is not None:
-        st.caption(result.url)
-        answer_view.render_items(result.items)
-
-
-def _execute(
-    connection: sqlite3.Connection,
-    url: str,
-    questions: Sequence[models.Question],
-) -> None:
-    """파이프라인을 돌리고 결과를 이력과 세션에 남긴다.
-
-    실행 중에는 이 탭이 묶인다. 이벤트 루프가 스크립트와 같은
-    스레드에서 돌기 때문에 진행 문구는 그대로 화면에 전달된다.
-    """
-    try:
-        with run_progress.progress_status("실행 준비 중") as report:
-            result = asyncio.run(nlm.run_pipeline(url, questions, report))
-    except exceptions.NotebookLMError as error:
-        st.session_state.pop(_RESULT_KEY, None)
-        message = errors.to_message(error)
-        if message.level == "info":
-            st.info(message.text)
-        else:
-            st.error(message.text)
-        return
-
-    store.save_run(connection, result)
-    st.session_state[_RESULT_KEY] = result
+        runner.start_run(registry, url, selected, store.default_db_path())
+        st.success("실행을 시작했습니다. 실행 현황 화면에서 확인하세요.")

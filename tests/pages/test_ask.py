@@ -1,10 +1,8 @@
 """질의 화면 테스트."""
 
-from notebooklm import exceptions
 from streamlit.testing import v1
 
-from notebooklm_st.core import models
-from notebooklm_st.services import nlm, store
+from notebooklm_st.services import runner, store
 
 
 def test_ask_asks_user_to_register_questions_first(app_db) -> None:
@@ -65,27 +63,17 @@ def test_ask_run_button_is_disabled_without_input(app_db) -> None:
     assert app.button[0].disabled is True
 
 
-def test_execute_saves_history_and_shows_answers(app_db, monkeypatch) -> None:
-    """실행에 성공하면 답변을 보여 주고 이력에 남긴다."""
+def test_run_button_starts_a_background_run(app_db, monkeypatch) -> None:
+    """실행 버튼을 누르면 백그라운드 실행을 시작한다."""
     store.add_question(app_db, "핵심 주장은?")
+    started: list[str] = []
 
-    async def fake_pipeline(url, questions, on_progress, **kwargs):
-        """진행 문구를 한 번 보고하고 성공 결과를 돌려주는 가짜."""
-        on_progress("진행 중")
-        return models.RunResult(
-            url=url,
-            video_id="dQw4w9WgXcQ",
-            items=(
-                models.AnswerItem(
-                    question_text=questions[0].text,
-                    answer="세 가지다.",
-                    citations=(),
-                    error=None,
-                ),
-            ),
-        )
+    def fake_start_run(registry, url, questions, db_path, **kwargs):
+        """스레드를 띄우지 않고 호출만 기록하는 가짜."""
+        started.append(url)
+        return registry.create(url, "dQw4w9WgXcQ", ("핵심 주장은?",))
 
-    monkeypatch.setattr(nlm, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(runner, "start_run", fake_start_run)
 
     def script():
         """AppTest 진입점 — 질의 화면을 렌더한다."""
@@ -102,35 +90,25 @@ def test_execute_saves_history_and_shows_answers(app_db, monkeypatch) -> None:
     app.button[0].click().run()
 
     assert not app.exception
-    assert len(store.list_runs(app_db)) == 1
+    assert started == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    assert len(app.success) == 1
 
 
-def test_execute_shows_info_for_a_video_without_captions(
-    app_db, monkeypatch
-) -> None:
-    """자막 없는 영상은 오류가 아니라 안내로 표시하고 이력에 남기지 않는다."""
+def test_run_button_is_locked_while_another_run_is_active(app_db) -> None:
+    """이미 실행 중이면 버튼을 잠그고 안내를 보여준다."""
     store.add_question(app_db, "핵심 주장은?")
 
-    async def fake_pipeline(url, questions, on_progress, **kwargs):
-        """항상 자막 없음 예외를 던지는 가짜."""
-        raise exceptions.SourceAddError(url)
-
-    monkeypatch.setattr(nlm, "run_pipeline", fake_pipeline)
-
     def script():
-        """AppTest 진입점 — 질의 화면을 렌더한다."""
+        """AppTest 진입점 — 실행 중인 상태를 만들고 질의 화면을 그린다."""
+        from notebooklm_st import session
         from notebooklm_st.pages import ask
 
+        registry = session.get_registry()
+        if not registry.list_all():
+            registry.create("https://youtu.be/x", "x", ("질문",))
         ask.render()
 
-    app = v1.AppTest.from_function(script)
-    app.run()
-    app.text_input[0].set_value(
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    ).run()
-    app.multiselect[0].set_value(store.list_questions(app_db)).run()
-    app.button[0].click().run()
-
+    app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert len(app.info) == 1
-    assert store.list_runs(app_db) == []
+    assert app.button[0].disabled is True
+    assert any("실행 중" in element.value for element in app.info)
