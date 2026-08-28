@@ -34,6 +34,9 @@ def extract_video_id(url: str) -> str | None:
     except ValueError:
         return None
 
+    if parsed.scheme not in ("http", "https"):
+        return None
+
     hostname = (parsed.hostname or "").lower()
     if hostname not in _ALLOWED_HOSTS:
         return None

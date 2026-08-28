@@ -73,6 +73,7 @@ class NotebooksLike(Protocol):
 class SourcesLike(Protocol):
     """소스 API."""
 
+    # 반환된 Source 를 파이프라인이 쓰지 않으므로 모양을 고정하지 않는다.
     async def add_url(
         self,
         notebook_id: str,

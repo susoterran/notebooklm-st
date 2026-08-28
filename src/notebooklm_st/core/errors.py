@@ -25,8 +25,10 @@ def to_message(error: exceptions.NotebookLMError) -> UserMessage:
     자막이 없는 영상은 도구의 오류가 아니라 그 영상의 성질이므로
     ``info`` 수준으로 돌려준다. 나머지는 ``error`` 다.
 
-    검사 순서가 중요하다. ``SourceTimeoutError`` 는 ``SourceError`` 의
-    하위 클래스라서 뒤에 두면 "자막 없음" 으로 잘못 잡힌다.
+    검사 순서는 좁은 예외부터 둔다. 지금은 분기 2가
+    ``SourceAddError | SourceProcessingError`` 를 구체적으로 검사하므로
+    ``SourceTimeoutError`` 가 잘못 걸리지 않지만, 나중에 넓은
+    ``SourceError`` 검사를 넣는다면 반드시 그 뒤에 와야 한다.
 
     Args:
         error: notebooklm-py 가 올린 예외.

@@ -42,6 +42,7 @@ def test_extract_video_id_accepts_single_video_urls(url: str) -> None:
         "https://www.youtube.com/watch",
         "https://www.youtube.com/@channel",
         "https://youtu.be/",
+        "ftp://www.youtube.com/watch?v=dQw4w9WgXcQ",
     ],
 )
 def test_extract_video_id_rejects_other_urls(url: str) -> None:

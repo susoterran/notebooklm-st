@@ -52,6 +52,7 @@ def render() -> None:
 
     result = st.session_state.get(_RESULT_KEY)
     if result is not None:
+        st.caption(result.url)
         answer_view.render_items(result.items)
 
 
@@ -69,6 +70,7 @@ def _execute(
         with run_progress.progress_status("실행 준비 중") as report:
             result = asyncio.run(nlm.run_pipeline(url, questions, report))
     except exceptions.NotebookLMError as error:
+        st.session_state.pop(_RESULT_KEY, None)
         message = errors.to_message(error)
         if message.level == "info":
             st.info(message.text)
