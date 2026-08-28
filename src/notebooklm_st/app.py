@@ -3,8 +3,10 @@
 실행:
     uv run streamlit run src/notebooklm_st/app.py
 
-``.streamlit/config.toml`` 이 서버를 ``127.0.0.1`` 에만 바인딩하므로
-같은 네트워크의 다른 기기에서는 접속할 수 없다.
+``.streamlit/config.toml`` 이 서버를 ``127.0.0.1:8611`` 에만
+바인딩하므로 같은 네트워크의 다른 기기에서는 접속할 수 없다.
+기본 포트 8501 을 쓰지 않는 것은 다른 Streamlit 프로젝트와
+충돌하지 않게 하기 위해서다.
 """
 
 import streamlit as st
