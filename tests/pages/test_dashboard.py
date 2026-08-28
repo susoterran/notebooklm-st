@@ -73,7 +73,7 @@ def test_dashboard_shows_answers_of_a_finished_run(app_db) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert [element.value for element in app.subheader] == ["핵심 주장은?"]
+    assert [element.value for element in app.subheader] == ["핵심 주장"]
     rendered = " ".join(element.value for element in app.markdown)
     assert "세 가지다." in rendered
 
@@ -144,6 +144,6 @@ def test_real_background_run_reaches_the_dashboard(app_db) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert [element.value for element in app.subheader] == ["핵심 주장은?"]
+    assert [element.value for element in app.subheader] == ["핵심 주장"]
     rendered = " ".join(element.value for element in app.markdown)
     assert "세 가지다." in rendered

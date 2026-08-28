@@ -55,7 +55,7 @@ def test_selected_run_shows_its_answers(app_db) -> None:
     store.save_run(app_db, make_result())
     app = v1.AppTest.from_function(script).run()
     headers = [element.value for element in app.subheader]
-    assert headers == ["핵심 주장은?"]
+    assert headers == ["핵심 주장"]
     assert not app.exception
     rendered = " ".join(element.value for element in app.markdown)
     assert "세 가지다." in rendered

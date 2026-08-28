@@ -34,7 +34,7 @@ def test_answer_view_renders_success_and_failure() -> None:
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
     headers = [element.value for element in app.subheader]
-    assert headers == ["핵심 주장은?", "결론은?"]
+    assert headers == ["핵심 주장", "결론"]
     assert len(app.error) == 1
     rendered = " ".join(element.value for element in app.markdown)
     assert "세 가지다." in rendered
@@ -53,6 +53,71 @@ def test_answer_view_handles_empty_list() -> None:
     assert not app.exception
     assert len(app.subheader) == 0
     assert len(app.error) == 0
+
+
+def test_answer_view_folds_the_question_without_markdown() -> None:
+    """질문 원문을 접어서 마크다운 없이 그대로 보여준다."""
+
+    def script():
+        """AppTest 진입점 — 마크다운이 든 질문을 그린다."""
+        from notebooklm_st.components import answer_view
+        from notebooklm_st.core import models
+
+        answer_view.render_items(
+            [
+                models.AnswerItem(
+                    question_title="핵심 주장",
+                    question_text="**굵게** 와 # 헤딩이 든 질문",
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                )
+            ]
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    assert [element.value for element in app.subheader] == ["핵심 주장"]
+    assert "질문 원문" in [element.label for element in app.expander]
+    assert [element.value for element in app.text] == [
+        "**굵게** 와 # 헤딩이 든 질문"
+    ]
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "**굵게**" not in rendered
+
+
+def test_answer_view_separates_items_with_a_divider() -> None:
+    """항목이 여러 개면 사이에 구분자를 넣는다."""
+
+    def script():
+        """AppTest 진입점 — 답변 두 개를 그린다."""
+        from notebooklm_st.components import answer_view
+        from notebooklm_st.core import models
+
+        answer_view.render_items(
+            [
+                models.AnswerItem(
+                    question_title="핵심 주장",
+                    question_text="핵심 주장은?",
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                ),
+                models.AnswerItem(
+                    question_title="결론",
+                    question_text="결론은?",
+                    answer="하나다.",
+                    citations=(),
+                    error=None,
+                ),
+            ]
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    assert len(app.divider) == 1
+    labels = [element.label for element in app.expander]
+    assert labels.count("질문 원문") == 2
 
 
 def test_render_run_shows_latest_progress_while_running() -> None:
@@ -129,7 +194,7 @@ def test_render_run_shows_answers_when_done() -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert [element.value for element in app.subheader] == ["핵심 주장은?"]
+    assert [element.value for element in app.subheader] == ["핵심 주장"]
     rendered = " ".join(element.value for element in app.markdown)
     assert "세 가지다." in rendered
     assert "근거 구절" in rendered
