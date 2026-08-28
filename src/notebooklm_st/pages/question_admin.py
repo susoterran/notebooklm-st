@@ -9,6 +9,9 @@ from notebooklm_st.core import models
 from notebooklm_st.services import store
 
 _NEW_KEY = "admin_new"
+# st.text_area 의 height 는 픽셀이다. 라벨 있는 기본값 122px 가 3줄이고
+# 줄당 24px 이므로 12줄은 122 + 9 * 24 = 338px 이다.
+_TEXT_AREA_HEIGHT = 338
 
 
 def render() -> None:
@@ -21,7 +24,7 @@ def render() -> None:
     st.title("질문 관리")
     connection = session.get_connection()
 
-    text = st.text_area("새 질문", key=_NEW_KEY)
+    text = st.text_area("새 질문", key=_NEW_KEY, height=_TEXT_AREA_HEIGHT)
     if st.button("등록", key="admin_add"):
         _add(connection, text)
 
@@ -48,6 +51,7 @@ def _render_row(
             "내용",
             value=question.text,
             key=f"admin_text_{question.id}",
+            height=_TEXT_AREA_HEIGHT,
         )
         left, right = st.columns(2)
         if left.button("수정", key=f"admin_update_{question.id}"):
