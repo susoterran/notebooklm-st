@@ -11,6 +11,7 @@
 
 import streamlit as st
 
+from notebooklm_st.components import auth_gate
 from notebooklm_st.pages import (
     ask,
     dashboard,
@@ -21,7 +22,11 @@ from notebooklm_st.pages import (
 
 
 def main() -> None:
-    """페이지를 등록하고 선택된 페이지를 실행한다."""
+    """인증을 확인하고, 페이지를 등록해 선택된 페이지를 실행한다.
+
+    인증이 안 돼도 페이지는 그대로 띄운다. 질문 관리와 이력은 로컬 DB
+    만 쓰므로 인증 없이도 쓸 수 있다.
+    """
     st.set_page_config(page_title="YouTube 질의응답", layout="wide")
     navigation = st.navigation(
         [
@@ -36,6 +41,7 @@ def main() -> None:
             st.Page(maintenance.render, title="정리", url_path="maintenance"),
         ]
     )
+    auth_gate.render()
     navigation.run()
 
 

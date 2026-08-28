@@ -2,6 +2,9 @@
 
 from streamlit.testing import v1
 
+from notebooklm_st import session
+from notebooklm_st.services import auth
+
 
 def test_answer_view_renders_success_and_failure() -> None:
     """성공 항목과 실패 항목을 모두 예외 없이 렌더한다."""
@@ -259,3 +262,59 @@ def test_render_run_uses_error_box_for_a_real_failure() -> None:
     assert not app.exception
     assert len(app.error) == 1
     assert len(app.info) == 0
+
+
+def test_auth_gate_stays_quiet_when_authenticated(stub_auth_gate) -> None:
+    """인증이 살아 있으면 아무 경고도 내지 않는다."""
+
+    def script():
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert not app.error
+
+
+def test_auth_gate_offers_relogin_when_recovery_fails(monkeypatch) -> None:
+    """자동 복구까지 실패하면 재인증 버튼을 보여 준다."""
+    gate = auth.AuthGate(probe=lambda: False, login=lambda on_progress: False)
+    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
+
+    def script():
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+    assert len(app.button) == 1
+
+
+def test_auth_gate_relogins_when_the_button_is_pressed(monkeypatch) -> None:
+    """재인증 버튼을 누르면 브라우저 로그인을 다시 돌린다."""
+    calls: list = []
+
+    def login(on_progress):
+        """로그인 호출을 기록하고 실패로 답한다."""
+        calls.append(on_progress)
+        return False
+
+    gate = auth.AuthGate(probe=lambda: False, login=login)
+    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
+
+    def script():
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert len(calls) == 2

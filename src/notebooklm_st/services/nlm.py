@@ -102,6 +102,14 @@ def default_client_factory() -> contextlib.AbstractAsyncContextManager[
 ]:
     """저장된 쿠키로 NotebookLM 클라이언트를 연다.
 
+    쿠키가 죽어 있으면 라이브러리가 토큰 재추출과 쿠키 회전을 먼저
+    시도하고, 그것마저 안 되면 저장된 브라우저 프로필로 무인 재인증을
+    한 번 시도한다. 마지막 단계는 기본으로 꺼져 있어 여기서 켠다.
+
+    대가는 실패하는 경로가 몇 초 길어지는 것뿐이다. 성공하면 사용자가
+    아무것도 하지 않아도 인증이 되살아나고, 실패해도 화면이 재로그인을
+    안내할 수 있다.
+
     Returns:
         ``async with`` 로 열 수 있는 클라이언트 컨텍스트.
     """
@@ -109,7 +117,7 @@ def default_client_factory() -> contextlib.AbstractAsyncContextManager[
     # 한 번만 캐스팅한다. 파이프라인 내부는 Protocol 로 검사된다.
     return cast(
         contextlib.AbstractAsyncContextManager[ClientLike],
-        notebooklm.NotebookLMClient.from_storage(),
+        notebooklm.NotebookLMClient.from_storage(allow_headless=True),
     )
 
 

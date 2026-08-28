@@ -325,3 +325,23 @@ def test_missing_citation_score_becomes_zero():
     )
     result = run(URL, make_questions("하나"), FakeClient(calls, chat=chat))
     assert result.items[0].citations[0].score == 0.0
+
+
+def test_default_factory_enables_unattended_reauth(monkeypatch) -> None:
+    """저장된 브라우저 프로필로 무인 재인증을 시도하도록 켠다."""
+    captured: dict = {}
+
+    class FakeClientClass:
+        """``NotebookLMClient`` 를 대신한다."""
+
+        @staticmethod
+        def from_storage(**kwargs):
+            """넘어온 인자를 기록만 한다."""
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(nlm.notebooklm, "NotebookLMClient", FakeClientClass)
+
+    nlm.default_client_factory()
+
+    assert captured["allow_headless"] is True
