@@ -71,3 +71,18 @@ def test_duplicate_question_title_does_not_crash(app_db) -> None:
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
     assert len(app.expander) == 2
+
+
+def test_updating_a_question_saves_title_and_text_without_swap(
+    app_db,
+) -> None:
+    """수정 버튼을 누르면 제목과 본문이 각자 자리에 저장된다."""
+    store.add_question(app_db, "옛 제목", "옛 본문")
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_input[1].set_value("새 제목").run()
+    app.text_area[1].set_value("새 본문").run()
+    app.button[1].click().run()
+    assert not app.exception
+    saved = store.list_questions(app_db)
+    assert [(q.title, q.text) for q in saved] == [("새 제목", "새 본문")]

@@ -84,6 +84,7 @@ def test_answer_view_folds_the_question_without_markdown() -> None:
     ]
     rendered = " ".join(element.value for element in app.markdown)
     assert "**굵게**" not in rendered
+    assert len(app.divider) == 0
 
 
 def test_answer_view_separates_items_with_a_divider() -> None:
