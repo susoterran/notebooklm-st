@@ -12,7 +12,7 @@ RunStatus = Literal["running", "done", "failed"]
 MessageLevel = Literal["info", "error"]
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class RunHandle:
     """진행 중이거나 끝난 실행 하나.
 
@@ -77,7 +77,7 @@ class RunRegistry:
         )
         with self._lock:
             self._handles[handle.run_id] = handle
-        return _copy(handle)
+            return _copy(handle)
 
     def get(self, run_id: str) -> RunHandle | None:
         """실행 하나를 조회한다.
