@@ -3,23 +3,6 @@
 from streamlit.testing import v1
 
 
-def test_progress_status_renders_without_error() -> None:
-    """진행 상자가 열리고 보고한 문구가 화면에 나온다."""
-
-    def script():
-        from notebooklm_st.components import run_progress
-
-        with run_progress.progress_status("시작") as report:
-            report("1단계")
-            report("2단계")
-
-    app = v1.AppTest.from_function(script).run()
-    assert not app.exception
-    rendered = " ".join(element.value for element in app.markdown)
-    assert "1단계" in rendered
-    assert "2단계" in rendered
-
-
 def test_answer_view_renders_success_and_failure() -> None:
     """성공 항목과 실패 항목을 모두 예외 없이 렌더한다."""
 
@@ -68,3 +51,142 @@ def test_answer_view_handles_empty_list() -> None:
     assert not app.exception
     assert len(app.subheader) == 0
     assert len(app.error) == 0
+
+
+def test_render_run_shows_latest_progress_while_running() -> None:
+    """진행 중인 실행은 가장 최근 진행 문구를 보여준다."""
+
+    def script():
+        """AppTest 진입점 — 진행 중인 실행 카드를 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.services import runner
+
+        run_progress.render_run(
+            runner.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?",),
+                started_at="2026-08-28T10:00:00",
+                status="running",
+                progress=["임시 노트북 생성 중", "자막 인덱싱 중"],
+                result=None,
+                error_message=None,
+                error_level=None,
+                finished_at=None,
+            )
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    rendered = " ".join(element.value for element in app.info)
+    assert "자막 인덱싱 중" in rendered
+    assert "임시 노트북 생성 중" not in rendered
+
+
+def test_render_run_shows_answers_when_done() -> None:
+    """완료된 실행은 답변과 인용을 보여준다."""
+
+    def script():
+        """AppTest 진입점 — 완료된 실행 카드를 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.core import models
+        from notebooklm_st.services import runner
+
+        run_progress.render_run(
+            runner.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?",),
+                started_at="2026-08-28T10:00:00",
+                status="done",
+                progress=[],
+                result=models.RunResult(
+                    url="https://youtu.be/dQw4w9WgXcQ",
+                    video_id="dQw4w9WgXcQ",
+                    items=(
+                        models.AnswerItem(
+                            question_text="핵심 주장은?",
+                            answer="세 가지다.",
+                            citations=(
+                                models.Citation(
+                                    number=1, text="근거 구절", score=0.9
+                                ),
+                            ),
+                            error=None,
+                        ),
+                    ),
+                ),
+                error_message=None,
+                error_level=None,
+                finished_at="2026-08-28T10:01:00",
+            )
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    assert [element.value for element in app.subheader] == ["핵심 주장은?"]
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "세 가지다." in rendered
+    assert "근거 구절" in rendered
+
+
+def test_render_run_uses_info_box_for_a_video_without_captions() -> None:
+    """자막 없음 같은 정상 결과는 오류가 아니라 안내로 보여준다."""
+
+    def script():
+        """AppTest 진입점 — info 수준으로 실패한 실행을 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.services import runner
+
+        run_progress.render_run(
+            runner.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?",),
+                started_at="2026-08-28T10:00:00",
+                status="failed",
+                progress=[],
+                result=None,
+                error_message="자막이 없거나 소스로 쓸 수 없는 영상입니다.",
+                error_level="info",
+                finished_at="2026-08-28T10:01:00",
+            )
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    assert len(app.info) == 1
+    assert len(app.error) == 0
+
+
+def test_render_run_uses_error_box_for_a_real_failure() -> None:
+    """진짜 오류는 오류 상자로 보여준다."""
+
+    def script():
+        """AppTest 진입점 — error 수준으로 실패한 실행을 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.services import runner
+
+        run_progress.render_run(
+            runner.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?",),
+                started_at="2026-08-28T10:00:00",
+                status="failed",
+                progress=[],
+                result=None,
+                error_message="네트워크 오류가 발생했습니다.",
+                error_level="error",
+                finished_at="2026-08-28T10:01:00",
+            )
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    assert len(app.error) == 1
+    assert len(app.info) == 0

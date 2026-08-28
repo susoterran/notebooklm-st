@@ -1,31 +1,49 @@
-"""진행 콜백을 화면 진행 상자에 연결한다."""
-
-import contextlib
-from collections.abc import Callable, Iterator
+"""실행 하나를 상태에 맞게 그리는 카드."""
 
 import streamlit as st
 
+from notebooklm_st.components import answer_view
+from notebooklm_st.services import runner
 
-@contextlib.contextmanager
-def progress_status(label: str) -> Iterator[Callable[[str], None]]:
-    """진행 상자를 열고 문구 갱신 콜백을 넘긴다.
 
-    ``services`` 계층은 Streamlit 을 모른 채 이 콜백만 부른다.
-    파이프라인이 스크립트와 같은 스레드에서 돌기 때문에 콜백 안에서
-    화면을 갱신해도 그대로 전달된다.
+def render_run(handle: runner.RunHandle) -> None:
+    """실행 하나를 상태에 맞게 그린다.
 
     Args:
-        label: 상자에 처음 표시할 문구.
-
-    Yields:
-        진행 문구를 받는 콜백.
+        handle: 그릴 실행 핸들.
     """
-    with st.status(label, expanded=True) as status:
+    st.markdown(f"**{handle.url}**")
+    st.caption(
+        f"시작 {handle.started_at} · 질문 {len(handle.question_texts)}개"
+    )
 
-        def report(message: str) -> None:
-            """진행 문구를 갱신하고 로그 줄을 남긴다."""
-            status.update(label=message)
-            st.write(message)
+    if handle.status == "running":
+        _render_running(handle)
+        return
+    if handle.status == "failed":
+        _render_failed(handle)
+        return
+    _render_done(handle)
 
-        yield report
-        status.update(label="완료", state="complete")
+
+def _render_running(handle: runner.RunHandle) -> None:
+    """진행 중인 실행의 최신 문구를 보여준다."""
+    latest = handle.progress[-1] if handle.progress else "시작하는 중"
+    st.info(f"실행 중 — {latest}")
+
+
+def _render_failed(handle: runner.RunHandle) -> None:
+    """실패한 실행의 사유를 표시 수준에 맞춰 보여준다."""
+    text = handle.error_message or "알 수 없는 오류로 실패했습니다."
+    if handle.error_level == "info":
+        st.info(text)
+        return
+    st.error(text)
+
+
+def _render_done(handle: runner.RunHandle) -> None:
+    """완료된 실행의 답변을 보여준다."""
+    if handle.result is None:
+        st.warning("완료되었지만 결과가 비어 있습니다.")
+        return
+    answer_view.render_items(handle.result.items)
