@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "VIRTUAL_ENV": "C:\\Users\\susot\\Documents\\develop\\python\\notebooklm-st\\.venv",
+    "PATH": "C:\\Users\\susot\\Documents\\develop\\python\\notebooklm-st\\.venv\\Scripts;C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\Git\\cmd;C:\\Program Files\\nodejs"
+  },
+  "permissions": {
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.gnupg/**)",
+      "Read(//c/Windows/**)",
+      "Edit(//c/Windows/**)",
+      "Read(//c/Program Files*/**)",
+      "Edit(//c/Program Files*/**)",
+      "Read(//c/ProgramData/**)",
+      "Read(//**/.env*)",
+      "Read(//**/*.pem)",
+      "Read(//**/*.key)",
+      "Read(//**/id_rsa)",
+      "Bash(cd /*)",
+      "Bash(cd ~*)",
+      "Bash(cd ..*)",
+      "Bash(pushd *)",
+      "Bash(rm *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Format-Volume *)",
+      "PowerShell(Clear-Disk *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "PowerShell(Invoke-WebRequest *)",
+      "PowerShell(Invoke-RestMethod *)",
+      "PowerShell(Start-BitsTransfer *)",
+      "PowerShell(curl.exe *)"
+    ],
+    "additionalDirectories": [
+      "~/.claude"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "sequential-thinking",
+    "task-master-ai",
+    "context7",
+    "playwright-mcp"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PROJECT_DIR%\\.claude\\hooks\\command-guard\\command-guard.ps1\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%CLAUDE_PROJECT_DIR%\\.claude\\hooks\\secret-guard\\secret-guard.ps1\""
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "ecc@ecc": true,
+    "mattpocock-skills@claude-plugins-official": true
+  }
+}
