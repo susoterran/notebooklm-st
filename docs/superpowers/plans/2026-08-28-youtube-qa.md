@@ -1099,15 +1099,12 @@ def list_questions(connection: sqlite3.Connection) -> list[models.Question]:
         질문 목록.
     """
     rows = connection.execute(
-        "SELECT id, text, created_at, updated_at FROM questions"
-        " ORDER BY id"
+        "SELECT id, text, created_at, updated_at FROM questions ORDER BY id"
     ).fetchall()
     return [_to_question(row) for row in rows]
 
 
-def add_question(
-    connection: sqlite3.Connection, text: str
-) -> models.Question:
+def add_question(connection: sqlite3.Connection, text: str) -> models.Question:
     """새 질문을 등록한다.
 
     Args:
@@ -1155,18 +1152,14 @@ def update_question(
         raise ValueError(f"질문 {question_id} 을 찾을 수 없습니다.")
 
 
-def delete_question(
-    connection: sqlite3.Connection, question_id: int
-) -> None:
+def delete_question(connection: sqlite3.Connection, question_id: int) -> None:
     """질문을 지운다. 이미 없으면 조용히 넘어간다.
 
     Args:
         connection: 열린 커넥션.
         question_id: 지울 질문의 ID.
     """
-    connection.execute(
-        "DELETE FROM questions WHERE id = ?", (question_id,)
-    )
+    connection.execute("DELETE FROM questions WHERE id = ?", (question_id,))
     connection.commit()
 
 
@@ -1359,9 +1352,7 @@ uv run pytest tests/services/test_store_history.py -v
 `src/notebooklm_st/services/store.py`의 `_require_text` 정의 **바로 위**에 세 함수를 넣는다. 공개 함수를 비공개 헬퍼보다 앞에 두는 기존 배치를 지킨다.
 
 ```python
-def save_run(
-    connection: sqlite3.Connection, result: models.RunResult
-) -> int:
+def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
     """실행 결과를 이력으로 저장한다.
 
     질문 본문을 ``questions`` 테이블 외래키가 아니라 문자열로 복사해
@@ -1701,7 +1692,9 @@ def test_answers_carry_citations():
             )
         ],
     )
-    result = run(URL, make_questions("핵심 주장은?"), FakeClient(calls, chat=chat))
+    result = run(
+        URL, make_questions("핵심 주장은?"), FakeClient(calls, chat=chat)
+    )
     item = result.items[0]
     assert item.answer == "세 가지다."
     assert item.citations == (
@@ -1813,9 +1806,7 @@ class NotebookLike(Protocol):
 class ChatLike(Protocol):
     """대화 API."""
 
-    async def ask(
-        self, notebook_id: str, question: str
-    ) -> AskResultLike: ...
+    async def ask(self, notebook_id: str, question: str) -> AskResultLike: ...
 
     async def delete_conversation(
         self, notebook_id: str, conversation_id: str
@@ -1853,14 +1844,12 @@ class ClientLike(Protocol):
     sources: SourcesLike
 
 
-ClientFactory = Callable[
-    [], contextlib.AbstractAsyncContextManager[ClientLike]
-]
+ClientFactory = Callable[[], contextlib.AbstractAsyncContextManager[ClientLike]]
 
 
-def default_client_factory() -> (
-    contextlib.AbstractAsyncContextManager[ClientLike]
-):
+def default_client_factory() -> contextlib.AbstractAsyncContextManager[
+    ClientLike
+]:
     """저장된 쿠키로 NotebookLM 클라이언트를 연다.
 
     Returns:
@@ -1907,9 +1896,7 @@ async def run_pipeline(
             f"{TEMP_TITLE_PREFIX}{uuid.uuid4().hex[:8]}"
         )
         try:
-            on_progress(
-                f"자막 인덱싱 중 (최대 {int(SOURCE_WAIT_TIMEOUT)}초)"
-            )
+            on_progress(f"자막 인덱싱 중 (최대 {int(SOURCE_WAIT_TIMEOUT)}초)")
             await client.sources.add_url(
                 notebook.id,
                 url,
@@ -2073,9 +2060,7 @@ def main() -> int:
     ]
 
     started = time.monotonic()
-    result = asyncio.run(
-        nlm.run_pipeline(url, questions, _report(started))
-    )
+    result = asyncio.run(nlm.run_pipeline(url, questions, _report(started)))
     print(f"\n총 소요 {time.monotonic() - started:.1f}초")
 
     for item in result.items:
@@ -2211,9 +2196,7 @@ def test_answer_view_renders_success_and_failure():
                     question_text="핵심 주장은?",
                     answer="세 가지다.",
                     citations=(
-                        models.Citation(
-                            number=1, text="근거 구절", score=0.9
-                        ),
+                        models.Citation(number=1, text="근거 구절", score=0.9),
                     ),
                     error=None,
                 ),
@@ -3085,9 +3068,7 @@ def test_list_temp_notebooks_keeps_only_the_prefixed_ones():
 
 def test_list_temp_notebooks_is_empty_when_nothing_matches():
     calls = []
-    client = FakeClient(
-        calls, existing=[FakeNotebook("nb-2", "내 연구 노트")]
-    )
+    client = FakeClient(calls, existing=[FakeNotebook("nb-2", "내 연구 노트")])
     assert asyncio.run(nlm.list_temp_notebooks(lambda: client)) == []
 
 

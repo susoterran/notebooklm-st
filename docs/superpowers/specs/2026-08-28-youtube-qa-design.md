@@ -231,13 +231,15 @@ async def run_pipeline(url, questions, on_progress, client_factory=...):
     async with client_factory() as client:
         notebook = await client.notebooks.create(f"tmp-{uuid4().hex[:8]}")
         try:
-            await client.sources.add_url(notebook.id, url,
-                                         wait=True, wait_timeout=120.0)
+            await client.sources.add_url(
+                notebook.id, url, wait=True, wait_timeout=120.0
+            )
             previous_conversation = None
             for question in questions:
                 if previous_conversation is not None:
                     await client.chat.delete_conversation(
-                        notebook.id, previous_conversation)
+                        notebook.id, previous_conversation
+                    )
                 result = await client.chat.ask(notebook.id, question.text)
                 previous_conversation = result.conversation_id
                 # 답변 수집
