@@ -24,7 +24,9 @@ def make_result(
             models.AnswerItem(
                 question_text="핵심 주장은?",
                 answer="세 가지다.",
-                citations=(),
+                citations=(
+                    models.Citation(number=1, text="근거 구절", score=0.9),
+                ),
                 error=None,
             ),
         ),
@@ -53,3 +55,7 @@ def test_selected_run_shows_its_answers(app_db) -> None:
     app = v1.AppTest.from_function(script).run()
     headers = [element.value for element in app.subheader]
     assert headers == ["핵심 주장은?"]
+    assert not app.exception
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "세 가지다." in rendered
+    assert "근거 구절" in rendered
