@@ -20,8 +20,9 @@ def test_new_database_has_no_questions(connection) -> None:
 
 def test_add_question_returns_saved_row(connection) -> None:
     """등록한 질문이 그대로 저장되어 돌아온다."""
-    saved = store.add_question(connection, "핵심 주장 3가지 정리")
+    saved = store.add_question(connection, "핵심 주장", "핵심 주장 3가지 정리")
     assert saved.id > 0
+    assert saved.title == "핵심 주장"
     assert saved.text == "핵심 주장 3가지 정리"
     assert saved.created_at
     assert saved.created_at == saved.updated_at
@@ -29,47 +30,47 @@ def test_add_question_returns_saved_row(connection) -> None:
 
 def test_add_question_strips_whitespace(connection) -> None:
     """앞뒤 공백을 지운다."""
-    saved = store.add_question(connection, "  발표자의 결론은?  ")
+    saved = store.add_question(connection, "결론", "  발표자의 결론은?  ")
     assert saved.text == "발표자의 결론은?"
 
 
 def test_add_question_rejects_blank(connection) -> None:
     """빈 질문을 거부한다."""
     with pytest.raises(ValueError):
-        store.add_question(connection, "   ")
+        store.add_question(connection, "제목", "   ")
 
 
 def test_list_questions_returns_insertion_order(connection) -> None:
     """등록 순서대로 돌려준다."""
-    store.add_question(connection, "첫째")
-    store.add_question(connection, "둘째")
+    store.add_question(connection, "첫째 제목", "첫째")
+    store.add_question(connection, "둘째 제목", "둘째")
     texts = [q.text for q in store.list_questions(connection)]
     assert texts == ["첫째", "둘째"]
 
 
 def test_update_question_changes_text(connection) -> None:
     """질문 본문을 바꾼다."""
-    saved = store.add_question(connection, "옛 질문")
-    store.update_question(connection, saved.id, "새 질문")
+    saved = store.add_question(connection, "옛 제목", "옛 질문")
+    store.update_question(connection, saved.id, "새 제목", "새 질문")
     assert store.list_questions(connection)[0].text == "새 질문"
 
 
 def test_update_question_rejects_missing_id(connection) -> None:
     """없는 ID는 거부한다."""
     with pytest.raises(ValueError):
-        store.update_question(connection, 999, "아무거나")
+        store.update_question(connection, 999, "제목", "아무거나")
 
 
 def test_update_question_rejects_blank(connection) -> None:
     """빈 본문을 거부한다."""
-    saved = store.add_question(connection, "옛 질문")
+    saved = store.add_question(connection, "옛 제목", "옛 질문")
     with pytest.raises(ValueError):
-        store.update_question(connection, saved.id, "  ")
+        store.update_question(connection, saved.id, "제목", "  ")
 
 
 def test_delete_question_removes_row(connection) -> None:
     """질문을 지운다."""
-    saved = store.add_question(connection, "지울 질문")
+    saved = store.add_question(connection, "지울 제목", "지울 질문")
     store.delete_question(connection, saved.id)
     assert store.list_questions(connection) == []
 
@@ -90,3 +91,38 @@ def test_default_db_path_falls_back_to_cwd(monkeypatch) -> None:
     """환경 변수가 없으면 current directory의 questions.db."""
     monkeypatch.delenv(store.DB_PATH_ENV_VAR, raising=False)
     assert store.default_db_path().name == "questions.db"
+
+
+def test_add_question_stores_title(connection) -> None:
+    """제목과 본문을 함께 저장한다."""
+    saved = store.add_question(connection, "핵심 주장", "3가지로 정리해줘")
+    assert saved.title == "핵심 주장"
+    assert saved.text == "3가지로 정리해줘"
+
+
+def test_add_question_strips_title_whitespace(connection) -> None:
+    """제목의 앞뒤 공백을 지운다."""
+    saved = store.add_question(connection, "  핵심 주장  ", "본문")
+    assert saved.title == "핵심 주장"
+
+
+def test_add_question_rejects_blank_title(connection) -> None:
+    """제목이 비면 거부한다."""
+    with pytest.raises(ValueError):
+        store.add_question(connection, "   ", "본문")
+
+
+def test_update_question_changes_title_and_text(connection) -> None:
+    """제목과 본문을 함께 바꾼다."""
+    saved = store.add_question(connection, "옛 제목", "옛 본문")
+    store.update_question(connection, saved.id, "새 제목", "새 본문")
+    changed = store.list_questions(connection)[0]
+    assert changed.title == "새 제목"
+    assert changed.text == "새 본문"
+
+
+def test_update_question_rejects_blank_title(connection) -> None:
+    """제목이 비면 거부한다."""
+    saved = store.add_question(connection, "제목", "본문")
+    with pytest.raises(ValueError):
+        store.update_question(connection, saved.id, "  ", "본문")

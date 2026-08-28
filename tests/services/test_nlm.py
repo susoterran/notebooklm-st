@@ -128,6 +128,7 @@ def make_questions(*texts: str) -> list[models.Question]:
     return [
         models.Question(
             id=index,
+            title=f"제목{index}",
             text=text,
             created_at="2026-08-28T10:00:00",
             updated_at="2026-08-28T10:00:00",

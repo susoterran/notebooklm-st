@@ -13,8 +13,8 @@ from notebooklm_st.core import models
 from notebooklm_st.services import nlm
 
 _QUESTIONS = (
-    "이 영상의 핵심 주장을 3가지로 정리해 주세요.",
-    "발표자의 결론은 무엇인가요?",
+    ("핵심 주장", "이 영상의 핵심 주장을 3가지로 정리해 주세요."),
+    ("결론", "발표자의 결론은 무엇인가요?"),
 )
 
 
@@ -32,11 +32,12 @@ def main() -> int:
     questions = [
         models.Question(
             id=index,
+            title=title,
             text=text,
             created_at="",
             updated_at="",
         )
-        for index, text in enumerate(_QUESTIONS, start=1)
+        for index, (title, text) in enumerate(_QUESTIONS, start=1)
     ]
 
     started = time.monotonic()

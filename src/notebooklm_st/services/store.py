@@ -14,6 +14,7 @@ _DEFAULT_DB_NAME = "questions.db"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS questions (
     id         INTEGER PRIMARY KEY,
+    title      TEXT NOT NULL,
     text       TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -86,53 +87,66 @@ def list_questions(
         질문 목록.
     """
     rows = connection.execute(
-        "SELECT id, text, created_at, updated_at FROM questions ORDER BY id"
+        "SELECT id, title, text, created_at, updated_at FROM questions"
+        " ORDER BY id"
     ).fetchall()
     return [_to_question(row) for row in rows]
 
 
-def add_question(connection: sqlite3.Connection, text: str) -> models.Question:
+def add_question(
+    connection: sqlite3.Connection, title: str, text: str
+) -> models.Question:
     """새 질문을 등록한다.
+
+    제목 중복은 검사하지 않는다. 같은 제목의 질문을 여러 개 두는 것을
+    허용한다.
 
     Args:
         connection: 열린 커넥션.
+        title: 목록에 보여 줄 제목. 앞뒤 공백은 지운다.
         text: 질문 본문. 앞뒤 공백은 지운다.
 
     Returns:
         저장된 질문.
 
     Raises:
-        ValueError: 공백을 지우면 빈 문자열이 되는 경우.
+        ValueError: 제목이나 본문이 공백만으로 이루어진 경우.
     """
-    stripped = _require_text(text)
+    stripped_title = _require_text(title, "제목")
+    stripped_text = _require_text(text, "질문")
     now = _now()
     row = connection.execute(
-        "INSERT INTO questions (text, created_at, updated_at)"
-        " VALUES (?, ?, ?)"
-        " RETURNING id, text, created_at, updated_at",
-        (stripped, now, now),
+        "INSERT INTO questions (title, text, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?)"
+        " RETURNING id, title, text, created_at, updated_at",
+        (stripped_title, stripped_text, now, now),
     ).fetchone()
     connection.commit()
     return _to_question(row)
 
 
 def update_question(
-    connection: sqlite3.Connection, question_id: int, text: str
+    connection: sqlite3.Connection,
+    question_id: int,
+    title: str,
+    text: str,
 ) -> None:
-    """질문 본문을 바꾼다.
+    """질문의 제목과 본문을 바꾼다.
 
     Args:
         connection: 열린 커넥션.
         question_id: 바꿀 질문의 ID.
+        title: 새 제목.
         text: 새 본문.
 
     Raises:
-        ValueError: 본문이 비었거나 그 ID 의 질문이 없는 경우.
+        ValueError: 제목이나 본문이 비었거나 그 ID 의 질문이 없는 경우.
     """
-    stripped = _require_text(text)
+    stripped_title = _require_text(title, "제목")
+    stripped_text = _require_text(text, "질문")
     cursor = connection.execute(
-        "UPDATE questions SET text = ?, updated_at = ? WHERE id = ?",
-        (stripped, _now(), question_id),
+        "UPDATE questions SET title = ?, text = ?, updated_at = ? WHERE id = ?",
+        (stripped_title, stripped_text, _now(), question_id),
     )
     connection.commit()
     if cursor.rowcount == 0:
@@ -251,11 +265,22 @@ def load_run_items(
     ]
 
 
-def _require_text(text: str) -> str:
-    """공백을 지운 본문을 돌려주고, 비면 예외를 던진다."""
+def _require_text(text: str, subject: str) -> str:
+    """공백을 지운 값을 돌려주고, 비면 예외를 던진다.
+
+    Args:
+        text: 검사할 문자열.
+        subject: 오류 문구에 넣을 항목 이름.
+
+    Returns:
+        앞뒤 공백을 지운 문자열.
+
+    Raises:
+        ValueError: 공백을 지우면 빈 문자열이 되는 경우.
+    """
     stripped = text.strip()
     if not stripped:
-        raise ValueError("질문이 비어 있습니다.")
+        raise ValueError(f"{subject}이 비어 있습니다.")
     return stripped
 
 
@@ -268,6 +293,7 @@ def _to_question(row: sqlite3.Row) -> models.Question:
     """DB 행을 ``Question`` 으로 바꾼다."""
     return models.Question(
         id=int(row["id"]),
+        title=row["title"],
         text=row["text"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],

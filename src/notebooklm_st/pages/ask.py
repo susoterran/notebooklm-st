@@ -38,7 +38,7 @@ def render() -> None:
     selected = st.multiselect(
         "질문 선택",
         options=questions,
-        format_func=lambda question: question.text,
+        format_func=lambda question: question.title,
         key=_SELECTED_KEY,
     )
 

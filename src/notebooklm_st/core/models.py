@@ -10,6 +10,7 @@ class Question:
     """저장된 질문 템플릿."""
 
     id: int
+    title: str
     text: str
     created_at: str
     updated_at: str

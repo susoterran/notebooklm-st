@@ -124,6 +124,7 @@ def test_real_background_run_reaches_the_dashboard(app_db) -> None:
             questions = [
                 models.Question(
                     id=1,
+                    title="핵심 주장",
                     text="핵심 주장은?",
                     created_at="2026-08-28T10:00:00",
                     updated_at="2026-08-28T10:00:00",
