@@ -1,6 +1,7 @@
 """임시 노트북 정리 화면 테스트."""
 
 from notebooklm import exceptions
+from notebooklm._auth import extraction as auth_extraction
 from streamlit.testing import v1
 
 from notebooklm_st.core import models
@@ -98,6 +99,59 @@ def test_load_shows_error_message_on_failure(app_db, monkeypatch) -> None:
     app = v1.AppTest.from_function(script)
     app.run()
     app.button[0].click().run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+
+
+def test_load_maps_login_redirect_to_message(app_db, monkeypatch) -> None:
+    """조회가 로그인 리다이렉트로 튕겨도 사용자 문구로 안내한다."""
+
+    async def fake_list(**kwargs):
+        """라이브러리가 공개 예외로 감싸지 않는 리다이렉트를 흉내낸다."""
+        raise auth_extraction._LoginRedirectError("Authentication expired")
+
+    monkeypatch.setattr(nlm, "list_temp_notebooks", fake_list)
+
+    def script():
+        """AppTest 진입점 — 정리 화면을 렌더한다."""
+        from notebooklm_st.pages import maintenance
+
+        maintenance.render()
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+
+
+def test_delete_maps_login_redirect_to_message(app_db, monkeypatch) -> None:
+    """삭제가 로그인 리다이렉트로 튕겨도 사용자 문구로 안내한다."""
+
+    async def fake_delete(*args, **kwargs):
+        """라이브러리가 공개 예외로 감싸지 않는 리다이렉트를 흉내낸다."""
+        raise auth_extraction._LoginRedirectError("Authentication expired")
+
+    monkeypatch.setattr(nlm, "delete_notebooks", fake_delete)
+
+    def script():
+        """AppTest 진입점 — 남은 노트북이 있는 정리 화면을 렌더한다."""
+        import streamlit as st
+
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import maintenance
+
+        st.session_state["maintenance_notebooks"] = [
+            models.TempNotebook(id="nb-1", title="tmp-abc12345"),
+        ]
+        maintenance.render()
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.checkbox[0].check().run()
+    app.button[1].click().run()
 
     assert not app.exception
     assert len(app.error) == 1
