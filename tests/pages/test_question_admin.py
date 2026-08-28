@@ -5,7 +5,8 @@ from streamlit.testing import v1
 from notebooklm_st.services import store
 
 
-def script():  # noqa: D103 -- AppTest.from_function 용, 브리프 그대로 유지
+def script():
+    """AppTest 진입점 — 질문 관리 화면을 렌더한다."""
     from notebooklm_st.pages import question_admin
 
     question_admin.render()
@@ -47,3 +48,11 @@ def test_blank_question_is_rejected(app_db) -> None:
     app.button[0].click().run()
     assert len(app.error) == 1
     assert store.list_questions(app_db) == []
+
+
+def test_duplicate_question_text_does_not_crash(app_db) -> None:
+    """같은 내용의 질문이 둘이어도 관리 화면이 죽지 않는다."""
+    store.add_question(app_db, "같은 질문")
+    store.add_question(app_db, "같은 질문")
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
