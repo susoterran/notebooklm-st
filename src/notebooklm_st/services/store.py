@@ -39,6 +39,38 @@ CREATE TABLE IF NOT EXISTS answers (
 );
 """
 
+# 이 프로젝트는 마이그레이션을 지원하지 않는다(의도된 결정). 예전
+# 스키마의 DB 파일은 지우고 새로 만드는 것이 유일한 해법이므로,
+# connect() 는 이 상수와 실제 컬럼을 비교해 빠진 컬럼이 있으면 바로
+# 실패한다.
+#
+# 테이블 이름은 이 상수의 리터럴 키에서만 온다. 사용자 입력이 여기에
+# 섞일 일이 없으므로 아래 PRAGMA 호출에 그대로 넣어도 안전하다.
+_EXPECTED_COLUMNS: dict[str, frozenset[str]] = {
+    "questions": frozenset({"id", "title", "text", "created_at", "updated_at"}),
+    "runs": frozenset({"id", "url", "video_id", "created_at"}),
+    "answers": frozenset(
+        {
+            "id",
+            "run_id",
+            "question_title",
+            "question_text",
+            "answer",
+            "citations",
+            "error",
+        }
+    ),
+}
+
+
+class StaleSchemaError(RuntimeError):
+    """DB 파일의 스키마가 현재 코드가 기대하는 컬럼과 맞지 않는다.
+
+    이 프로젝트는 마이그레이션 경로를 두지 않기로 했다(의도된
+    결정). 스키마가 바뀌면 예전 DB 파일을 지우고 새로 만드는 것이
+    유일한 해법이며, 이 예외의 메시지가 그 안내를 담는다.
+    """
+
 
 def default_db_path() -> pathlib.Path:
     """쓸 DB 파일 경로를 정한다.
@@ -67,12 +99,17 @@ def connect(db_path: pathlib.Path) -> sqlite3.Connection:
 
     Returns:
         행을 ``sqlite3.Row`` 로 돌려주는 커넥션.
+
+    Raises:
+        StaleSchemaError: 기존 DB 파일에 현재 코드가 기대하는
+            컬럼이 없는 경우.
     """
     connection = sqlite3.connect(db_path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(_SCHEMA)
     connection.commit()
+    _verify_schema(connection, db_path)
     return connection
 
 
@@ -270,12 +307,43 @@ def load_run_items(
     ]
 
 
+def _verify_schema(
+    connection: sqlite3.Connection, db_path: pathlib.Path
+) -> None:
+    """모든 테이블에 기대하는 컬럼이 있는지 확인한다.
+
+    ``CREATE TABLE IF NOT EXISTS`` 는 이미 있는 테이블을 건드리지
+    않으므로, 예전 스키마의 DB 파일이 조용히 통과해 버린다. 이
+    함수가 그 틈을 막는다.
+
+    Args:
+        connection: 열린 커넥션.
+        db_path: 오류 메시지에 넣을 DB 파일 경로.
+
+    Raises:
+        StaleSchemaError: 어떤 테이블에 기대하는 컬럼이 빠져
+            있는 경우.
+    """
+    for table, expected in _EXPECTED_COLUMNS.items():
+        # table 은 _EXPECTED_COLUMNS 의 리터럴 키에서만 온다.
+        rows = connection.execute(f"PRAGMA table_info({table})")
+        actual = {row["name"] for row in rows.fetchall()}
+        missing = expected - actual
+        if missing:
+            raise StaleSchemaError(
+                f"{db_path} 의 {table} 테이블이 오래된 스키마입니다"
+                f"(없는 컬럼: {sorted(missing)}). 이 파일을 지우고"
+                " 다시 실행하세요."
+            )
+
+
 def _require_text(text: str, subject: str) -> str:
     """공백을 지운 값을 돌려주고, 비면 예외를 던진다.
 
     Args:
         text: 검사할 문자열.
-        subject: 오류 문구에 넣을 항목 이름.
+        subject: 오류 문구에 넣을 항목 이름. 조사 "이"를 붙이므로
+            받침이 있는 한글 명사여야 한다(예: "제목", "질문").
 
     Returns:
         앞뒤 공백을 지운 문자열.
