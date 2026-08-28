@@ -86,3 +86,11 @@ def test_updating_a_question_saves_title_and_text_without_swap(
     assert not app.exception
     saved = store.list_questions(app_db)
     assert [(q.title, q.text) for q in saved] == [("새 제목", "새 본문")]
+
+
+def test_title_inputs_cap_their_length(app_db) -> None:
+    """새 질문과 수정 양쪽의 제목 입력란이 길이를 제한한다."""
+    store.add_question(app_db, "옛 제목", "옛 본문")
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    assert [element.max_chars for element in app.text_input] == [60, 60]

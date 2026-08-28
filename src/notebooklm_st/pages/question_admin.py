@@ -10,6 +10,9 @@ from notebooklm_st.services import store
 
 _NEW_TITLE_KEY = "admin_new_title"
 _NEW_TEXT_KEY = "admin_new_text"
+# 제목은 목록에서 한 줄로 읽혀야 값을 한다. 길이를 막지 않으면 본문을
+# 그대로 붙여 넣어 목록이 다시 읽기 어려워진다.
+_TITLE_MAX_CHARS = 60
 # st.text_area 의 height 는 픽셀이다. 라벨 있는 기본값 122px 가 3줄이고
 # 줄당 24px 이므로 12줄은 122 + 9 * 24 = 338px 이다.
 _TEXT_AREA_HEIGHT = 338
@@ -25,7 +28,9 @@ def render() -> None:
     st.title("질문 관리")
     connection = session.get_connection()
 
-    title = st.text_input("새 질문 제목", key=_NEW_TITLE_KEY)
+    title = st.text_input(
+        "새 질문 제목", key=_NEW_TITLE_KEY, max_chars=_TITLE_MAX_CHARS
+    )
     text = st.text_area(
         "새 질문 내용", key=_NEW_TEXT_KEY, height=_TEXT_AREA_HEIGHT
     )
@@ -59,6 +64,7 @@ def _render_row(
             "제목",
             value=question.title,
             key=f"admin_title_{question.id}",
+            max_chars=_TITLE_MAX_CHARS,
         )
         edited_text = st.text_area(
             "내용",
