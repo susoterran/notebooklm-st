@@ -8,7 +8,7 @@ import pytest
 from notebooklm import exceptions
 
 from notebooklm_st.core import models
-from notebooklm_st.services import runner, store
+from notebooklm_st.services import runner, runs, store
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -35,7 +35,7 @@ def make_questions(*texts: str) -> list[models.Question]:
     ]
 
 
-def wait_for(registry: runner.RunRegistry, run_id: str) -> runner.RunHandle:
+def wait_for(registry: runs.RunRegistry, run_id: str) -> runs.RunHandle:
     """실행이 끝날 때까지 기다렸다가 핸들을 돌려준다."""
     runner.join_all(timeout=5.0)
     handle = registry.get(run_id)
@@ -46,7 +46,7 @@ def wait_for(registry: runner.RunRegistry, run_id: str) -> runner.RunHandle:
 
 def test_successful_run_saves_history_and_marks_done(db_path) -> None:
     """성공하면 이력에 저장하고 done 으로 표시한다."""
-    registry = runner.RunRegistry()
+    registry = runs.RunRegistry()
 
     async def fake_pipeline(url, questions, on_progress, **kwargs):
         """진행 문구를 남기고 결과를 돌려주는 가짜."""
@@ -86,7 +86,7 @@ def test_successful_run_saves_history_and_marks_done(db_path) -> None:
 
 def test_library_error_is_recorded_as_user_message(db_path) -> None:
     """라이브러리 예외는 사용자 문구로 바뀌어 기록된다."""
-    registry = runner.RunRegistry()
+    registry = runs.RunRegistry()
 
     async def fake_pipeline(url, questions, on_progress, **kwargs):
         """항상 자막 없음 예외를 던지는 가짜."""
@@ -108,7 +108,7 @@ def test_library_error_is_recorded_as_user_message(db_path) -> None:
 
 def test_unexpected_error_does_not_leave_the_run_running(db_path) -> None:
     """예상 못 한 예외가 나도 실행이 running 에 머물지 않는다."""
-    registry = runner.RunRegistry()
+    registry = runs.RunRegistry()
 
     async def fake_pipeline(url, questions, on_progress, **kwargs):
         """라이브러리 예외가 아닌 오류를 던지는 가짜."""
@@ -130,7 +130,7 @@ def test_unexpected_error_does_not_leave_the_run_running(db_path) -> None:
 
 def test_failed_run_is_not_saved_to_history(db_path) -> None:
     """실패한 실행은 이력에 남기지 않는다."""
-    registry = runner.RunRegistry()
+    registry = runs.RunRegistry()
 
     async def fake_pipeline(url, questions, on_progress, **kwargs):
         """항상 실패하는 가짜."""
@@ -155,7 +155,7 @@ def test_failed_run_is_not_saved_to_history(db_path) -> None:
 
 def test_video_id_is_extracted_from_the_url(db_path) -> None:
     """핸들에 URL 에서 뽑은 영상 ID 가 담긴다."""
-    registry = runner.RunRegistry()
+    registry = runs.RunRegistry()
 
     async def fake_pipeline(url, questions, on_progress, **kwargs):
         """즉시 빈 결과를 돌려주는 가짜."""
@@ -174,7 +174,7 @@ def test_video_id_is_extracted_from_the_url(db_path) -> None:
 
 def test_save_failure_marks_the_run_as_failed(db_path, monkeypatch) -> None:
     """이력 저장이 실패해도 실행이 running 에 머물지 않는다."""
-    registry = runner.RunRegistry()
+    registry = runs.RunRegistry()
 
     async def fake_pipeline(url, questions, on_progress, **kwargs):
         """정상 결과를 돌려주는 가짜."""

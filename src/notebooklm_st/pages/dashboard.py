@@ -13,7 +13,9 @@ def render() -> None:
     st.title("실행 현황")
     st.caption(
         "질의는 백그라운드에서 돕니다. 이 화면을 닫거나 다른 화면으로"
-        " 이동해도 실행은 계속됩니다."
+        " 이동해도 실행은 계속됩니다. 서버를 재시작하면 진행 중이던"
+        " 실행은 추적할 수 없습니다. 남은 임시 노트북은 정리 화면에서"
+        " 확인하세요."
     )
     _render_runs()
 
@@ -34,8 +36,14 @@ def _render_runs() -> None:
 
     for handle in handles:
         run_progress.render_run(handle)
-        if handle.status != "running" and st.button(
-            "지우기", key=f"dashboard_discard_{handle.run_id}"
-        ):
+        if handle.status == "running":
+            if st.button(
+                "목록에서 제거 (실행은 계속됨)",
+                key=f"dashboard_force_{handle.run_id}",
+                help="응답이 없는 실행을 목록에서 치웁니다."
+                " 백그라운드 작업 자체는 멈추지 않습니다.",
+            ):
+                registry.discard(handle.run_id)
+        elif st.button("지우기", key=f"dashboard_discard_{handle.run_id}"):
             registry.discard(handle.run_id)
         st.divider()

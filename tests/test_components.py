@@ -59,10 +59,10 @@ def test_render_run_shows_latest_progress_while_running() -> None:
     def script():
         """AppTest 진입점 — 진행 중인 실행 카드를 그린다."""
         from notebooklm_st.components import run_progress
-        from notebooklm_st.services import runner
+        from notebooklm_st.services import runs
 
         run_progress.render_run(
-            runner.RunHandle(
+            runs.RunHandle(
                 run_id="abc12345",
                 url="https://youtu.be/dQw4w9WgXcQ",
                 video_id="dQw4w9WgXcQ",
@@ -91,10 +91,10 @@ def test_render_run_shows_answers_when_done() -> None:
         """AppTest 진입점 — 완료된 실행 카드를 그린다."""
         from notebooklm_st.components import run_progress
         from notebooklm_st.core import models
-        from notebooklm_st.services import runner
+        from notebooklm_st.services import runs
 
         run_progress.render_run(
-            runner.RunHandle(
+            runs.RunHandle(
                 run_id="abc12345",
                 url="https://youtu.be/dQw4w9WgXcQ",
                 video_id="dQw4w9WgXcQ",
@@ -138,10 +138,10 @@ def test_render_run_uses_info_box_for_a_video_without_captions() -> None:
     def script():
         """AppTest 진입점 — info 수준으로 실패한 실행을 그린다."""
         from notebooklm_st.components import run_progress
-        from notebooklm_st.services import runner
+        from notebooklm_st.services import runs
 
         run_progress.render_run(
-            runner.RunHandle(
+            runs.RunHandle(
                 run_id="abc12345",
                 url="https://youtu.be/dQw4w9WgXcQ",
                 video_id="dQw4w9WgXcQ",
@@ -168,10 +168,10 @@ def test_render_run_uses_error_box_for_a_real_failure() -> None:
     def script():
         """AppTest 진입점 — error 수준으로 실패한 실행을 그린다."""
         from notebooklm_st.components import run_progress
-        from notebooklm_st.services import runner
+        from notebooklm_st.services import runs
 
         run_progress.render_run(
-            runner.RunHandle(
+            runs.RunHandle(
                 run_id="abc12345",
                 url="https://youtu.be/dQw4w9WgXcQ",
                 video_id="dQw4w9WgXcQ",

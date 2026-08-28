@@ -1,6 +1,6 @@
 """앱 전체가 공유하는 자원.
 
-``@st.cache_resource`` 로 감싼 커넥션은 Streamlit 의존이라
+``@st.cache_resource`` 로 감싼 커넥션과 레지스트리는 Streamlit 의존이라
 ``services/`` 에 둘 수 없고, 여러 페이지가 함께 쓰므로 특정 페이지에도
 둘 수 없다. 그래서 최상위 모듈로 둔다.
 """
@@ -9,7 +9,7 @@ import sqlite3
 
 import streamlit as st
 
-from notebooklm_st.services import runner, store
+from notebooklm_st.services import runs, store
 
 
 @st.cache_resource
@@ -23,7 +23,7 @@ def get_connection() -> sqlite3.Connection:
 
 
 @st.cache_resource
-def get_registry() -> runner.RunRegistry:
+def get_registry() -> runs.RunRegistry:
     """앱 전체가 공유하는 실행 레지스트리를 돌려준다.
 
     ``@st.cache_resource`` 로 감싼 객체는 모든 세션·브라우저 탭에서 같은
@@ -33,4 +33,4 @@ def get_registry() -> runner.RunRegistry:
     Returns:
         재실행되어도 같은 레지스트리 객체.
     """
-    return runner.RunRegistry()
+    return runs.RunRegistry()
