@@ -166,7 +166,9 @@ async def run_pipeline(
                 )
                 items.append(item)
         finally:
-            on_progress("임시 노트북 삭제 중")
+            # 여기서 on_progress 를 부르지 않는다. 진행 콜백은 Streamlit
+            # API 를 호출하는데, 사용자가 페이지를 이동한 순간 스크립트가
+            # 중단되어 아래 삭제에 도달하지 못하고 노트북이 남는다.
             await client.notebooks.delete(notebook.id)
 
     return models.RunResult(
