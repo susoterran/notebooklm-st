@@ -1,6 +1,7 @@
 """라이브러리 예외 → 화면 문구 변환 테스트."""
 
 from notebooklm import exceptions
+from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import errors
 
@@ -86,3 +87,20 @@ def test_unmapped_library_error_falls_back() -> None:
     message = errors.to_message(exceptions.NotebookLMError("무슨 일이지"))
     assert message.level == "error"
     assert message.text
+
+
+def test_login_redirect_tells_user_to_log_in_again() -> None:
+    """라이브러리가 공개 예외로 감싸지 않는 로그인 리다이렉트도 안내한다.
+
+    ``_LoginRedirectError`` 는 ``NotebookLMError`` 가 아니라 ``ValueError``
+    라 기본 분기로 새기 쉽다. 실제로 새면 화면에 내부 클래스명과 구글
+    URL 이 그대로 찍히므로 여기서 막는다.
+    """
+    error = _auth_extraction._LoginRedirectError(
+        "Authentication expired or invalid. Final URL: https://accounts.google.com/x"
+    )
+
+    message = errors.to_message(error)
+
+    assert message.level == "error"
+    assert "notebooklm login" in message.text

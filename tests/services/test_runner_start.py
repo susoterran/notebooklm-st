@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 from notebooklm import exceptions
+from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import models
 from notebooklm_st.services import runner, runs, store
@@ -198,3 +199,33 @@ def test_save_failure_marks_the_run_as_failed(db_path, monkeypatch) -> None:
     assert handle.status == "failed"
     assert handle.error_level == "error"
     assert "이력 저장" in (handle.error_message or "")
+
+
+def test_login_redirect_is_reported_as_a_login_hint(db_path) -> None:
+    """로그인 리다이렉트는 재로그인 안내로 보여 준다.
+
+    라이브러리가 이 예외를 ``NotebookLMError`` 로 감싸지 않으므로 넓은
+    핸들러로 새면 "예상 못 한 오류" 와 함께 구글 URL 이 화면에 노출된다.
+    """
+    registry = runs.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """토큰 조회가 로그인 화면으로 튕긴 상황을 흉내 내는 가짜."""
+        raise _auth_extraction._LoginRedirectError(
+            "Authentication expired or invalid."
+            " Final URL: https://accounts.google.com/x"
+        )
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    handle = wait_for(registry, started.run_id)
+
+    assert handle.status == "failed"
+    assert handle.error_level == "error"
+    assert "notebooklm login" in (handle.error_message or "")
+    assert "accounts.google.com" not in (handle.error_message or "")

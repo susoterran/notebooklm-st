@@ -7,8 +7,6 @@ import threading
 from collections.abc import Callable, Coroutine, Sequence
 from typing import Any
 
-from notebooklm import exceptions
-
 from notebooklm_st.core import errors, models, youtube
 from notebooklm_st.services import nlm, runs, store
 
@@ -95,7 +93,7 @@ def _work(
 
     try:
         result = asyncio.run(pipeline(url, questions, on_progress))
-    except exceptions.NotebookLMError as error:
+    except errors.MAPPED_ERRORS as error:
         message = errors.to_message(error)
         logger.info("실행 %s 실패: %s", run_id, message.text)
         registry.fail(run_id, message.text, message.level)

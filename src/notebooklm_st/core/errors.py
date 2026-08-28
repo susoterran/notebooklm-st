@@ -5,6 +5,38 @@ from typing import Literal
 
 from notebooklm import exceptions
 
+# 토큰 조회가 구글 로그인 화면으로 튕기면 라이브러리는 이를 공개 예외가
+# 아니라 private ``_LoginRedirectError`` (``ValueError`` 하위) 로 올린다.
+# 라이브러리 자신의 CLI 도 이걸 "Unexpected error" 로 흘리므로, 우리가
+# 직접 잡지 않으면 화면에 내부 클래스명과 구글 URL 이 그대로 노출된다.
+# private 이라 위치가 바뀔 수 있으니 못 찾으면 매핑만 포기하고 앱은
+# 그대로 뜨게 둔다.
+try:
+    from notebooklm._auth import extraction as _auth_extraction
+
+    _LOGIN_REDIRECT_ERRORS: tuple[type[Exception], ...] = (
+        _auth_extraction._LoginRedirectError,
+    )
+except (ImportError, AttributeError):  # pragma: no cover - 구조 변경 대비
+    _LOGIN_REDIRECT_ERRORS = ()
+
+MAPPED_ERRORS: tuple[type[Exception], ...] = (
+    exceptions.NotebookLMError,
+    *_LOGIN_REDIRECT_ERRORS,
+)
+"""``to_message`` 가 화면 문구로 바꿀 수 있는 예외들.
+
+호출자는 이 튜플로 ``except`` 를 잡는다. 잡는 범위와 바꾸는 범위를 한
+곳에서 같이 정의해 두면 둘이 어긋나지 않는다.
+"""
+
+_LOGIN_ERRORS: tuple[type[Exception], ...] = (
+    exceptions.AuthError,
+    exceptions.HeadlessLoginRequiredError,
+    *_LOGIN_REDIRECT_ERRORS,
+)
+"""재로그인으로만 풀리는 예외들."""
+
 _LOGIN_HINT = (
     "인증이 만료되었습니다. 터미널에서 "
     "`uv run notebooklm login` 을 다시 실행하세요."
@@ -19,7 +51,7 @@ class UserMessage:
     level: Literal["info", "error"]
 
 
-def to_message(error: exceptions.NotebookLMError) -> UserMessage:
+def to_message(error: Exception) -> UserMessage:
     """라이브러리 예외를 화면 문구로 바꾼다.
 
     자막이 없는 영상은 도구의 오류가 아니라 그 영상의 성질이므로
@@ -31,7 +63,8 @@ def to_message(error: exceptions.NotebookLMError) -> UserMessage:
     ``SourceError`` 검사를 넣는다면 반드시 그 뒤에 와야 한다.
 
     Args:
-        error: notebooklm-py 가 올린 예외.
+        error: notebooklm-py 가 올린 예외. 라이브러리가 공개 예외로
+            감싸지 않고 흘리는 로그인 리다이렉트도 받는다.
 
     Returns:
         표시할 문구와 수준.
@@ -49,10 +82,7 @@ def to_message(error: exceptions.NotebookLMError) -> UserMessage:
         return UserMessage(
             "자막이 없거나 소스로 쓸 수 없는 영상입니다.", "info"
         )
-    if isinstance(
-        error,
-        exceptions.AuthError | exceptions.HeadlessLoginRequiredError,
-    ):
+    if isinstance(error, _LOGIN_ERRORS):
         return UserMessage(_LOGIN_HINT, "error")
     if isinstance(error, exceptions.RateLimitError):
         return UserMessage(
