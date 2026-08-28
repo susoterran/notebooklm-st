@@ -15,11 +15,14 @@ TEMP_TITLE_PREFIX = "tmp-"
 
 
 class ReferenceLike(Protocol):
-    """답변에 딸려 오는 인용 한 건."""
+    """답변에 딸려 오는 인용 한 건.
 
-    citation_number: int
-    cited_text: str
-    score: float
+    라이브러리의 ``ChatReference`` 는 세 필드가 모두 ``None`` 일 수 있다.
+    """
+
+    citation_number: int | None
+    cited_text: str | None
+    score: float | None
 
 
 class AskResultLike(Protocol):
@@ -200,14 +203,7 @@ async def _ask_one(
             ),
             None,
         )
-    citations = tuple(
-        models.Citation(
-            number=reference.citation_number,
-            text=reference.cited_text,
-            score=reference.score,
-        )
-        for reference in result.references
-    )
+    citations = _to_citations(result.references)
     return (
         models.AnswerItem(
             question_text=question.text,
@@ -217,3 +213,35 @@ async def _ask_one(
         ),
         result.conversation_id,
     )
+
+
+def _to_citations(
+    references: Sequence[ReferenceLike],
+) -> tuple[models.Citation, ...]:
+    """인용을 화면과 저장이 그대로 쓸 수 있는 형태로 정규화한다.
+
+    번호나 본문이 없는 인용은 근거로 보여 줄 값어치가 없으므로 버리고,
+    점수만 없는 경우 0.0 으로 채운다. 경계에서 한 번 정리해 두면 화면과
+    저장 코드가 ``None`` 을 다루지 않아도 된다.
+
+    Args:
+        references: 라이브러리가 돌려준 인용 목록.
+
+    Returns:
+        번호와 본문이 모두 있는 인용만 담은 튜플.
+    """
+    citations: list[models.Citation] = []
+    for reference in references:
+        number = reference.citation_number
+        text = reference.cited_text
+        if number is None or not text:
+            continue
+        score = reference.score
+        citations.append(
+            models.Citation(
+                number=number,
+                text=text,
+                score=score if score is not None else 0.0,
+            )
+        )
+    return tuple(citations)

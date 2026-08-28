@@ -283,3 +283,44 @@ def test_progress_callback_reports_each_stage():
     assert any("인덱싱" in text for text in messages)
     assert "질문 1/2" in " ".join(messages)
     assert "질문 2/2" in " ".join(messages)
+
+
+def test_incomplete_citations_are_dropped():
+    """번호나 본문이 없는 인용은 결과에서 버린다."""
+    calls = []
+    chat = FakeChat(
+        calls,
+        results=[
+            FakeAskResult(
+                "답변",
+                "conv-0",
+                references=[
+                    FakeReference(1, "온전한 구절", 0.9),
+                    FakeReference(None, "번호가 없다", 0.5),
+                    FakeReference(2, None, 0.5),
+                    FakeReference(3, "", 0.5),
+                ],
+            )
+        ],
+    )
+    result = run(URL, make_questions("하나"), FakeClient(calls, chat=chat))
+    assert result.items[0].citations == (
+        models.Citation(number=1, text="온전한 구절", score=0.9),
+    )
+
+
+def test_missing_citation_score_becomes_zero():
+    """점수가 없는 인용은 0.0 으로 채운다."""
+    calls = []
+    chat = FakeChat(
+        calls,
+        results=[
+            FakeAskResult(
+                "답변",
+                "conv-0",
+                references=[FakeReference(1, "구절", None)],
+            )
+        ],
+    )
+    result = run(URL, make_questions("하나"), FakeClient(calls, chat=chat))
+    assert result.items[0].citations[0].score == 0.0
