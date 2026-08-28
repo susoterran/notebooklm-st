@@ -6,7 +6,7 @@
 
 import streamlit as st
 
-from notebooklm_st.pages import ask, history, question_admin
+from notebooklm_st.pages import ask, history, maintenance, question_admin
 
 
 def main() -> None:
@@ -17,6 +17,7 @@ def main() -> None:
             st.Page(ask.render, title="질의", default=True),
             st.Page(question_admin.render, title="질문 관리"),
             st.Page(history.render, title="이력"),
+            st.Page(maintenance.render, title="정리"),
         ]
     )
     navigation.run()

@@ -175,6 +175,53 @@ async def run_pipeline(
     )
 
 
+async def list_temp_notebooks(
+    client_factory: ClientFactory = default_client_factory,
+) -> list[models.TempNotebook]:
+    """정리 대상으로 남아 있는 임시 노트북을 찾는다.
+
+    제목이 ``tmp-`` 로 시작하는 것만 고른다. 사용자가 손으로 만든
+    노트북은 건드리지 않는다.
+
+    Args:
+        client_factory: 클라이언트 컨텍스트를 여는 팩토리.
+
+    Returns:
+        임시 노트북 목록.
+    """
+    async with client_factory() as client:
+        notebooks = await client.notebooks.list()
+    return [
+        models.TempNotebook(id=item.id, title=item.title)
+        for item in notebooks
+        if item.title.startswith(TEMP_TITLE_PREFIX)
+    ]
+
+
+async def delete_notebooks(
+    notebook_ids: Sequence[str],
+    client_factory: ClientFactory = default_client_factory,
+) -> int:
+    """주어진 노트북들을 지운다.
+
+    ``notebooks.delete`` 는 멱등적이라 이미 없는 노트북을 지워도
+    예외가 나지 않는다.
+
+    Args:
+        notebook_ids: 지울 노트북 ID 목록.
+        client_factory: 클라이언트 컨텍스트를 여는 팩토리.
+
+    Returns:
+        삭제를 시도한 개수.
+    """
+    if not notebook_ids:
+        return 0
+    async with client_factory() as client:
+        for notebook_id in notebook_ids:
+            await client.notebooks.delete(notebook_id)
+    return len(notebook_ids)
+
+
 async def _ask_one(
     client: ClientLike, notebook_id: str, question: models.Question
 ) -> tuple[models.AnswerItem, str | None]:
