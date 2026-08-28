@@ -1,0 +1,172 @@
+"""백그라운드 실행 시작 테스트."""
+
+import pathlib
+import sqlite3
+from collections.abc import Iterator
+
+import pytest
+from notebooklm import exceptions
+
+from notebooklm_st.core import models
+from notebooklm_st.services import runner, store
+
+URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+@pytest.fixture
+def db_path(tmp_path) -> Iterator[pathlib.Path]:
+    """스키마가 준비된 임시 DB 경로를 준다."""
+    path = tmp_path / "runner.db"
+    connection = store.connect(path)
+    connection.close()
+    yield path
+
+
+def make_questions(*texts: str) -> list[models.Question]:
+    """테스트용 질문 목록을 만든다."""
+    return [
+        models.Question(
+            id=index,
+            text=text,
+            created_at="2026-08-28T10:00:00",
+            updated_at="2026-08-28T10:00:00",
+        )
+        for index, text in enumerate(texts, start=1)
+    ]
+
+
+def wait_for(registry: runner.RunRegistry, run_id: str) -> runner.RunHandle:
+    """실행이 끝날 때까지 기다렸다가 핸들을 돌려준다."""
+    runner.join_all(timeout=5.0)
+    handle = registry.get(run_id)
+    assert handle is not None
+    assert handle.status != "running"
+    return handle
+
+
+def test_successful_run_saves_history_and_marks_done(db_path) -> None:
+    """성공하면 이력에 저장하고 done 으로 표시한다."""
+    registry = runner.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """진행 문구를 남기고 결과를 돌려주는 가짜."""
+        on_progress("자막 인덱싱 중")
+        return models.RunResult(
+            url=url,
+            video_id="dQw4w9WgXcQ",
+            items=(
+                models.AnswerItem(
+                    question_text=questions[0].text,
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                ),
+            ),
+        )
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    handle = wait_for(registry, started.run_id)
+
+    assert handle.status == "done"
+    assert handle.result is not None
+    assert handle.progress == ["자막 인덱싱 중"]
+    connection = sqlite3.connect(db_path)
+    try:
+        count = connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1
+
+
+def test_library_error_is_recorded_as_user_message(db_path) -> None:
+    """라이브러리 예외는 사용자 문구로 바뀌어 기록된다."""
+    registry = runner.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """항상 자막 없음 예외를 던지는 가짜."""
+        raise exceptions.SourceAddError(url)
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    handle = wait_for(registry, started.run_id)
+
+    assert handle.status == "failed"
+    assert handle.error_level == "info"
+    assert "자막" in (handle.error_message or "")
+
+
+def test_unexpected_error_does_not_leave_the_run_running(db_path) -> None:
+    """예상 못 한 예외가 나도 실행이 running 에 머물지 않는다."""
+    registry = runner.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """라이브러리 예외가 아닌 오류를 던지는 가짜."""
+        raise RuntimeError("예상 못 한 오류")
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    handle = wait_for(registry, started.run_id)
+
+    assert handle.status == "failed"
+    assert handle.error_level == "error"
+    assert handle.error_message
+
+
+def test_failed_run_is_not_saved_to_history(db_path) -> None:
+    """실패한 실행은 이력에 남기지 않는다."""
+    registry = runner.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """항상 실패하는 가짜."""
+        raise exceptions.SourceAddError(url)
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    wait_for(registry, started.run_id)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        count = connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 0
+
+
+def test_video_id_is_extracted_from_the_url(db_path) -> None:
+    """핸들에 URL 에서 뽑은 영상 ID 가 담긴다."""
+    registry = runner.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """즉시 빈 결과를 돌려주는 가짜."""
+        return models.RunResult(url=url, video_id="", items=())
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    wait_for(registry, started.run_id)
+    assert started.video_id == "dQw4w9WgXcQ"
