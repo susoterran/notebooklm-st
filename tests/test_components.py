@@ -4,7 +4,7 @@ from streamlit.testing import v1
 
 
 def test_progress_status_renders_without_error() -> None:
-    """진행 상자가 예외 없이 렌더된다."""
+    """진행 상자가 열리고 보고한 문구가 화면에 나온다."""
 
     def script():
         from notebooklm_st.components import run_progress
@@ -15,6 +15,9 @@ def test_progress_status_renders_without_error() -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "1단계" in rendered
+    assert "2단계" in rendered
 
 
 def test_answer_view_renders_success_and_failure() -> None:
@@ -48,10 +51,13 @@ def test_answer_view_renders_success_and_failure() -> None:
     headers = [element.value for element in app.subheader]
     assert headers == ["핵심 주장은?", "결론은?"]
     assert len(app.error) == 1
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "세 가지다." in rendered
+    assert "근거 구절" in rendered
 
 
 def test_answer_view_handles_empty_list() -> None:
-    """빈 목록을 넘기면 예외 없이 아무것도 그리지 않는다."""
+    """빈 목록을 받으면 아무 카드도 그리지 않는다."""
 
     def script():
         from notebooklm_st.components import answer_view
@@ -60,3 +66,5 @@ def test_answer_view_handles_empty_list() -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
+    assert len(app.subheader) == 0
+    assert len(app.error) == 0
