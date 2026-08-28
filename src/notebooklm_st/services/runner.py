@@ -6,8 +6,8 @@ import datetime
 import pathlib
 import threading
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from typing import Any, Literal, cast
+from collections.abc import Callable, Coroutine, Sequence
+from typing import Any, Literal
 
 from notebooklm import exceptions
 
@@ -176,7 +176,8 @@ class RunRegistry:
             self._handles.pop(run_id, None)
 
 
-PipelineCallable = Callable[..., Awaitable[models.RunResult]]
+# Coroutine 의 Send/Throw 타입은 쓰지 않으므로 Any 로 둔다.
+PipelineCallable = Callable[..., Coroutine[Any, Any, models.RunResult]]
 
 _threads: list[threading.Thread] = []
 
@@ -255,14 +256,7 @@ def _work(
         registry.append_progress(run_id, message)
 
     try:
-        # PipelineCallable 은 Awaitable 로 선언돼 있어 asyncio.run 이
-        # 기대하는 Coroutine 과 정확히 맞지 않는다. 실제로는 항상
-        # 코루틴을 돌려주므로 경계에서 한 번만 캐스팅한다.
-        coroutine = cast(
-            Coroutine[Any, Any, models.RunResult],
-            pipeline(url, questions, on_progress),
-        )
-        result = asyncio.run(coroutine)
+        result = asyncio.run(pipeline(url, questions, on_progress))
     except exceptions.NotebookLMError as error:
         message = errors.to_message(error)
         registry.fail(run_id, message.text, message.level)
@@ -273,11 +267,21 @@ def _work(
         registry.fail(run_id, f"예상 못 한 오류: {error}", "error")
         return
 
-    connection = store.connect(db_path)
     try:
-        store.save_run(connection, result)
-    finally:
-        connection.close()
+        connection = store.connect(db_path)
+        try:
+            store.save_run(connection, result)
+        finally:
+            connection.close()
+    except Exception as error:
+        # 스레드 최상위에서만 넓게 잡는다. 이력 저장이 실패했는데
+        # 상태를 남기지 않으면 화면이 영원히 "실행 중" 에 머문다.
+        registry.fail(
+            run_id,
+            f"답변은 받았으나 이력 저장에 실패했습니다: {error}",
+            "error",
+        )
+        return
     registry.finish(run_id, result)
 
 

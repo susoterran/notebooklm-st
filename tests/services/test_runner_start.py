@@ -170,3 +170,31 @@ def test_video_id_is_extracted_from_the_url(db_path) -> None:
     )
     wait_for(registry, started.run_id)
     assert started.video_id == "dQw4w9WgXcQ"
+
+
+def test_save_failure_marks_the_run_as_failed(db_path, monkeypatch) -> None:
+    """이력 저장이 실패해도 실행이 running 에 머물지 않는다."""
+    registry = runner.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """정상 결과를 돌려주는 가짜."""
+        return models.RunResult(url=url, video_id="dQw4w9WgXcQ", items=())
+
+    def broken_save(connection, result):
+        """항상 실패하는 가짜 저장."""
+        raise sqlite3.OperationalError("disk is full")
+
+    monkeypatch.setattr(store, "save_run", broken_save)
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline=fake_pipeline,
+    )
+    handle = wait_for(registry, started.run_id)
+
+    assert handle.status == "failed"
+    assert handle.error_level == "error"
+    assert "이력 저장" in (handle.error_message or "")
