@@ -318,3 +318,102 @@ def test_auth_gate_relogins_when_the_button_is_pressed(monkeypatch) -> None:
 
     assert not app.exception
     assert len(calls) == 2
+
+
+def test_answer_view_stays_read_only_without_a_save_hook() -> None:
+    """저장 훅이 없으면 편집 상자를 그리지 않는다."""
+
+    def script():
+        """AppTest 진입점 — 훅 없이 답변을 그린다."""
+        from notebooklm_st.components import answer_view
+        from notebooklm_st.core import models
+
+        answer_view.render_items(
+            [
+                models.AnswerItem(
+                    question_title="핵심 주장",
+                    question_text="핵심 주장은?",
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                    id=7,
+                )
+            ]
+        )
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.text_area) == 0
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "세 가지다." in rendered
+
+
+def test_answer_view_stays_read_only_for_an_item_without_an_id() -> None:
+    """저장 훅이 있어도 ID 가 없으면 편집하지 않는다."""
+
+    def script():
+        """AppTest 진입점 — ID 없는 항목에 훅을 준다."""
+        import streamlit as st
+
+        from notebooklm_st.components import answer_view
+        from notebooklm_st.core import models
+
+        if "saved" not in st.session_state:
+            st.session_state["saved"] = []
+        saved = st.session_state["saved"]
+        answer_view.render_items(
+            [
+                models.AnswerItem(
+                    question_title="핵심 주장",
+                    question_text="핵심 주장은?",
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                )
+            ],
+            on_save=lambda answer_id, text: saved.append((answer_id, text)),
+        )
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.text_area) == 0
+
+
+def test_answer_view_saves_the_edited_body() -> None:
+    """편집 상자에 고친 본문을 저장 훅으로 넘긴다."""
+
+    def script():
+        """AppTest 진입점 — 편집 가능한 답변을 그린다."""
+        import streamlit as st
+
+        from notebooklm_st.components import answer_view
+        from notebooklm_st.core import models
+
+        if "saved" not in st.session_state:
+            st.session_state["saved"] = []
+        saved = st.session_state["saved"]
+        answer_view.render_items(
+            [
+                models.AnswerItem(
+                    question_title="핵심 주장",
+                    question_text="핵심 주장은?",
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                    id=7,
+                )
+            ],
+            on_save=lambda answer_id, text: saved.append((answer_id, text)),
+        )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    assert len(app.text_area) == 1
+
+    app.text_area[0].set_value("고친 답변").run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert app.session_state["saved"] == [(7, "고친 답변")]
