@@ -242,3 +242,22 @@ def test_hiding_citations_locks_editing(app_db) -> None:
 
     assert not app.exception
     assert len(app.text_area) == 0
+
+
+def test_selected_run_offers_a_markdown_download(app_db) -> None:
+    """선택한 실행을 마크다운으로 내려받는 버튼을 준다."""
+    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    buttons = app.get("download_button")
+    assert len(buttons) == 1
+    assert buttons[0].proto.url.endswith(".md")
+
+
+def test_download_stays_available_while_citations_are_hidden(app_db) -> None:
+    """인용을 숨긴 동안에도 내려받기는 그대로 있다."""
+    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+    app = v1.AppTest.from_function(script).run()
+    app.checkbox[0].check().run()
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
