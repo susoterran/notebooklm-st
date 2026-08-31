@@ -293,19 +293,25 @@ def render_items(
 실행 선택   (제목 · 시각 · 답변 N건)
 URL
 [ ] 인용 숨기기        ← 켜면 편집이 잠긴다는 안내를 옆에
-▸ 이 이력 삭제         ← 접어 둠. 안에 확인 체크박스 + 삭제 버튼
+▸ 이 이력 삭제         ← 접어 둠. 안에서 2단계 확인을 거친다
 ── 답변 카드들 ──
 ```
 
 - 숨김이 켜지면 `answer_text` 로 거른 표시용 `AnswerItem`(`citations=()`)을
   만들어 넘기고 `on_save=None` 을 준다.
-- 삭제는 접은 영역 안에서 확인 체크박스를 거친다. 새 Streamlit API 를 끌어오지
-  않는다.
-- 삭제 직후 `st.session_state` 에서 `history_selected` 를 지우고 `st.rerun()`
-  한다. 지우지 않으면 selectbox 가 사라진 객체를 가리킨다.
+- 삭제는 접은 영역 안에서 **2단계**를 거친다. "이 이력 삭제" 를 누르면 그
+  실행 ID 를 세션에 적어 두고, 다시 그려진 화면에서 "정말 삭제" 를 눌러야
+  실제로 지워진다. 새 Streamlit API 를 끌어오지 않는다.
+- 확인 상태는 **위젯 키가 아닌 우리 세션 키**에 둔다. 위젯이 만들어진 뒤
+  그 위젯의 `st.session_state` 키를 건드리면 Streamlit 이 예외를 던지므로,
+  삭제 후 상태를 되돌리려면 우리가 소유한 키여야 한다. 선택된 실행이 바뀌면
+  적어 둔 ID 와 어긋나므로 확인이 저절로 풀린다.
+- **삭제 후 `history_selected` 를 손댈 필요는 없다.** 선택된 항목이 옵션에서
+  사라져도 Streamlit 은 예외 없이 남은 첫 항목으로 되돌린다(AppTest 로 실측
+  확인). 위젯 키를 건드리지 않는 편이 안전하다.
 
 세션 키는 모듈 상수로 정의한다: `_SELECTED_KEY`, `_HIDE_CITATIONS_KEY`,
-`_DELETE_CONFIRM_KEY`.
+`_DELETE_ARMED_KEY`.
 
 ### 8.3 `components/schema_gate.py` (신규)
 
