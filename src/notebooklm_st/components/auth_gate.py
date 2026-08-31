@@ -13,8 +13,8 @@ _RETRY_KEY = "auth_gate_retry"
 
 _EXPIRED_HINT = (
     "인증이 만료되었고 자동 복구도 실패했습니다."
-    " 재인증을 누르면 브라우저 창이 열립니다."
-    " 구글 로그인을 마치면 앱이 이어서 진행합니다."
+    " 재인증을 누르면 상태를 다시 확인하고, 그래도 만료면 브라우저 창이"
+    " 열립니다. 구글 로그인을 마치면 앱이 이어서 진행합니다."
 )
 
 _ProgressAction = Callable[[Callable[[str], None]], bool]
@@ -38,7 +38,7 @@ def render() -> bool:
 
     st.error(_EXPIRED_HINT)
     if st.button("재인증", key=_RETRY_KEY) and _run(
-        gate.relogin, "브라우저에서 구글 로그인을 마쳐 주세요"
+        gate.relogin, "재인증 중 — 창이 열리면 구글 로그인을 마쳐 주세요"
     ):
         st.rerun()
     return gate.ok

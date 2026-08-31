@@ -150,6 +150,29 @@ def test_login_kills_child_on_timeout() -> None:
     assert process.killed is True
 
 
+def test_login_reports_the_exit_code_when_the_child_says_nothing() -> None:
+    """아무 말 없이 죽은 자식도 종료 코드는 알려 준다."""
+    popen = fake_popen_factory(FakeProcess(code=9), [])
+    seen: list[str] = []
+
+    auth.run_login(seen.append, popen=popen)
+
+    assert seen
+    assert "9" in seen[-1]
+
+
+def test_login_reports_the_timeout() -> None:
+    """제한 시간 초과도 화면에 남긴다."""
+    expired = subprocess.TimeoutExpired(cmd="notebooklm login", timeout=1)
+    popen = fake_popen_factory(FakeProcess(wait_error=expired), [])
+    seen: list[str] = []
+
+    auth.run_login(seen.append, timeout=30.0, popen=popen)
+
+    assert seen
+    assert "30" in seen[-1]
+
+
 class Recorder:
     """호출 횟수를 세는 가짜 함수."""
 
@@ -205,14 +228,34 @@ def test_gate_reports_failure_when_login_also_fails() -> None:
     assert gate.ok is False
 
 
-def test_relogin_runs_even_after_a_successful_check() -> None:
-    """사용자가 직접 누른 재인증은 확인을 건너뛰고 바로 로그인한다."""
-    gate, probe, login = make_gate([True], [True])
+def test_relogin_rechecks_before_opening_a_browser() -> None:
+    """자동 확인이 실패한 뒤 인증이 되살아났으면 브라우저를 안 띄운다."""
+    gate, probe, login = make_gate([False, True], [False])
     gate.ensure(lambda message: None)
 
     assert gate.relogin(lambda message: None) is True
-    assert probe.calls == 1
+    assert probe.calls == 2
     assert login.calls == 1
+
+
+def test_relogin_logs_in_when_the_recheck_also_fails() -> None:
+    """다시 확인해도 만료면 그때 브라우저 로그인을 돌린다."""
+    gate, probe, login = make_gate([False, False], [False, True])
+    gate.ensure(lambda message: None)
+
+    assert gate.relogin(lambda message: None) is True
+    assert probe.calls == 2
+    assert login.calls == 2
+
+
+def test_gate_never_leaves_the_progress_box_empty() -> None:
+    """확인만 하고 끝나도 진행 문구를 한 줄은 남긴다."""
+    gate, _, _ = make_gate([True])
+    seen: list[str] = []
+
+    gate.ensure(seen.append)
+
+    assert seen
 
 
 def test_gate_reports_whether_it_has_run() -> None:

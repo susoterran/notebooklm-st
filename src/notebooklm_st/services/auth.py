@@ -26,6 +26,13 @@ CLI 자신도 브라우저를 300초까지만 기다리므로 보통은 그쪽�
 이 값은 그게 동작하지 않았을 때를 위한 뒷받침이다.
 """
 
+CHECK_NOTICE = "인증 상태 확인 중"
+"""확인 단계가 화면에 남기는 문구.
+
+확인은 콜백을 부르지 않으므로 이 줄이 없으면 상자가 빈 채로 몇 초 동안
+멈춰 있고, 실패로 끝나면 단서가 한 줄도 남지 않는다.
+"""
+
 
 class ProcessLike(Protocol):
     """로그인 자식 프로세스의 최소 모양."""
@@ -86,6 +93,10 @@ def run_login(
     끝나므로 표준 입력을 막아 둔다. 이미 로그인된 브라우저 프로필이
     남아 있으면 사용자가 아무것도 하지 않아도 통과한다.
 
+    실패는 반드시 한 줄을 남긴다. 자식이 아무 말도 못 하고 죽으면
+    화면에 빈 상자와 "실패" 만 남아, 무엇이 잘못됐는지 알아낼 단서가
+    아무것도 없다.
+
     Args:
         on_progress: 자식의 출력 한 줄을 받는 콜백.
         timeout: 자식을 기다리는 최대 초.
@@ -112,10 +123,14 @@ def run_login(
                 break
     remaining = max(deadline - time.monotonic(), 0.0)
     try:
-        return process.wait(timeout=remaining) == 0
+        code = process.wait(timeout=remaining)
     except subprocess.TimeoutExpired:
         process.kill()
+        on_progress(f"로그인이 {int(timeout)}초 안에 끝나지 않아 멈췄습니다.")
         return False
+    if code != 0:
+        on_progress(f"로그인 CLI 가 종료 코드 {code} 로 끝났습니다.")
+    return code == 0
 
 
 class AuthGate:
@@ -173,26 +188,41 @@ class AuthGate:
         with self._lock:
             if self._tried:
                 return self._ok
-            self._tried = True
-            self._ok = self._probe() or self._login(on_progress)
-            return self._ok
+            return self._verify(on_progress)
 
     def relogin(self, on_progress: Callable[[str], None]) -> bool:
-        """사용자가 직접 요청한 재로그인을 돌린다.
+        """사용자가 직접 요청한 재인증을 돌린다.
 
-        확인을 건너뛴다. 사용자가 눌렀다는 것은 이미 인증이 안 된다는
-        뜻이므로 다시 확인해 봐야 시간만 든다.
+        확인부터 다시 한다. 실패 판정은 이 객체가 프로세스가 끝날 때까지
+        들고 있는데, 그 사이 다른 경로로 인증이 되살아날 수 있다(터미널
+        로그인, 구글 쪽 세션 복구). 그때 확인 없이 브라우저부터 띄우면
+        멀쩡한 인증을 두고 헛수고를 하고, 그 로그인마저 실패하면 앱은
+        영영 만료 상태로 남는다. 확인은 몇 초면 끝난다.
 
         Args:
-            on_progress: 로그인 진행 문구를 받는 콜백.
+            on_progress: 진행 문구를 받는 콜백.
 
         Returns:
-            로그인이 성공하면 ``True``.
+            인증이 쓸 수 있는 상태면 ``True``.
         """
         with self._lock:
-            self._tried = True
-            self._ok = self._login(on_progress)
-            return self._ok
+            return self._verify(on_progress)
+
+    def _verify(self, on_progress: Callable[[str], None]) -> bool:
+        """확인하고, 만료됐으면 로그인해 결과를 기록한다.
+
+        호출자가 ``self._lock`` 을 쥔 채로 불러야 한다.
+
+        Args:
+            on_progress: 진행 문구를 받는 콜백.
+
+        Returns:
+            인증이 쓸 수 있는 상태면 ``True``.
+        """
+        self._tried = True
+        on_progress(CHECK_NOTICE)
+        self._ok = self._probe() or self._login(on_progress)
+        return self._ok
 
 
 async def _open_once(client_factory: nlm.ClientFactory) -> None:
