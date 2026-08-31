@@ -39,8 +39,8 @@ def test_dashboard_shows_a_running_run(app_db) -> None:
     assert "자막 인덱싱 중" in rendered
 
 
-def test_dashboard_shows_answers_of_a_finished_run(app_db) -> None:
-    """완료된 실행의 답변을 보여준다."""
+def test_dashboard_shows_a_summary_of_a_finished_run(app_db) -> None:
+    """완료된 실행은 답변 대신 완료 요약을 보여준다."""
 
     def script():
         """AppTest 진입점 — 완료된 실행을 넣고 현황을 그린다."""
@@ -73,9 +73,10 @@ def test_dashboard_shows_answers_of_a_finished_run(app_db) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert [element.value for element in app.subheader] == ["핵심 주장"]
+    summary = " ".join(element.value for element in app.success)
+    assert "답변 1건" in summary
     rendered = " ".join(element.value for element in app.markdown)
-    assert "세 가지다." in rendered
+    assert "세 가지다." not in rendered
 
 
 def test_dashboard_polls_without_error_on_repeated_runs(app_db) -> None:
@@ -144,6 +145,7 @@ def test_real_background_run_reaches_the_dashboard(app_db) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert [element.value for element in app.subheader] == ["핵심 주장"]
+    summary = " ".join(element.value for element in app.success)
+    assert "답변 1건" in summary
     rendered = " ".join(element.value for element in app.markdown)
-    assert "세 가지다." in rendered
+    assert "세 가지다." not in rendered

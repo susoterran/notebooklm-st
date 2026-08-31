@@ -157,8 +157,8 @@ def test_render_run_shows_latest_progress_while_running() -> None:
     assert "임시 노트북 생성 중" not in rendered
 
 
-def test_render_run_shows_answers_when_done() -> None:
-    """완료된 실행은 답변과 인용을 보여준다."""
+def test_render_run_shows_a_summary_when_done() -> None:
+    """완료된 실행은 답변 본문 대신 요약만 보여준다."""
 
     def script():
         """AppTest 진입점 — 완료된 실행 카드를 그린다."""
@@ -200,10 +200,67 @@ def test_render_run_shows_answers_when_done() -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert [element.value for element in app.subheader] == ["핵심 주장"]
+    summary = " ".join(element.value for element in app.success)
+    assert "답변 1건" in summary
+    assert "이력" in summary
+    assert len(app.subheader) == 0
+    assert len(app.warning) == 0
     rendered = " ".join(element.value for element in app.markdown)
-    assert "세 가지다." in rendered
-    assert "근거 구절" in rendered
+    assert "세 가지다." not in rendered
+    assert "근거 구절" not in rendered
+
+
+def test_render_run_reports_failed_items_when_done() -> None:
+    """완료된 실행에 답변 못 받은 항목이 있으면 제목과 함께 알린다."""
+
+    def script():
+        """AppTest 진입점 — 항목 하나가 실패한 실행 카드를 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.core import models
+        from notebooklm_st.services import runs
+
+        run_progress.render_run(
+            runs.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?", "요약해줘"),
+                started_at="2026-08-28T10:00:00",
+                status="done",
+                progress=[],
+                result=models.RunResult(
+                    url="https://youtu.be/dQw4w9WgXcQ",
+                    video_id="dQw4w9WgXcQ",
+                    items=(
+                        models.AnswerItem(
+                            question_title="핵심 주장",
+                            question_text="핵심 주장은?",
+                            answer="세 가지다.",
+                            citations=(),
+                            error=None,
+                        ),
+                        models.AnswerItem(
+                            question_title="요약",
+                            question_text="요약해줘",
+                            answer=None,
+                            citations=(),
+                            error="응답이 비어 있습니다.",
+                        ),
+                    ),
+                ),
+                error_message=None,
+                error_level=None,
+                finished_at="2026-08-28T10:01:00",
+            )
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    summary = " ".join(element.value for element in app.success)
+    assert "답변 2건" in summary
+    warned = " ".join(element.value for element in app.warning)
+    assert "1건" in warned
+    assert "요약" in warned
 
 
 def test_render_run_uses_info_box_for_a_video_without_captions() -> None:

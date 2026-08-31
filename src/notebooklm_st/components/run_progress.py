@@ -2,7 +2,6 @@
 
 import streamlit as st
 
-from notebooklm_st.components import answer_view
 from notebooklm_st.services import runs
 
 
@@ -42,8 +41,19 @@ def _render_failed(handle: runs.RunHandle) -> None:
 
 
 def _render_done(handle: runs.RunHandle) -> None:
-    """완료된 실행의 답변을 보여준다."""
+    """완료된 실행을 요약 한 줄로 보여준다.
+
+    답변 본문은 그리지 않는다. ``runner`` 는 이력을 DB 에 저장한
+    뒤에야 실행을 done 으로 표시하므로, 여기까지 온 실행은 이력
+    화면에 반드시 있다. 본문 확인과 수정은 거기서 한다.
+    """
     if handle.result is None:
         st.warning("완료되었지만 결과가 비어 있습니다.")
         return
-    answer_view.render_items(handle.result.items)
+    items = handle.result.items
+    st.success(f"완료 — 답변 {len(items)}건. 이력 화면에서 확인하세요.")
+    failed = [item for item in items if item.error is not None]
+    if not failed:
+        return
+    titles = ", ".join(item.question_title for item in failed)
+    st.warning(f"이 중 {len(failed)}건은 답변을 받지 못했습니다: {titles}")
