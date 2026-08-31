@@ -50,11 +50,17 @@ class AnswerItem:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class RunResult:
-    """영상 하나에 질문들을 던진 결과 전체."""
+    """영상 하나에 질문들을 던진 결과 전체.
+
+    ``title`` 은 NotebookLM 이 소스에서 읽어 온 영상 제목이다. 못 얻는
+    실행이 있으므로 없을 수 있고, 그때는 화면이 ``video_id`` 로
+    대신한다.
+    """
 
     url: str
     video_id: str
     items: tuple[AnswerItem, ...]
+    title: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -64,6 +70,7 @@ class RunSummary:
     id: int
     url: str
     video_id: str
+    title: str | None
     created_at: str
     answer_count: int
 

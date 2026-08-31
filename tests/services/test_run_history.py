@@ -19,11 +19,13 @@ def connection(tmp_path) -> Iterator[sqlite3.Connection]:
 
 def make_result(
     url: str = "https://youtu.be/dQw4w9WgXcQ",
+    title: str | None = None,
 ) -> models.RunResult:
     """테스트용 실행 결과를 만든다."""
     return models.RunResult(
         url=url,
         video_id="dQw4w9WgXcQ",
+        title=title,
         items=(
             models.AnswerItem(
                 question_title="핵심 주장",
@@ -126,3 +128,15 @@ def test_run_with_no_answers_is_still_saved(connection) -> None:
     run_id = run_history.save_run(connection, empty)
     assert run_history.load_run_items(connection, run_id) == []
     assert run_history.list_runs(connection)[0].answer_count == 0
+
+
+def test_list_runs_round_trips_the_video_title(connection) -> None:
+    """저장한 영상 제목이 목록에 그대로 돌아온다."""
+    run_history.save_run(connection, make_result(title="밸류에이션 강의"))
+    assert run_history.list_runs(connection)[0].title == "밸류에이션 강의"
+
+
+def test_list_runs_reports_a_missing_title_as_none(connection) -> None:
+    """제목을 못 얻은 실행은 제목이 없는 채로 돌아온다."""
+    run_history.save_run(connection, make_result())
+    assert run_history.list_runs(connection)[0].title is None

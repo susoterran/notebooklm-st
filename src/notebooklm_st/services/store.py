@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS runs (
     id         INTEGER PRIMARY KEY,
     url        TEXT NOT NULL,
     video_id   TEXT NOT NULL,
+    title      TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS answers (
 # 섞일 일이 없으므로 아래 PRAGMA 호출에 그대로 넣어도 안전하다.
 _EXPECTED_COLUMNS: dict[str, frozenset[str]] = {
     "questions": frozenset({"id", "title", "text", "created_at", "updated_at"}),
-    "runs": frozenset({"id", "url", "video_id", "created_at"}),
+    "runs": frozenset({"id", "url", "video_id", "title", "created_at"}),
     "answers": frozenset(
         {
             "id",

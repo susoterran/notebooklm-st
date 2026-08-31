@@ -25,10 +25,10 @@ def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
         저장된 실행의 ID.
     """
     row = connection.execute(
-        "INSERT INTO runs (url, video_id, created_at)"
-        " VALUES (?, ?, ?)"
+        "INSERT INTO runs (url, video_id, title, created_at)"
+        " VALUES (?, ?, ?, ?)"
         " RETURNING id",
-        (result.url, result.video_id, store.now()),
+        (result.url, result.video_id, result.title, store.now()),
     ).fetchone()
     run_id = int(row["id"])
     connection.executemany(
@@ -65,7 +65,7 @@ def list_runs(
         실행 요약 목록.
     """
     rows = connection.execute(
-        "SELECT r.id, r.url, r.video_id, r.created_at,"
+        "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
         " COUNT(a.id) AS answer_count"
         " FROM runs AS r"
         " LEFT JOIN answers AS a ON a.run_id = r.id"
@@ -79,6 +79,7 @@ def list_runs(
             id=int(row["id"]),
             url=row["url"],
             video_id=row["video_id"],
+            title=row["title"],
             created_at=row["created_at"],
             answer_count=int(row["answer_count"]),
         )
