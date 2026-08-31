@@ -4,7 +4,7 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
-from notebooklm_st.core import models
+from notebooklm_st.core import answer_text, models
 from notebooklm_st.services import run_history
 
 _SELECTED_KEY = "history_selected"
@@ -12,6 +12,8 @@ _SELECTED_KEY = "history_selected"
 # 목록은 한 줄로 읽혀야 값을 한다. 질문 관리 화면과 같은 상한을
 # 쓴다.
 _TITLE_MAX_CHARS = 60
+
+_HIDE_CITATIONS_KEY = "history_hide_citations"
 
 
 def render() -> None:
@@ -32,9 +34,19 @@ def render() -> None:
     if selected is None:
         return
     st.caption(selected.url)
-    answer_view.render_items(
-        run_history.load_run_items(connection, selected.id)
+    hidden = st.checkbox(
+        "인용 숨기기",
+        key=_HIDE_CITATIONS_KEY,
+        help="인용 번호와 인용 본문, 맨 아래 후속 제안을 감춥니다."
+        " 숨기는 동안에는 답변을 수정할 수 없습니다.",
     )
+    items = run_history.load_run_items(connection, selected.id)
+    if hidden:
+        answer_view.render_items(
+            [answer_text.for_display(item) for item in items]
+        )
+        return
+    answer_view.render_items(items)
 
 
 def _format_run(run: models.RunSummary) -> str:

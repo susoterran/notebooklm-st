@@ -16,6 +16,7 @@ def script():
 def make_result(
     url: str = "https://youtu.be/dQw4w9WgXcQ",
     title: str | None = None,
+    answer: str = "세 가지다.",
 ) -> models.RunResult:
     """테스트용 실행 결과를 만든다."""
     return models.RunResult(
@@ -26,7 +27,7 @@ def make_result(
             models.AnswerItem(
                 question_title="핵심 주장",
                 question_text="핵심 주장은?",
-                answer="세 가지다.",
+                answer=answer,
                 citations=(
                     models.Citation(number=1, text="근거 구절", score=0.9),
                 ),
@@ -92,3 +93,47 @@ def test_run_label_shortens_a_long_title(app_db) -> None:
 
     label = app.selectbox[0].options[0]
     assert label.startswith("가" * 59 + "… · ")
+
+
+ANSWER_WITH_CITATIONS = "세 가지다 [1].\n\n---\n💡 **다음으로?**\n제안 문단"
+
+
+def test_citations_are_shown_by_default(app_db) -> None:
+    """기본 상태에서는 인용을 그대로 보여 준다."""
+    run_history.save_run(app_db, make_result(answer=ANSWER_WITH_CITATIONS))
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    labels = [element.label for element in app.expander]
+    assert any(label.startswith("인용") for label in labels)
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "[1]" in rendered
+
+
+def test_hiding_citations_strips_markers_and_the_tail(app_db) -> None:
+    """체크박스를 켜면 인용 번호와 후속 제안이 사라진다."""
+    run_history.save_run(app_db, make_result(answer=ANSWER_WITH_CITATIONS))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.checkbox[0].check().run()
+
+    assert not app.exception
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "[1]" not in rendered
+    assert "제안 문단" not in rendered
+    assert "근거 구절" not in rendered
+
+
+def test_hiding_citations_keeps_the_question_expander(app_db) -> None:
+    """숨겨도 질문 원문은 남는다. 인용이 아니라 기록이다."""
+    run_history.save_run(app_db, make_result(answer=ANSWER_WITH_CITATIONS))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.checkbox[0].check().run()
+
+    labels = [element.label for element in app.expander]
+    assert "질문 원문" in labels
+    assert not any(label.startswith("인용") for label in labels)
