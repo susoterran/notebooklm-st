@@ -478,6 +478,7 @@ def test_schema_gate_keeps_firing_through_the_resource_cache(
         """
         CREATE TABLE questions (
             id         INTEGER PRIMARY KEY,
+            title      TEXT NOT NULL,
             text       TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL

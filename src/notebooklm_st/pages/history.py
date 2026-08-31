@@ -24,7 +24,14 @@ _DELETE_ARMED_KEY = "history_delete_armed"
 
 
 def render() -> None:
-    """최근 실행을 고르고 그 답변들을 보여 준다."""
+    """최근 실행을 고르고 그 답변들을 보여 준다.
+
+    인용 숨기기 체크박스를 켜면 ``answer_text.for_display`` 가 만든
+    사본을 그리는데, 그 사본은 ``id`` 가 없어 편집 상자를 열 수 없는
+    모양이다. 그래서 체크박스가 켜진 동안에는 편집도 함께 잠긴다.
+    삭제는 실수로 한 번에 지워지지 않도록 확인 버튼을 한 번 더
+    거치는 2단계로 되어 있다(``_render_delete`` 참고).
+    """
     st.title("이력")
     connection = session.get_connection()
     runs = run_history.list_runs(connection)
@@ -93,7 +100,7 @@ def _render_delete(
     """
     with st.expander("이 이력 삭제"):
         if st.session_state.get(_DELETE_ARMED_KEY) != selected.id:
-            if st.button("이 이력 삭제", key="history_delete"):
+            if st.button("삭제 준비", key="history_delete"):
                 st.session_state[_DELETE_ARMED_KEY] = selected.id
                 st.rerun()
             return

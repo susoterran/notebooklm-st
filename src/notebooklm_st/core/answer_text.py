@@ -70,9 +70,13 @@ def for_display(item: models.AnswerItem) -> models.AnswerItem:
 
     Returns:
         본문을 거르고 인용을 비운 사본. 본문이 없는 실패 항목은 인용만
-        비운다.
+        비운다. ``id`` 는 물려주지 않는다.
     """
     answer = item.answer
     if answer is not None:
         answer = strip_citation_markers(strip_trailing_block(answer))
-    return dataclasses.replace(item, answer=answer, citations=())
+    # id 를 비워 이 사본이 편집 가능한 모양이 되지 않게 막는다.
+    # answer_view._render_answer 는 id 가 없으면 편집 상자를 열지
+    # 않으므로, 걸러진 본문이 저장 경로로 흘러들 길을 구조적으로
+    # 끊는다.
+    return dataclasses.replace(item, answer=answer, citations=(), id=None)

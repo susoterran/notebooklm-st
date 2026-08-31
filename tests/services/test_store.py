@@ -108,3 +108,4 @@ def test_connect_rejects_a_database_without_the_run_title(tmp_path) -> None:
         store.connect(db_path)
     assert "runs" in str(excinfo.value)
     assert "title" in str(excinfo.value)
+    assert "질문 템플릿" in str(excinfo.value)

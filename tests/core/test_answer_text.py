@@ -73,6 +73,26 @@ def test_for_display_filters_and_empties_citations() -> None:
     assert displayed.question_text == "핵심 주장은?"
 
 
+def test_for_display_drops_the_id() -> None:
+    """표시용 사본은 id 를 물려받지 않는다.
+
+    id 가 남으면 편집 가능한 모양이 되어, 언젠가 숨김 분기 위로
+    저장 배선이 올라오면 걸러진 본문이 원본을 덮어쓸 수 있다.
+    """
+    item = models.AnswerItem(
+        question_title="핵심 주장",
+        question_text="핵심 주장은?",
+        answer="세 가지다.",
+        citations=(),
+        error=None,
+        id=7,
+    )
+
+    displayed = answer_text.for_display(item)
+
+    assert displayed.id is None
+
+
 def test_for_display_keeps_a_failed_item_intact() -> None:
     """본문이 없는 실패 항목은 오류 문구를 그대로 둔다."""
     item = models.AnswerItem(

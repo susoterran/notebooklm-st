@@ -141,9 +141,9 @@ def update_answer(
         "UPDATE answers SET answer = ? WHERE id = ?",
         (stripped, answer_id),
     )
-    connection.commit()
     if cursor.rowcount == 0:
         raise ValueError(f"답변 {answer_id} 을 찾을 수 없습니다.")
+    connection.commit()
 
 
 def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
