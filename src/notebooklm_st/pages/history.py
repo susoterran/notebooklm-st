@@ -54,7 +54,10 @@ def render() -> None:
             [answer_text.for_display(item) for item in items]
         )
         return
-    answer_view.render_items(items)
+    answer_view.render_items(
+        items,
+        on_save=lambda answer_id, text: _save(connection, answer_id, text),
+    )
 
 
 def _format_run(run: models.RunSummary) -> str:
@@ -117,3 +120,18 @@ def _delete(connection: sqlite3.Connection, run_id: int) -> None:
 def _disarm() -> None:
     """적어 둔 삭제 대상을 지운다."""
     st.session_state.pop(_DELETE_ARMED_KEY, None)
+
+
+def _save(connection: sqlite3.Connection, answer_id: int, answer: str) -> None:
+    """고친 답변을 저장하고 화면을 다시 그린다.
+
+    저장 경로에는 필터를 거치지 않은 원문만 흐른다. 인용을 숨긴
+    동안에는 편집 상자 자체를 그리지 않으므로, 걸러진 본문이 여기까지
+    올 길이 없다.
+    """
+    try:
+        run_history.update_answer(connection, answer_id, answer)
+    except ValueError as error:
+        st.error(str(error))
+        return
+    st.rerun()

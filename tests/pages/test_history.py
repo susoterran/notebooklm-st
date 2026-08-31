@@ -60,8 +60,8 @@ def test_selected_run_shows_its_answers(app_db) -> None:
     headers = [element.value for element in app.subheader]
     assert headers == ["핵심 주장"]
     assert not app.exception
+    assert app.text_area[0].value == "세 가지다."
     rendered = " ".join(element.value for element in app.markdown)
-    assert "세 가지다." in rendered
     assert "근거 구절" in rendered
 
 
@@ -191,3 +191,54 @@ def test_delete_keeps_the_other_runs(app_db) -> None:
     assert not app.exception
     remaining = run_history.list_runs(app_db)
     assert [run.url for run in remaining] == ["https://youtu.be/aaaaaaaaaaa"]
+
+
+def test_answer_is_editable_when_citations_are_shown(app_db) -> None:
+    """기본 상태에서는 답변을 고칠 수 있다."""
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.text_area) == 1
+
+
+def test_editing_saves_the_new_body(app_db) -> None:
+    """고친 본문이 이력에 저장된다."""
+    run_id = run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_area[0].set_value("고친 답변").run()
+    app.button(key="answer_save_1").click().run()
+
+    assert not app.exception
+    items = run_history.load_run_items(app_db, run_id)
+    assert items[0].answer == "고친 답변"
+
+
+def test_editing_rejects_an_empty_body(app_db) -> None:
+    """빈 본문으로 저장하면 오류를 보여 주고 원본을 지킨다."""
+    run_id = run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_area[0].set_value("   ").run()
+    app.button(key="answer_save_1").click().run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+    items = run_history.load_run_items(app_db, run_id)
+    assert items[0].answer == "세 가지다."
+
+
+def test_hiding_citations_locks_editing(app_db) -> None:
+    """인용을 숨기는 동안에는 편집 상자를 그리지 않는다."""
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.checkbox[0].check().run()
+
+    assert not app.exception
+    assert len(app.text_area) == 0
