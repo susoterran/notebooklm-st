@@ -97,11 +97,12 @@ def load_run_items(
         run_id: 실행 ID.
 
     Returns:
-        답변 목록. 그런 실행이 없으면 빈 목록.
+        답변 목록. 각 항목은 자기 ``id`` 를 들고 온다. 그런 실행이
+        없으면 빈 목록.
     """
     rows = connection.execute(
-        "SELECT question_title, question_text, answer, citations, error"
-        " FROM answers WHERE run_id = ? ORDER BY id",
+        "SELECT id, question_title, question_text, answer, citations,"
+        " error FROM answers WHERE run_id = ? ORDER BY id",
         (run_id,),
     ).fetchall()
     return [
@@ -111,6 +112,7 @@ def load_run_items(
             answer=row["answer"],
             citations=models.citations_from_json(row["citations"]),
             error=row["error"],
+            id=int(row["id"]),
         )
         for row in rows
     ]

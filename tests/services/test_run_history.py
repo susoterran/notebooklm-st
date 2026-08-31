@@ -140,3 +140,25 @@ def test_list_runs_reports_a_missing_title_as_none(connection) -> None:
     """제목을 못 얻은 실행은 제목이 없는 채로 돌아온다."""
     run_history.save_run(connection, make_result())
     assert run_history.list_runs(connection)[0].title is None
+
+
+def test_load_run_items_carries_the_answer_id(connection) -> None:
+    """이력에서 읽은 답변은 자기 ID 를 들고 온다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    items = run_history.load_run_items(connection, run_id)
+
+    assert [item.id for item in items] == [1, 2]
+
+
+def test_a_fresh_answer_item_has_no_id() -> None:
+    """파이프라인이 갓 만든 항목은 아직 ID 가 없다."""
+    item = models.AnswerItem(
+        question_title="핵심 주장",
+        question_text="핵심 주장은?",
+        answer="세 가지다.",
+        citations=(),
+        error=None,
+    )
+
+    assert item.id is None
