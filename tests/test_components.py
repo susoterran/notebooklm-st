@@ -3,7 +3,7 @@
 from streamlit.testing import v1
 
 from notebooklm_st import session
-from notebooklm_st.services import auth
+from notebooklm_st.services import auth, store
 
 
 def test_answer_view_renders_success_and_failure() -> None:
@@ -417,3 +417,43 @@ def test_answer_view_saves_the_edited_body() -> None:
 
     assert not app.exception
     assert app.session_state["saved"] == [(7, "고친 답변")]
+
+
+def test_schema_gate_explains_a_stale_database(monkeypatch) -> None:
+    """스키마가 어긋나면 트레이스백 대신 안내를 보여 준다."""
+
+    def raise_stale():
+        """낡은 스키마를 만난 커넥션을 흉내낸다."""
+        raise store.StaleSchemaError(
+            "app.db 의 runs 테이블이 오래된 스키마입니다."
+            " 이 파일을 지우고 다시 실행하세요."
+        )
+
+    monkeypatch.setattr(session, "get_connection", raise_stale)
+
+    def script():
+        """AppTest 진입점 — 스키마 게이트를 그린다."""
+        from notebooklm_st.components import schema_gate
+
+        schema_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+    assert "지우고 다시 실행" in app.error[0].value
+
+
+def test_schema_gate_stays_quiet_when_the_schema_matches(app_db) -> None:
+    """스키마가 맞으면 아무것도 그리지 않는다."""
+
+    def script():
+        """AppTest 진입점 — 스키마 게이트를 그린다."""
+        from notebooklm_st.components import schema_gate
+
+        schema_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert not app.error

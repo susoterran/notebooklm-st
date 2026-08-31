@@ -11,7 +11,7 @@
 
 import streamlit as st
 
-from notebooklm_st.components import auth_gate
+from notebooklm_st.components import auth_gate, schema_gate
 from notebooklm_st.pages import (
     ask,
     dashboard,
@@ -26,8 +26,12 @@ def main() -> None:
 
     인증이 안 돼도 페이지는 그대로 띄운다. 질문 관리와 이력은 로컬 DB
     만 쓰므로 인증 없이도 쓸 수 있다.
+
+    DB 스키마부터 확인한다. 어긋난 채로 페이지를 등록하면 어느 화면을
+    열든 커넥션을 여는 순간 트레이스백이 노출된다.
     """
     st.set_page_config(page_title="YouTube 질의응답", layout="wide")
+    schema_gate.render()
     navigation = st.navigation(
         [
             st.Page(ask.render, title="질의", url_path="ask", default=True),
