@@ -1,5 +1,7 @@
 """실행 이력 화면."""
 
+import sqlite3
+
 import streamlit as st
 
 from notebooklm_st import session
@@ -14,6 +16,11 @@ _SELECTED_KEY = "history_selected"
 _TITLE_MAX_CHARS = 60
 
 _HIDE_CITATIONS_KEY = "history_hide_citations"
+
+# 위젯 키가 아니라 우리가 소유한 세션 키다. 위젯이 만들어진 뒤 그
+# 위젯의 키를 건드리면 Streamlit 이 예외를 던지므로, 삭제 후 상태를
+# 되돌리려면 우리 것이어야 한다.
+_DELETE_ARMED_KEY = "history_delete_armed"
 
 
 def render() -> None:
@@ -34,6 +41,7 @@ def render() -> None:
     if selected is None:
         return
     st.caption(selected.url)
+    _render_delete(connection, selected)
     hidden = st.checkbox(
         "인용 숨기기",
         key=_HIDE_CITATIONS_KEY,
@@ -69,3 +77,43 @@ def _shorten(title: str) -> str:
     if len(title) <= _TITLE_MAX_CHARS:
         return title
     return f"{title[: _TITLE_MAX_CHARS - 1]}…"
+
+
+def _render_delete(
+    connection: sqlite3.Connection, selected: models.RunSummary
+) -> None:
+    """접은 영역 안에 2단계 삭제를 그린다.
+
+    첫 누름은 지우려는 실행 ID 를 세션에 적어 둘 뿐이다. 다시 그려진
+    화면에서 확인을 눌러야 실제로 지운다. 선택한 실행이 바뀌면 적어
+    둔 ID 와 어긋나므로 확인이 저절로 풀린다.
+    """
+    with st.expander("이 이력 삭제"):
+        if st.session_state.get(_DELETE_ARMED_KEY) != selected.id:
+            if st.button("이 이력 삭제", key="history_delete"):
+                st.session_state[_DELETE_ARMED_KEY] = selected.id
+                st.rerun()
+            return
+        st.warning("딸린 답변도 함께 사라집니다. 되돌릴 수 없습니다.")
+        left, right = st.columns(2)
+        if left.button("정말 삭제", key="history_delete_confirm"):
+            _delete(connection, selected.id)
+        if right.button("취소", key="history_delete_cancel"):
+            _disarm()
+            st.rerun()
+
+
+def _delete(connection: sqlite3.Connection, run_id: int) -> None:
+    """실행을 지우고 확인 상태를 풀고 화면을 다시 그린다.
+
+    선택 위젯의 키는 건드리지 않는다. 고른 항목이 목록에서 사라져도
+    Streamlit 은 예외 없이 남은 첫 항목으로 되돌린다.
+    """
+    run_history.delete_run(connection, run_id)
+    _disarm()
+    st.rerun()
+
+
+def _disarm() -> None:
+    """적어 둔 삭제 대상을 지운다."""
+    st.session_state.pop(_DELETE_ARMED_KEY, None)

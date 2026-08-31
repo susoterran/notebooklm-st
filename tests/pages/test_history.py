@@ -2,7 +2,7 @@
 
 from streamlit.testing import v1
 
-from notebooklm_st.core import models
+from notebooklm_st.core import models, youtube
 from notebooklm_st.services import run_history
 
 
@@ -21,7 +21,7 @@ def make_result(
     """테스트용 실행 결과를 만든다."""
     return models.RunResult(
         url=url,
-        video_id="dQw4w9WgXcQ",
+        video_id=youtube.extract_video_id(url) or "",
         title=title,
         items=(
             models.AnswerItem(
@@ -137,3 +137,57 @@ def test_hiding_citations_keeps_the_question_expander(app_db) -> None:
     labels = [element.label for element in app.expander]
     assert "질문 원문" in labels
     assert not any(label.startswith("인용") for label in labels)
+
+
+def test_delete_needs_two_steps(app_db) -> None:
+    """첫 번째 누름은 확인만 요청하고 지우지 않는다."""
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert len(run_history.list_runs(app_db)) == 1
+
+
+def test_delete_removes_the_run_after_confirming(app_db) -> None:
+    """확인 버튼까지 누르면 실제로 지운다."""
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+    app.button(key="history_delete_confirm").click().run()
+
+    assert not app.exception
+    assert run_history.list_runs(app_db) == []
+    assert len(app.info) == 1
+
+
+def test_delete_can_be_cancelled(app_db) -> None:
+    """취소하면 아무것도 지우지 않는다."""
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+    app.button(key="history_delete_cancel").click().run()
+
+    assert not app.exception
+    assert len(run_history.list_runs(app_db)) == 1
+
+
+def test_delete_keeps_the_other_runs(app_db) -> None:
+    """고른 실행만 지우고 나머지는 남긴다."""
+    run_history.save_run(app_db, make_result("https://youtu.be/aaaaaaaaaaa"))
+    run_history.save_run(app_db, make_result("https://youtu.be/bbbbbbbbbbb"))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+    app.button(key="history_delete_confirm").click().run()
+
+    assert not app.exception
+    remaining = run_history.list_runs(app_db)
+    assert [run.url for run in remaining] == ["https://youtu.be/aaaaaaaaaaa"]
