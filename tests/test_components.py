@@ -1,5 +1,7 @@
 """UI 조각 렌더 테스트."""
 
+import sqlite3
+
 from streamlit.testing import v1
 
 from notebooklm_st import session
@@ -457,3 +459,71 @@ def test_schema_gate_stays_quiet_when_the_schema_matches(app_db) -> None:
 
     assert not app.exception
     assert not app.error
+
+
+def test_schema_gate_keeps_firing_through_the_resource_cache(
+    monkeypatch, tmp_path
+) -> None:
+    """캐시된 자원 함수를 우회하지 않고도 재실행마다 다시 발동한다.
+
+    ``session.get_connection`` 은 ``st.cache_resource`` 로 감싸여
+    있다. 함수 객체를 monkeypatch 로 통째로 바꿔치기하는 테스트만
+    으로는 이 데코레이터가 예외를 캐싱하지 않고 재실행마다 다시
+    던지는지 검증할 수 없다. 그래서 여기서는 진짜 낡은 스키마의 DB
+    파일을 만들어 실제 캐시 경로를 태운다.
+    """
+    db_path = tmp_path / "stale.db"
+    raw = sqlite3.connect(db_path)
+    raw.executescript(
+        """
+        CREATE TABLE questions (
+            id         INTEGER PRIMARY KEY,
+            text       TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE runs (
+            id         INTEGER PRIMARY KEY,
+            url        TEXT NOT NULL,
+            video_id   TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE answers (
+            id             INTEGER PRIMARY KEY,
+            run_id         INTEGER NOT NULL REFERENCES runs(id)
+                           ON DELETE CASCADE,
+            question_title TEXT NOT NULL,
+            question_text  TEXT NOT NULL,
+            answer         TEXT,
+            citations      TEXT,
+            error          TEXT
+        );
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    monkeypatch.setenv(store.DB_PATH_ENV_VAR, str(db_path))
+    session.get_connection.clear()
+
+    def script():
+        """AppTest 진입점 — 스키마 게이트를 그린다."""
+        from notebooklm_st.components import schema_gate
+
+        schema_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+    assert str(db_path) in app.error[0].value
+
+    app.run()
+
+    assert not app.exception
+    assert len(app.error) == 1
+    assert str(db_path) in app.error[0].value
+
+    session.get_connection.clear()
