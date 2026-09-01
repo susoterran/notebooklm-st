@@ -32,3 +32,10 @@ storage_state.json
 # OS
 Thumbs.db
 .DS_Store
+
+# 개발 환경
+.claude/*
+.mcp.json
+
+# Understand-Anything
+.ua/*
