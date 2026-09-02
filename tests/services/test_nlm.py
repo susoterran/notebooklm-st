@@ -62,19 +62,29 @@ class FakeNotebooks:
         return []
 
 
+class FakeSource:
+    """가짜 소스 한 건. 파이프라인은 제목만 읽는다."""
+
+    def __init__(self, title=None):
+        """제목을 저장한다."""
+        self.title = title
+
+
 class FakeSources:
     """가짜 소스 API. 지정하면 소스 추가 시 오류를 던진다."""
 
-    def __init__(self, calls, error=None):
-        """호출 기록 리스트와 던질 오류를 받아 둔다."""
+    def __init__(self, calls, error=None, title=None):
+        """호출 기록 리스트, 던질 오류, 돌려줄 제목을 받아 둔다."""
         self._calls = calls
         self._error = error
+        self._title = title
 
     async def add_url(self, notebook_id, url, *, wait, wait_timeout):
-        """URL 추가 호출을 기록하고, 설정돼 있으면 오류를 던진다."""
+        """URL 추가 호출을 기록하고 가짜 소스를 돌려준다."""
         self._calls.append(("add_url", notebook_id, url, wait, wait_timeout))
         if self._error is not None:
             raise self._error
+        return FakeSource(self._title)
 
 
 class FakeChat:
@@ -325,3 +335,45 @@ def test_missing_citation_score_becomes_zero():
     )
     result = run(URL, make_questions("하나"), FakeClient(calls, chat=chat))
     assert result.items[0].citations[0].score == 0.0
+
+
+def test_pipeline_carries_the_source_title():
+    """소스가 알려 준 영상 제목을 결과에 싣는다."""
+    calls = []
+    client = FakeClient(
+        calls, sources=FakeSources(calls, title="밸류에이션 강의")
+    )
+
+    result = run(URL, make_questions("핵심 주장은?"), client)
+
+    assert result.title == "밸류에이션 강의"
+
+
+def test_pipeline_reports_a_blank_title_as_none():
+    """제목이 비어 있으면 없는 것으로 본다."""
+    calls = []
+    client = FakeClient(calls, sources=FakeSources(calls, title=""))
+
+    result = run(URL, make_questions("핵심 주장은?"), client)
+
+    assert result.title is None
+
+
+def test_default_factory_enables_unattended_reauth(monkeypatch) -> None:
+    """저장된 브라우저 프로필로 무인 재인증을 시도하도록 켠다."""
+    captured: dict = {}
+
+    class FakeClientClass:
+        """``NotebookLMClient`` 를 대신한다."""
+
+        @staticmethod
+        def from_storage(**kwargs):
+            """넘어온 인자를 기록만 한다."""
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(nlm.notebooklm, "NotebookLMClient", FakeClientClass)
+
+    nlm.default_client_factory()
+
+    assert captured["allow_headless"] is True

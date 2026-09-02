@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Sequence
 
 import streamlit as st
-from notebooklm import exceptions
 
 from notebooklm_st import session
 from notebooklm_st.core import errors
@@ -60,7 +59,7 @@ def _load() -> None:
             st.session_state[_NOTEBOOKS_KEY] = asyncio.run(
                 nlm.list_temp_notebooks()
             )
-    except exceptions.NotebookLMError as error:
+    except errors.MAPPED_ERRORS as error:
         st.error(errors.to_message(error).text)
 
 
@@ -69,7 +68,7 @@ def _delete(notebook_ids: Sequence[str]) -> None:
     try:
         with st.spinner("삭제 중"):
             deleted = asyncio.run(nlm.delete_notebooks(notebook_ids))
-    except exceptions.NotebookLMError as error:
+    except errors.MAPPED_ERRORS as error:
         st.error(errors.to_message(error).text)
         return
     st.session_state[_NOTEBOOKS_KEY] = []

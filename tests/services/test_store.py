@@ -66,3 +66,46 @@ def test_connect_accepts_a_fresh_database(tmp_path) -> None:
     db_path = tmp_path / "fresh.db"
     fresh_connection = store.connect(db_path)
     fresh_connection.close()
+
+
+def test_connect_rejects_a_database_without_the_run_title(tmp_path) -> None:
+    """runs.title 이 없는 예전 스키마 DB 는 연결 시점에 거부된다."""
+    db_path = tmp_path / "no_title.db"
+    raw = sqlite3.connect(db_path)
+    raw.executescript(
+        """
+        CREATE TABLE questions (
+            id         INTEGER PRIMARY KEY,
+            title      TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE runs (
+            id         INTEGER PRIMARY KEY,
+            url        TEXT NOT NULL,
+            video_id   TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE answers (
+            id             INTEGER PRIMARY KEY,
+            run_id         INTEGER NOT NULL REFERENCES runs(id)
+                           ON DELETE CASCADE,
+            question_title TEXT NOT NULL,
+            question_text  TEXT NOT NULL,
+            answer         TEXT,
+            citations      TEXT,
+            error          TEXT
+        );
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    with pytest.raises(store.StaleSchemaError) as excinfo:
+        store.connect(db_path)
+    assert "runs" in str(excinfo.value)
+    assert "title" in str(excinfo.value)
+    assert "질문 템플릿" in str(excinfo.value)

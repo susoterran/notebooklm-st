@@ -3,7 +3,7 @@
 import contextlib
 import uuid
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 import notebooklm
 from notebooklm import exceptions
@@ -70,10 +70,19 @@ class NotebooksLike(Protocol):
         ...
 
 
+class SourceLike(Protocol):
+    """노트북에 붙은 소스 한 건.
+
+    라이브러리의 ``Source`` 는 필드가 많지만 파이프라인은 제목만 쓴다.
+    유튜브 소스에서는 이 값이 영상 제목이다.
+    """
+
+    title: str | None
+
+
 class SourcesLike(Protocol):
     """소스 API."""
 
-    # 반환된 Source 를 파이프라인이 쓰지 않으므로 모양을 고정하지 않는다.
     async def add_url(
         self,
         notebook_id: str,
@@ -81,8 +90,8 @@ class SourcesLike(Protocol):
         *,
         wait: bool,
         wait_timeout: float,
-    ) -> Any:
-        """URL 소스를 노트북에 추가한다."""
+    ) -> SourceLike:
+        """URL 소스를 노트북에 추가하고 그 소스를 돌려준다."""
         ...
 
 
@@ -102,6 +111,14 @@ def default_client_factory() -> contextlib.AbstractAsyncContextManager[
 ]:
     """저장된 쿠키로 NotebookLM 클라이언트를 연다.
 
+    쿠키가 죽어 있으면 라이브러리가 토큰 재추출과 쿠키 회전을 먼저
+    시도하고, 그것마저 안 되면 저장된 브라우저 프로필로 무인 재인증을
+    한 번 시도한다. 마지막 단계는 기본으로 꺼져 있어 여기서 켠다.
+
+    대가는 실패하는 경로가 몇 초 길어지는 것뿐이다. 성공하면 사용자가
+    아무것도 하지 않아도 인증이 되살아나고, 실패해도 화면이 재로그인을
+    안내할 수 있다.
+
     Returns:
         ``async with`` 로 열 수 있는 클라이언트 컨텍스트.
     """
@@ -109,7 +126,7 @@ def default_client_factory() -> contextlib.AbstractAsyncContextManager[
     # 한 번만 캐스팅한다. 파이프라인 내부는 Protocol 로 검사된다.
     return cast(
         contextlib.AbstractAsyncContextManager[ClientLike],
-        notebooklm.NotebookLMClient.from_storage(),
+        notebooklm.NotebookLMClient.from_storage(allow_headless=True),
     )
 
 
@@ -132,7 +149,7 @@ async def run_pipeline(
             가짜 클라이언트를 넣을 수 있게 뚫어 둔다.
 
     Returns:
-        질문별 결과를 담은 ``RunResult``.
+        질문별 결과와 영상 제목을 담은 ``RunResult``.
 
     Raises:
         exceptions.NotebookLMError: 노트북 생성이나 자막 인덱싱처럼
@@ -140,6 +157,7 @@ async def run_pipeline(
             아니라 결과 안에 담긴다.
     """
     items: list[models.AnswerItem] = []
+    title: str | None = None
     async with client_factory() as client:
         on_progress("임시 노트북 생성 중")
         notebook = await client.notebooks.create(
@@ -147,12 +165,14 @@ async def run_pipeline(
         )
         try:
             on_progress(f"자막 인덱싱 중 (최대 {int(SOURCE_WAIT_TIMEOUT)}초)")
-            await client.sources.add_url(
+            source = await client.sources.add_url(
                 notebook.id,
                 url,
                 wait=True,
                 wait_timeout=SOURCE_WAIT_TIMEOUT,
             )
+            # 빈 제목은 없는 것으로 본다. 화면이 video_id 로 대신한다.
+            title = source.title or None
             previous_conversation: str | None = None
             total = len(questions)
             for index, question in enumerate(questions, start=1):
@@ -175,6 +195,7 @@ async def run_pipeline(
         url=url,
         video_id=youtube.extract_video_id(url) or "",
         items=tuple(items),
+        title=title,
     )
 
 

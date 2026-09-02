@@ -19,11 +19,13 @@ def connection(tmp_path) -> Iterator[sqlite3.Connection]:
 
 def make_result(
     url: str = "https://youtu.be/dQw4w9WgXcQ",
+    title: str | None = None,
 ) -> models.RunResult:
     """테스트용 실행 결과를 만든다."""
     return models.RunResult(
         url=url,
         video_id="dQw4w9WgXcQ",
+        title=title,
         items=(
             models.AnswerItem(
                 question_title="핵심 주장",
@@ -126,3 +128,111 @@ def test_run_with_no_answers_is_still_saved(connection) -> None:
     run_id = run_history.save_run(connection, empty)
     assert run_history.load_run_items(connection, run_id) == []
     assert run_history.list_runs(connection)[0].answer_count == 0
+
+
+def test_list_runs_round_trips_the_video_title(connection) -> None:
+    """저장한 영상 제목이 목록에 그대로 돌아온다."""
+    run_history.save_run(connection, make_result(title="밸류에이션 강의"))
+    assert run_history.list_runs(connection)[0].title == "밸류에이션 강의"
+
+
+def test_list_runs_reports_a_missing_title_as_none(connection) -> None:
+    """제목을 못 얻은 실행은 제목이 없는 채로 돌아온다."""
+    run_history.save_run(connection, make_result())
+    assert run_history.list_runs(connection)[0].title is None
+
+
+def test_load_run_items_carries_the_answer_id(connection) -> None:
+    """이력에서 읽은 답변은 자기 ID 를 들고 온다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    items = run_history.load_run_items(connection, run_id)
+
+    assert [item.id for item in items] == [1, 2]
+
+
+def test_a_fresh_answer_item_has_no_id() -> None:
+    """파이프라인이 갓 만든 항목은 아직 ID 가 없다."""
+    item = models.AnswerItem(
+        question_title="핵심 주장",
+        question_text="핵심 주장은?",
+        answer="세 가지다.",
+        citations=(),
+        error=None,
+    )
+
+    assert item.id is None
+
+
+def test_update_answer_replaces_the_body(connection) -> None:
+    """저장된 답변 본문을 바꾼다."""
+    run_id = run_history.save_run(connection, make_result())
+    first = run_history.load_run_items(connection, run_id)[0]
+    assert first.id is not None
+
+    run_history.update_answer(connection, first.id, "고친 답변")
+
+    items = run_history.load_run_items(connection, run_id)
+    assert items[0].answer == "고친 답변"
+    assert items[0].citations == first.citations
+
+
+def test_update_answer_trims_whitespace(connection) -> None:
+    """앞뒤 공백은 지우고 저장한다."""
+    run_id = run_history.save_run(connection, make_result())
+    first = run_history.load_run_items(connection, run_id)[0]
+    assert first.id is not None
+
+    run_history.update_answer(connection, first.id, "  고친 답변  ")
+
+    assert run_history.load_run_items(connection, run_id)[0].answer == (
+        "고친 답변"
+    )
+
+
+def test_update_answer_rejects_an_empty_body(connection) -> None:
+    """답변을 비우는 것은 고치기가 아니므로 거부한다."""
+    run_id = run_history.save_run(connection, make_result())
+    first = run_history.load_run_items(connection, run_id)[0]
+    assert first.id is not None
+
+    with pytest.raises(ValueError):
+        run_history.update_answer(connection, first.id, "   ")
+
+
+def test_update_answer_rejects_an_unknown_id(connection) -> None:
+    """없는 답변을 고치려 하면 알린다."""
+    with pytest.raises(ValueError):
+        run_history.update_answer(connection, 999, "고친 답변")
+
+
+def test_delete_run_removes_its_answers_too(connection) -> None:
+    """실행을 지우면 딸린 답변도 함께 사라진다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    run_history.delete_run(connection, run_id)
+
+    assert run_history.list_runs(connection) == []
+    remaining = connection.execute(
+        "SELECT COUNT(*) AS n FROM answers WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    assert remaining["n"] == 0
+
+
+def test_delete_run_keeps_other_runs(connection) -> None:
+    """지정한 실행만 지운다."""
+    kept = run_history.save_run(
+        connection, make_result("https://youtu.be/aaaaaaaaaaa")
+    )
+    doomed = run_history.save_run(
+        connection, make_result("https://youtu.be/bbbbbbbbbbb")
+    )
+
+    run_history.delete_run(connection, doomed)
+
+    assert [run.id for run in run_history.list_runs(connection)] == [kept]
+
+
+def test_delete_run_is_silent_for_an_unknown_id(connection) -> None:
+    """이미 없는 실행을 지워도 조용히 넘어간다."""
+    run_history.delete_run(connection, 999)

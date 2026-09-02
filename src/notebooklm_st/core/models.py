@@ -34,6 +34,10 @@ class AnswerItem:
 
     ``question_title`` 과 ``question_text`` 를 둘 다 복사해 둔다.
     화면은 제목을 머리글로 쓰고 원문은 접어서 보여준다.
+
+    ``id`` 는 이력에서 읽어온 항목만 가진다. 파이프라인이 갓 만든
+    항목은 아직 저장되지 않아 ``None`` 이며, 화면은 이 값이 있을 때만
+    편집 상자를 그린다.
     """
 
     question_title: str
@@ -41,6 +45,7 @@ class AnswerItem:
     answer: str | None
     citations: tuple[Citation, ...]
     error: str | None
+    id: int | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -50,11 +55,17 @@ class AnswerItem:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class RunResult:
-    """영상 하나에 질문들을 던진 결과 전체."""
+    """영상 하나에 질문들을 던진 결과 전체.
+
+    ``title`` 은 NotebookLM 이 소스에서 읽어 온 영상 제목이다. 못 얻는
+    실행이 있으므로 없을 수 있고, 그때는 화면이 ``video_id`` 로
+    대신한다.
+    """
 
     url: str
     video_id: str
     items: tuple[AnswerItem, ...]
+    title: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -64,6 +75,7 @@ class RunSummary:
     id: int
     url: str
     video_id: str
+    title: str | None
     created_at: str
     answer_count: int
 

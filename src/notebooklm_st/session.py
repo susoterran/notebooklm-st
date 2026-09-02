@@ -9,7 +9,7 @@ import sqlite3
 
 import streamlit as st
 
-from notebooklm_st.services import runs, store
+from notebooklm_st.services import auth, runs, store
 
 
 @st.cache_resource
@@ -34,3 +34,17 @@ def get_registry() -> runs.RunRegistry:
         재실행되어도 같은 레지스트리 객체.
     """
     return runs.RunRegistry()
+
+
+@st.cache_resource
+def get_auth_gate() -> auth.AuthGate:
+    """앱 전체가 공유하는 인증 게이트를 돌려준다.
+
+    ``@st.cache_resource`` 로 감싸 모든 세션·탭이 같은 게이트를 본다.
+    그래야 자동 재인증이 프로세스당 한 번만 돌고, 탭을 여러 개 열어도
+    브라우저 로그인 창이 하나만 뜬다.
+
+    Returns:
+        재실행되어도 같은 게이트 객체.
+    """
+    return auth.AuthGate()
