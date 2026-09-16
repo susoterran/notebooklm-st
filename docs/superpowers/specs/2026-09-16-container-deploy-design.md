@@ -2,8 +2,8 @@
 
 - **작성일**: 2026-09-16
 - **상태**: 설계 (구현 계획 수립 전)
-- **대상**: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, 배포·재시드
-  문서, `README.md`
+- **대상**: `Dockerfile`, `docker-compose.yml`, `.dockerignore`,
+  `.github/workflows/ci.yml`, 배포·재시드 문서, `README.md`
 - **범위**: 릴리스 R2. **배포만 한다.** 앱의 동작은 바꾸지 않는다.
   선행 조건인 R1(무인 갱신 인증 전환)은 완료되었다
   (`docs/superpowers/specs/2026-09-16-headless-auth-design.md`).
@@ -13,24 +13,22 @@
 ## 1. 무엇을 하고, 무엇을 하지 않는가
 
 R1 이 앱에서 브라우저 로그인을 걷어내 컨테이너에서 뜰 수 있게 만들었다.
-R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서버에서 돌린다.
+R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서버에서
+돌린다.
 
 왜 지금인가. 기획 `request_spec_2.md` 의 요구 5 — 즐겨찾기 채널을
 주기적으로 확인해 요약본을 자동 생성한다 — 는 **사람이 데스크톱을 켜
 두지 않아도 도는 서버** 없이는 성립하지 않는다. R3~R6 이 얹힐 바닥을
 먼저 놓는 릴리스다.
 
-하지 않는 것을 먼저 못박는다. **소스 코드의 동작을 바꾸지 않는다.**
-`src/` 아래에서 손대는 것은 사실과 어긋나게 되는 독스트링 한 문단뿐이고
-(8.3), 그것도 실행 결과에 영향이 없다.
+**소스 코드의 동작은 바꾸지 않는다.** `src/` 아래에서 손대는 것은
+컨테이너에서 사실과 어긋나게 되는 독스트링 한 문단뿐이고(9.3), 실행
+결과에는 영향이 없다.
 
-특히 R1 스펙 §13 이 "R2 로 미룬다" 고 적었던 **`AuthGate` 의
-`ok → failed` 전이는 이 릴리스에서도 하지 않는다.** 그 항목은 `runner`
-를 고쳐야 하고, 그 순간 이 릴리스는 배포가 아니라 기능 변경이 된다.
-결과적으로 R1 이 문서 세 곳에 적어 둔 서술 — 인증 배너는 **기동 시
-판정**이며 떠 있는 도중에 세션이 죽으면 앱을 재시작해야 배너를 다시
-본다 — 은 R2 에서도 **그대로 참**이다. 되돌릴 문서가 없다.
-
+`AuthGate` 의 `ok → failed` 전이도 하지 않는다. 그 항목은 `runner` 를
+고쳐야 하고, 그 순간 이 릴리스는 배포가 아니라 기능 변경이 된다.
+따라서 인증 배너는 이 릴리스에서도 **기동 시 판정**이다 — 떠 있는
+도중에 세션이 죽으면 앱을 재시작해야 배너와 업로더가 다시 보인다.
 컨테이너에서 그 재시작은 `docker restart notebooklm-st` 한 줄이고,
 `restart: unless-stopped` 덕분에 호스트 재부팅 뒤에도 같은 경로로
 회복된다.
@@ -39,18 +37,20 @@ R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서
 
 ## 2. 코드를 안 바꾸고 되는 근거
 
-설계에 앞서 코드와 라이브러리를 읽어 다섯 가지를 확인했다. 이 절이
-1절의 "동작을 바꾸지 않는다" 를 떠받친다.
+코드와 라이브러리를 읽어 다섯 가지를 확인했다. 이 절이 1절의
+"동작을 바꾸지 않는다" 를 떠받친다.
 
 | 확인한 것 | 근거 | 설계에 주는 영향 |
 |---|---|---|
 | `NOTEBOOKLM_HOME` 환경변수로 프로필 위치를 정할 수 있다 | `notebooklm/paths.py:127` | 자격증명이 `HOME`·`/root` 에 묶이지 않는다. 볼륨 하나로 합칠 수 있다 |
 | `NOTEBOOKLM_ST_DB` 환경변수로 DB 경로를 정할 수 있다 | `services/store.py` 의 `DB_PATH_ENV_VAR` | 이력이 컨테이너 안이 아니라 볼륨에 남는다 |
-| playwright 부재는 L3 에서 `UNAVAILABLE` 로 처리된다 | `notebooklm/_auth/headless_reauth.py:686` — 예외가 아니라 상태값을 돌려준다 | `allow_headless=True`(`services/nlm.py:129`)를 그대로 둬도 컨테이너에서 안전하다. R1 스펙 §2.7 의 미검증 가정이 코드로 닫혔다 |
+| playwright 부재는 L3 에서 `UNAVAILABLE` 로 처리된다 | `notebooklm/_auth/headless_reauth.py:686` — 예외가 아니라 상태값을 돌려준다 | `allow_headless=True`(`services/nlm.py:129`)를 그대로 둬도 컨테이너에서 안전하다 |
 | `notebooklm/__main__.py` 가 존재한다 | 패키지 파일 | 자격증명 업로드 반입이 부르는 `sys.executable -m notebooklm`(`services/auth.py`)이 컨테이너에서도 그대로 돈다 |
 | `server.address` 의 기본값은 비어 있다 | `streamlit/config.py:1016` | 설정을 주지 않으면 전 인터페이스에 바인딩한다. 컨테이너에서 원하는 기본값이다 |
 
-반대로, 환경변수를 **안 주면 깨지는 것** 두 가지도 여기서 나온다.
+반대로, 환경변수를 **안 주면 조용히 깨지는 것** 두 가지가 여기서
+나온다. 둘 다 앱이 정상으로 보이기 때문에 8절의 CI 가 명시적으로
+확인한다.
 
 - `NOTEBOOKLM_ST_DB` 를 안 주면 `store.default_db_path()` 가 현재 작업
   디렉터리(`/app`)에 `questions.db` 를 만든다. 컨테이너를 다시 만드는
@@ -65,11 +65,10 @@ R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서
 
 멀티스테이지로 굽고, **런타임 단계에는 `uv` 를 넣지 않는다.**
 
-R1 의 Task 6 이 함정 하나를 발견해 기록해 두었다 — `uv sync --no-dev`
-로 playwright 를 뺀 뒤에도 그냥 `uv run` 을 쓰면 uv 가 dev 그룹을
-조용히 다시 동기화해 playwright 가 돌아온다. 런타임에 uv 가 없으면
-그 함정은 **성립할 수 없다.** `--no-dev` 를 매번 기억해서 붙이는
-규율 대신 구조로 막는다.
+`uv sync --no-dev` 로 playwright 를 뺀 뒤에도 그냥 `uv run` 을 쓰면
+uv 가 dev 그룹을 조용히 다시 동기화해 playwright 가 돌아온다. 런타임에
+uv 가 없으면 그 함정은 **성립할 수 없다.** `--no-dev` 를 매번 기억해서
+붙이는 규율 대신 구조로 막는다.
 
 ```dockerfile
 # ── builder ────────────────────────────────────────────────
@@ -92,7 +91,6 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
-# 앱 불변값 — 이미지가 단독으로도 옳게 서도록 여기에 둔다(3.1).
 ENV HOME=/data \
     NOTEBOOKLM_HOME=/data/notebooklm \
     NOTEBOOKLM_ST_DB=/data/questions.db \
@@ -124,7 +122,7 @@ CMD ["streamlit", "run", "/app/src/notebooklm_st/app.py"]
 `/app/.venv` 는 빌더의 인터프리터 경로를 절대 경로로 참조한다. uv 의
 `python3.13-bookworm-slim` 이미지는 `python:3.13-slim-bookworm` 위에
 uv 를 얹은 것이라 경로와 ABI 가 일치한다. 베이스를 갈아탈 때는 **두
-줄을 함께** 바꿔야 한다.
+줄을 함께** 바꾼다.
 
 **uv 버전은 태그로만 핀하고 정확한 버전을 박지 않는다.** 재현성의
 정본은 `uv.lock` 이고 `--frozen` 이 그것을 강제한다. uv 자신의 버전은
@@ -137,7 +135,7 @@ uv 를 얹은 것이라 경로와 ABI 가 일치한다. 베이스를 갈아탈 �
 `src/` 뿐이라 자동으로 빠진다. 그래서 컨테이너는 데스크톱용
 `127.0.0.1` 바인딩을 물려받지 않고, "환경변수가 프로젝트 설정 파일을
 덮는가" 라는 **검증하지 않은 전제를 아예 만들지 않는다.** 주소와
-포트는 4절의 환경변수가 정한다. 데스크톱은 `config.toml` 을 그대로
+포트는 이미지의 `ENV` 가 정한다. 데스크톱은 `config.toml` 을 그대로
 쓴다 — 두 환경이 각자의 정본을 갖는다.
 
 **앱 환경변수는 compose 가 아니라 이미지에 둔다.** 값의 정본을 한
@@ -174,8 +172,7 @@ uv 를 얹은 것이라 경로와 ABI 가 일치한다. 베이스를 갈아탈 �
     .streamlit/                              .streamlit/     ← HOME=/data 부산물
 ```
 
-아래 값의 정본은 **이미지**다(3절의 두 번째 `ENV`). compose 는 이것들을
-다시 적지 않는다(3.1).
+값의 정본은 이미지다(3절의 두 번째 `ENV`).
 
 | 환경변수 | 값 | 근거 |
 |---|---|---|
@@ -234,13 +231,12 @@ services:
 남고, `9004` 는 이 파일의 `ports:` 에만 나타난다.
 
 **`restart: unless-stopped`.** 홈서버 재부팅 뒤 자동 기동한다. 인증
-판정이 기동 시 한 번뿐이라는 R1 의 성질이 여기서는 맞물린다 —
-재시작이 곧 배너 회복 경로다(1절).
+판정이 기동 시 한 번뿐이므로(1절) 재시작이 곧 배너 회복 경로다.
 
 **`read_only: true` + `tmpfs: /tmp`.** 계정 동등 자격증명을 들고 있는
 컨테이너라 쓰기 가능한 곳을 `/data` 와 `/tmp` 로만 남긴다. 4절에서
 `HOME=/data` 로 모아 둔 것이 이것을 가능하게 한다. 파일 업로더가
-걸리면 이 두 줄을 빼면 된다(11절).
+걸리면 이 두 줄을 빼면 된다(12절).
 
 **로그 회전.** 몇 주씩 도는 컨테이너다. 화면 문구 "자세한 사유는 앱
 로그에 남습니다"(`components/auth_gate.py`)가 가리키는 실제 목적지가
@@ -267,12 +263,12 @@ R1 스펙 §13.1 이 말하는 "외부 노출" 은 **인터넷**이고, 그 선�
 UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박는다.
 
 홈 LAN 안에서도 구간은 평문 HTTP 다. 같은 Wi-Fi 의 다른 기기에는
-보인다(R1 how-to 에 이미 적혀 있다). 호스트 자신만 쓰고 Tailscale 등
-암호화된 경로로 접근하려면 `127.0.0.1:9004:8611` 로 바꾼다.
+보인다. 호스트 자신만 쓰고 Tailscale 등 암호화된 경로로 접근하려면
+`127.0.0.1:9004:8611` 로 바꾼다.
 
 ---
 
-## 7. 운영 한계 — 정직하게 적어 둘 것
+## 7. 운영 한계
 
 **진행 중인 질의는 재시작에서 유실된다.** 질의는 daemon 스레드에서
 돌고(`services/runner.py`), 이력은 파이프라인이 끝난 뒤에 저장된다.
@@ -287,9 +283,95 @@ UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박�
 
 ---
 
-## 8. 문서
+## 8. 지속적 통합
 
-### 8.1 새로 쓰는 것
+저장소에 CI 가 없다. 이 릴리스가 도커 빌드를 들여오면서 **조용히
+틀리는 검사** 두 개가 생긴다 — playwright 가 이미지에 딸려 들어와도,
+시간대가 UTC 로 서도 앱은 멀쩡히 돈다. 사람이 손으로 도는 체크리스트는
+릴리스 두세 번이면 안 돌게 되므로 기계에 맡긴다.
+
+```yaml
+# .github/workflows/ci.yml
+name: ci
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy src tests
+      - run: uv run pytest
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p data && sudo chown 1000:1000 data
+      - run: docker compose build
+      - name: extras 가 빠졌는지 — import 가 실패해야 정상
+        run: |
+          if docker compose run --rm app python -c "import playwright"; then
+            echo "playwright 가 런타임 이미지에 들어 있다" >&2
+            exit 1
+          fi
+      - name: 시간대가 KST 인지
+        run: |
+          docker compose run --rm app python -c \
+            "import datetime,sys; \
+             off=datetime.datetime.now().astimezone().utcoffset(); \
+             sys.exit(0 if off.total_seconds()==32400 else 1)"
+      - name: 기동과 헬스체크
+        run: |
+          docker compose up -d
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:9004/_stcore/health && exit 0
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+```
+
+### 8.1 결정과 근거
+
+**검증 명령은 개발 중 쓰는 것과 같게 두되 변형하지 않는 형태로
+바꾼다.** 로컬은 `ruff format .` · `ruff check --fix .` 로 고치면서
+돌지만, CI 는 `--check` · `--fix` 없이 돌려 **고치는 대신 실패**한다.
+
+**서드파티 액션을 쓰지 않고 uv 공식 설치 스크립트를 쓴다.** 액션의
+메이저 버전은 시간이 지나면 바뀌고, 이 저장소는 CI 를 자주 손볼 곳이
+아니다. 설치 스크립트는 고정할 버전이 없다.
+
+**이미지 job 은 아무것도 push 하지 않는다.** 검증만 한다. 홈서버는
+계속 자기가 빌드한다(13절). 따라서 레지스트리 인증도, 홈서버
+아키텍처를 맞추는 일도 필요 없다.
+
+**`data/` 를 미리 만들고 `1000:1000` 으로 넘긴다.** compose 의 `user:`
+기본값과 맞춘다. 이걸 빼면 러너 사용자가 만든 디렉터리에 컨테이너가
+쓰지 못해 기동이 실패한다 — 홈서버에서 사람이 겪을 실패와 같은
+것이고, CI 가 이 절차를 먼저 밟는 것 자체가 배포 문서의 `chown`
+단계가 옳다는 확인이 된다.
+
+### 8.2 CI 가 잡지 못하는 것
+
+10절 검증 항목 중 5~8 번(LAN 접근, 호스트 쪽 소유권, 자격증명 반입
+왕복, 재시작 후 지속성)은 실제 홈서버와 구글 계정이 필요하다. CI 는
+amd64 러너에서 굽기 때문에 홈서버가 ARM 이면 **아키텍처 고유 문제는
+잡지 못한다.** 이 둘은 사람이 도는 체크리스트로 남는다.
+
+---
+
+## 9. 문서
+
+### 9.1 새로 쓰는 것
 
 `docs/how-to/2026-09-16-homeserver-deploy.md` — 홈서버 배포 절차서.
 
@@ -301,17 +383,17 @@ UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박�
 - **운영 규칙 네 줄**: 인터넷에 내놓지 않는다(6절) · 볼륨에 `:ro` 를
   걸지 않는다(4절) · 실행 중일 때 재시작하지 않는다(7절) · UID 가
   1000 이 아니면 `PUID`/`PGID` 로 덮는다(3.1)
-- 9절의 검증 체크리스트
+- 10절의 검증 체크리스트
 
-### 8.2 고치는 것
+### 9.2 고치는 것
 
 | 파일 | 왜 |
 |---|---|
 | `docs/how-to/2026-09-16-auth-reseed.md` | 컨테이너 경로가 `/root/.notebooklm/` 로 적혀 있다 → `/data/notebooklm/`, 호스트 쪽은 `./data/notebooklm/`. `docker restart` 에 컨테이너 이름을 넣어 구체화 |
 | `README.md` | 컨테이너 실행 절 신설, 접속 주소를 두 갈래(데스크톱 8611 / 홈서버 9004)로, 요구사항 표에 Docker 추가 |
-| `docs/superpowers/specs/2026-09-16-headless-auth-design.md` §10.1 | "실제 경로는 R2 가 정한다 … 경로가 정해지면 R2 에서 채운다" 로 비워 둔 자리에 `/data/notebooklm/` 을 채운다 |
+| `docs/superpowers/specs/2026-09-16-headless-auth-design.md` §10.1 | "실제 경로는 R2 가 정한다" 로 비워 둔 자리에 `/data/notebooklm/` 을 채운다 |
 
-### 8.3 코드 파일 한 곳
+### 9.3 코드 파일 한 곳
 
 `src/notebooklm_st/app.py` 의 모듈 독스트링이 이렇게 적고 있다.
 
@@ -325,39 +407,36 @@ UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박�
 
 ---
 
-## 9. 검증
+## 10. 검증
 
-이미지와 컨테이너 계층이라 `pytest` 가 잡지 못한다. 배포 절차서에
-체크리스트로 싣고 릴리스 전에 사람이 한 번 돈다.
+| # | 확인 | 통과 기준 | 누가 |
+|---|---|---|---|
+| 1 | `docker compose build` | 성공. `--frozen` 이 잠금 파일 불일치를 여기서 잡는다 | CI |
+| 2 | `import playwright` | **실패해야 정상.** extras 가 빠졌다는 증거 | CI |
+| 3 | `datetime.now()` 의 UTC 오프셋 | `+09:00`. UTC 면 이력이 9시간 어긋난다 | CI |
+| 4 | `/_stcore/health` | 응답한다. 곧 Streamlit 이 떴다는 뜻 | CI |
+| 5 | 다른 기기에서 `http://<홈서버IP>:9004` | 화면이 뜬다 | 사람 |
+| 6 | 호스트에서 `ls -l data/` | `questions.db` 와 `notebooklm/` 이 `user:` 가 가리키는 UID(기본 `1000:1000`) 소유로 생성된다 | 사람 |
+| 7 | 업로드 UI 로 자격증명 반입 | 배너가 사라진다. `read_only: true` 아래서 파일 업로더가 도는지도 함께 확인된다 | 사람 |
+| 8 | `docker compose down && docker compose up -d` | 질문·이력·인증이 보존된다 | 사람 |
 
-| # | 확인 | 통과 기준 |
-|---|---|---|
-| 1 | `docker compose build` | 성공. `--frozen` 이 잠금 파일 불일치를 여기서 잡는다 |
-| 2 | `docker compose run --rm app python -c "import playwright"` | **실패해야 정상.** extras 가 빠졌다는 증거 |
-| 3 | `docker compose run --rm app python -c "import datetime; print(datetime.datetime.now())"` | KST. UTC 면 이력이 9시간 어긋난다 |
-| 4 | `docker compose ps` | `healthy`. 헬스체크 통과가 곧 Streamlit 기동이다 |
-| 5 | 다른 기기에서 `http://<홈서버IP>:9004` | 화면이 뜬다 |
-| 6 | 호스트에서 `ls -l data/` | `questions.db` 와 `notebooklm/` 이 `user:` 가 가리키는 UID(기본 `1000:1000`) 소유로 생성된다 |
-| 7 | 업로드 UI 로 자격증명 반입 | 배너가 사라진다. `read_only: true` 아래서 파일 업로더가 도는지도 함께 확인된다 |
-| 8 | `docker compose down && docker compose up -d` | 질문·이력·인증이 보존된다 |
-
-2·3 번은 R1 이 남긴 두 함정(dev 그룹 재동기화, naive 시각)에 대한
-회귀 방지다. 이 둘은 조용히 틀리기 때문에 명시적으로 확인한다.
+5~8 번은 배포 절차서(9.1)에 체크리스트로 싣고 홈서버에서 한 번 돈다.
 
 ---
 
-## 10. 건드리는 파일
+## 11. 건드리는 파일
 
 | 파일 | 변경 |
 |---|---|
 | `Dockerfile` | 신규 (3절) |
 | `docker-compose.yml` | 신규 (5절) |
 | `.dockerignore` | 신규 — `.venv`·`.git`·`*.db`·`.streamlit`·도구 캐시·`.claude`·`.superpowers`·`.ua` |
-| `docs/how-to/2026-09-16-homeserver-deploy.md` | 신규 (8.1) |
-| `docs/how-to/2026-09-16-auth-reseed.md` | 경로 정정 (8.2) |
-| `README.md` | 컨테이너 절 (8.2) |
-| `docs/superpowers/specs/2026-09-16-headless-auth-design.md` | §10.1 경로 확정 (8.2) |
-| `src/notebooklm_st/app.py` | 모듈 독스트링 한 문단 (8.3) |
+| `.github/workflows/ci.yml` | 신규 (8절) |
+| `docs/how-to/2026-09-16-homeserver-deploy.md` | 신규 (9.1) |
+| `docs/how-to/2026-09-16-auth-reseed.md` | 경로 정정 (9.2) |
+| `README.md` | 컨테이너 절 (9.2) |
+| `docs/superpowers/specs/2026-09-16-headless-auth-design.md` | §10.1 경로 확정 (9.2) |
+| `src/notebooklm_st/app.py` | 모듈 독스트링 한 문단 (9.3) |
 
 건드리지 않는 것: `services/` 전체, `core/` 전체, `components/` 전체,
 `pages/` 전체, `tests/` 전체, `pyproject.toml`, `uv.lock`,
@@ -365,11 +444,11 @@ UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박�
 
 ---
 
-## 11. 미검증 가정
+## 12. 미검증 가정
 
 - **`read_only: true` 아래서 `st.file_uploader` 가 도는지 확인하지
   않았다.** 업로드 내용을 메모리에 두는지 임시 파일을 쓰는지, 쓴다면
-  `/tmp` 인지 다른 경로인지 모른다. 검증 7 번이 이것을 잡는다. 깨지면
+  `/tmp` 인지 다른 경로인지 모른다. 검증 7 번이 잡는다. 깨지면
   `read_only` 와 `tmpfs` 두 줄을 뺀다 — 되돌리는 비용이 낮아서 먼저
   켠 채로 검증한다.
 - **`/_stcore/health` 가 이 Streamlit 버전(≥1.63)에서 유효한지 실측하지
@@ -382,23 +461,22 @@ UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박�
   홈서버에서 직접 빌드하므로 아키텍처는 문제되지 않고, UID 는
   `PUID`/`PGID` 로 덮는다. 도커 버전이 아주 낮으면 `tmpfs:` 의 리스트
   표기나 `compose` 서브커맨드가 안 먹을 수 있다.
+- **CI 러너에서 dev 그룹 설치가 성공하는지 확인하지 않았다.** dev
+  그룹의 `notebooklm-py[browser]` 는 playwright 파이썬 패키지를 끌어
+  오지만 브라우저 바이너리는 받지 않는다. R1 이 브라우저 로그인
+  테스트를 전부 지웠으므로 테스트가 브라우저를 띄우지 않는다.
 
 ---
 
-## 12. 범위 밖
+## 13. 범위 밖
 
-- **`AuthGate` 의 `ok → failed` 전이** — R1 스펙 §13 이 R2 로 미뤘으나,
-  이 릴리스를 배포로 한정하기로 하여 **다시 미룬다.** `runner` 가
-  게이트를 알고 실패 시 `invalidate()` 를 부르는 것이 정답이다.
-  그때까지 1절·7절의 서술이 유효하다.
-- **GitHub Actions** — R1 스펙 §13 의 R2 목록에 있었으나 뺀다. 저장소에
-  `.github` 가 아직 없으므로 `ruff`·`mypy`·`pytest` 검증 워크플로는
-  다음 릴리스의 독립된 값이다.
+- **`AuthGate` 의 `ok → failed` 전이** — `runner` 가 게이트를 알고 실패
+  시 `invalidate()` 를 부르는 것이 정답이다. 코드 변경이므로 이
+  릴리스에서 하지 않는다. 그때까지 1절·7절의 서술이 유효하다.
 - **GHCR·멀티아치 이미지** — 홈서버에서 직접 빌드하면 레지스트리 인증도
   아키텍처 추측도 필요 없다. 배포 대상이 둘 이상이 될 때 다시 본다.
-- **`render()` 반환값 무시**(R1 최종 리뷰 M4), **`recheck()` 가 락을 쥔
-  채 네트워크 프로브**(M5), **`runner.py` 의 넓은 `except`** — 모두
-  코드 변경이다.
+- **`render()` 반환값 무시**, **`recheck()` 가 락을 쥔 채 네트워크
+  프로브**, **`runner.py` 의 넓은 `except`** — 모두 코드 변경이다.
 - **`store.now()` 의 timezone-aware 전환** — 저장 형식이 바뀌어 기존
   행과 섞인다. `TZ` 환경변수로 충분하다.
 - **진행 중 질의의 재시작 생존** — 7절의 한계를 없애려면 실행 모델을
