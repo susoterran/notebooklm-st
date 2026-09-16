@@ -1,12 +1,18 @@
 """Streamlit 진입점.
 
-실행:
-    uv run streamlit run src/notebooklm_st/app.py
+실행 경로가 둘이다.
 
+데스크톱 — ``uv run streamlit run src/notebooklm_st/app.py``.
 ``.streamlit/config.toml`` 이 서버를 ``127.0.0.1:8611`` 에만
 바인딩하므로 같은 네트워크의 다른 기기에서는 접속할 수 없다.
 기본 포트 8501 을 쓰지 않는 것은 다른 Streamlit 프로젝트와
 충돌하지 않게 하기 위해서다.
+
+컨테이너 — ``docker compose up -d``. 이미지에는
+``.streamlit/config.toml`` 이 들어가지 않는다. 주소와 포트는
+이미지의 환경 변수가 정하고(``0.0.0.0:8611``), 홈 LAN 에 열리는
+포트는 ``docker-compose.yml`` 의 ``9004`` 다. 절차는
+docs/how-to/2026-09-16-homeserver-deploy.md 에 있다.
 """
 
 import streamlit as st

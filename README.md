@@ -22,6 +22,7 @@ URL 하나와 질문 목록을 넣으면 다음을 대신 처리합니다.
 | 패키지 매니저 | [uv](https://docs.astral.sh/uv/) | `run.ps1` 이 `uv` 를 요구 |
 | 주요 의존성 | `notebooklm-py==0.8.1` (+ 브라우저 로그인용 `[browser]` 는 dev 그룹), `streamlit>=1.62.0` | `pyproject.toml` |
 | 계정 | 구글 계정 (NotebookLM 접근 권한) | 첫 로그인은 사람이 CLI 로 한 번 |
+| 컨테이너 | Docker Engine + Compose v2 | 홈서버 배포 시에만. `docker-compose.yml` |
 
 `[browser]` extras 는 dev 그룹에 있습니다. `uv sync` 하면 따라오고,
 컨테이너 이미지는 `uv sync --no-dev` 로 뺍니다.
@@ -58,7 +59,20 @@ uv run streamlit run src/notebooklm_st/app.py
 .\run.ps1 -NoSync -- --server.port 8612  # streamlit 인자 전달
 ```
 
-접속 주소는 **http://127.0.0.1:8611** 입니다. 주소와 포트의 정본은 `.streamlit/config.toml` 이며, 실행 스크립트가 이 파일을 읽어 안내합니다.
+데스크톱 접속 주소는 **http://127.0.0.1:8611** 입니다. 주소와 포트의 정본은 `.streamlit/config.toml` 이며, 실행 스크립트가 이 파일을 읽어 안내합니다. 컨테이너는 이 파일을 쓰지 않습니다(아래 「홈서버 (Docker)」).
+
+### 홈서버 (Docker)
+
+```bash
+mkdir -p data && sudo chown 1000:1000 data
+docker compose up -d --build
+```
+
+접속 주소는 **http://<홈서버IP>:9004** 입니다. 컨테이너 안에서는 8611 에서 돌고, `docker-compose.yml` 이 호스트 9004 에 붙입니다.
+
+절차와 운영 규칙은 [홈서버에 배포하기](docs/how-to/2026-09-16-homeserver-deploy.md) 에 있습니다.
+
+> **인터넷에 노출하지 마세요.** 대시보드의 자격증명 업로드 폼은 앱이 외부에 노출되지 않는다는 전제 위에 있습니다.
 
 ### 첫 실행 — 인증
 
@@ -91,7 +105,7 @@ uv run notebooklm login
 
 ### 데이터 저장 위치
 
-기본값은 실행 디렉터리의 `questions.db` (SQLite) 입니다. 환경 변수로 바꿀 수 있습니다.
+기본값은 실행 디렉터리의 `questions.db` (SQLite) 입니다. 환경 변수로 바꿀 수 있습니다. 컨테이너는 이미지가 `NOTEBOOKLM_ST_DB=/data/questions.db` 를 정해 두므로 호스트의 `./data/questions.db` 에 남습니다.
 
 ```bash
 NOTEBOOKLM_ST_DB=/path/to/my.db uv run streamlit run src/notebooklm_st/app.py
