@@ -47,6 +47,7 @@ R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서
 | playwright 부재는 L3 에서 `UNAVAILABLE` 로 처리된다 | `notebooklm/_auth/headless_reauth.py:686` — 예외가 아니라 상태값을 돌려준다 | `allow_headless=True`(`services/nlm.py:129`)를 그대로 둬도 컨테이너에서 안전하다 |
 | `notebooklm/__main__.py` 가 존재한다 | 패키지 파일 | 자격증명 업로드 반입이 부르는 `sys.executable -m notebooklm`(`services/auth.py`)이 컨테이너에서도 그대로 돈다 |
 | `server.address` 의 기본값은 비어 있다 | `streamlit/config.py:1016` | 설정을 주지 않으면 전 인터페이스에 바인딩한다. 컨테이너에서 원하는 기본값이다 |
+| `/_stcore/health` 가 헬스체크 라우트다 | `streamlit/web/server/starlette/starlette_routes.py:438` 의 `create_health_routes`, `starlette_static_routes.py:45` 의 예약 경로 | Dockerfile 의 `HEALTHCHECK` 와 CI 가 이 경로를 쓴다 |
 
 반대로, 환경변수를 **안 주면 조용히 깨지는 것** 두 가지가 여기서
 나온다. 둘 다 앱이 정상으로 보이기 때문에 8절의 CI 가 명시적으로
@@ -235,8 +236,10 @@ services:
 
 **`read_only: true` + `tmpfs: /tmp`.** 계정 동등 자격증명을 들고 있는
 컨테이너라 쓰기 가능한 곳을 `/data` 와 `/tmp` 로만 남긴다. 4절에서
-`HOME=/data` 로 모아 둔 것이 이것을 가능하게 한다. 파일 업로더가
-걸리면 이 두 줄을 빼면 된다(12절).
+`HOME=/data` 로 모아 둔 것이 이것을 가능하게 한다. 파일 업로더는
+`streamlit/web/server/server.py` 의
+`MemoryUploadedFileManager` 를 쓰므로 업로드 내용이 메모리에 남고,
+멀티파트가 큰 본문을 스풀하더라도 `/tmp` 가 tmpfs 라 쓸 수 있다.
 
 **로그 회전.** 몇 주씩 도는 컨테이너다. 화면 문구 "자세한 사유는 앱
 로그에 남습니다"(`components/auth_gate.py`)가 가리키는 실제 목적지가
@@ -446,14 +449,6 @@ amd64 러너에서 굽기 때문에 홈서버가 ARM 이면 **아키텍처 고�
 
 ## 12. 미검증 가정
 
-- **`read_only: true` 아래서 `st.file_uploader` 가 도는지 확인하지
-  않았다.** 업로드 내용을 메모리에 두는지 임시 파일을 쓰는지, 쓴다면
-  `/tmp` 인지 다른 경로인지 모른다. 검증 7 번이 잡는다. 깨지면
-  `read_only` 와 `tmpfs` 두 줄을 뺀다 — 되돌리는 비용이 낮아서 먼저
-  켠 채로 검증한다.
-- **`/_stcore/health` 가 이 Streamlit 버전(≥1.63)에서 유효한지 실측하지
-  않았다.** 검증 4 번이 잡는다. 없으면 헬스체크를 TCP 연결 확인으로
-  낮춘다.
 - **Streamlit 이 `HOME=/data` 아래 정확히 무엇을 쓰는지 확인하지
   않았다.** headless 라 이메일 프롬프트는 뜨지 않는다. 파일이 생기면
   볼륨에 남을 뿐 무해하다.

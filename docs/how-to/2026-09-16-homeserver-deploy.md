@@ -16,28 +16,22 @@
 ```bash
 git clone <저장소 URL> notebooklm-st
 cd notebooklm-st
+printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" > .env
 mkdir -p data
-sudo chown 1000:1000 data
+sudo chown "$(id -u):$(id -g)" data
 ```
+
+`.env` 는 컨테이너가 어느 사용자로 돌지 정한다. compose 가 자동으로
+읽으므로 **이후 모든 명령에 접두사를 붙이지 않아도 된다.** 이 파일은
+`.gitignore` 와 `.dockerignore` 에 이미 들어 있어 저장소나 이미지로
+새지 않는다.
 
 `chown` 을 빼먹으면 컨테이너가 `/data` 에 쓰지 못해 기동이 실패한다.
-홈서버 사용자의 UID 가 1000 이 아니면 그 값으로 바꾸고, 같은 값을
-2단계에서 `PUID`/`PGID` 로 넘긴다.
-
-```bash
-id -u; id -g   # 내 UID/GID 확인
-```
 
 ## 2. 띄우기
 
 ```bash
 docker compose up -d --build
-```
-
-UID 가 1000 이 아니라면:
-
-```bash
-PUID=$(id -u) PGID=$(id -g) docker compose up -d --build
 ```
 
 상태 확인.
@@ -83,8 +77,8 @@ uv run notebooklm login
 
 ```bash
 docker compose down
-scp <데스크톱>/notebooklm-st/questions.db ./data/questions.db
-sudo chown 1000:1000 data/questions.db
+scp <사용자>@<데스크톱>:notebooklm-st/questions.db ./data/questions.db
+sudo chown "$(id -u):$(id -g)" data/questions.db
 docker compose up -d
 ```
 
@@ -113,7 +107,9 @@ docker compose up -d
   외부에 노출되지 않는다는 전제 위에 있다. 포트포워딩·리버스
   프록시·터널로 9004 를 인터넷에 열려면 먼저 업로드 폼을 제거해야
   한다. 홈 LAN 안에서도 구간은 평문 HTTP 다 — 같은 Wi-Fi 의 다른
-  기기에는 보인다.
+  기기에는 보인다. **방화벽으로 막았다고 안심하지 않는다** — 도커는
+  iptables 에 직접 규칙을 넣어 `ufw` 같은 호스트 방화벽을 우회한다.
+  라우터에서 9004 를 포워딩하지 않는 것이 유일한 방어선이다.
 - **볼륨에 `:ro` 를 걸지 않는다.** 앱이 회전된 쿠키를 되쓴다. 읽기
   전용으로 마운트하면 재시작마다 옛 쿠키로 돌아가고 결국 죽는다.
 - **실행 중일 때 재시작하지 않는다.** 질의는 백그라운드 스레드에서
