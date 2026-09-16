@@ -249,12 +249,23 @@ def test_import_credentials_rejects_an_empty_payload() -> None:
     assert not calls
 
 
-def test_import_credentials_leaves_the_gate_alone() -> None:
-    """반입은 판정을 바꾸지 않는다. 판정은 recheck 가 한다."""
-    gate, probe = make_gate([False])
-    gate.ensure()
+def test_import_credentials_does_not_probe(monkeypatch) -> None:
+    """반입은 스스로 인증을 확인하지 않는다. 판정은 recheck 가 한다.
+
+    ``import_credentials`` 가 내부에서 "친절하게" 재확인을 끼워
+    넣으면 이 테스트가 실패한다. 판정은 ``AuthGate._verify`` 한
+    곳에서만 일어나야 한다(스펙 §5.4).
+    """
+    calls = 0
+
+    def spy() -> bool:
+        """호출 횟수만 세는 가짜 ``is_authenticated``."""
+        nonlocal calls
+        calls += 1
+        return True
+
+    monkeypatch.setattr(auth, "is_authenticated", spy)
 
     auth.import_credentials(b"{}", runner=fake_runner(FakeCompleted(0), []))
 
-    assert gate.ok is False
-    assert probe.calls == 1
+    assert calls == 0
