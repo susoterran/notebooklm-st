@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "YouTube 영상 질의응답 도구"
 requires-python = ">=3.13"
 dependencies = [
-    "notebooklm-py[browser]==0.8.1",
+    "notebooklm-py==0.8.1",
     "streamlit>=1.62.0",
 ]
 
@@ -48,6 +48,9 @@ testpaths = ["tests"]
 [dependency-groups]
 dev = [
     "mypy>=2.3.1",
+    # 데스크톱에서 notebooklm login 을 돌리는 데 필요하다. 컨테이너
+    # 이미지는 uv sync --no-dev 로 이것을 뺀다.
+    "notebooklm-py[browser]==0.8.1",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
 ]
