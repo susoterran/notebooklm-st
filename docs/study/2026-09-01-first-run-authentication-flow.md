@@ -1,5 +1,10 @@
 # 최초 실행 인증 코드로 배우는 파이썬 문법 5가지
 
+> **[대체됨]** 이 문서가 다루는 코드의 브라우저 로그인 경로는
+> 헤드리스 인증 전환(2026-09-16)으로 삭제됐다. 현재 절차는
+> [`docs/how-to/2026-09-16-auth-reseed.md`](../how-to/2026-09-16-auth-reseed.md)
+> 를 본다.
+
 > 온보딩 문서 [`docs/onboard/2026-09-01-first-run-authentication-flow.md`](../onboard/2026-09-01-first-run-authentication-flow.md) 의 짝 문서.
 > 저쪽이 **"인증이 어떻게 흐르는가"** 라면, 이 문서는 **"그 코드에 쓰인 문법이 무엇인가"** 를 다룬다.
 > 대상 코드: `services/auth.py` · `components/auth_gate.py` · `services/nlm.py` · `core/errors.py`

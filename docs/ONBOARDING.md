@@ -143,7 +143,7 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `pages/maintenance.py` | moderate | 남은 `tmp-` 노트북 조회·삭제. 실행 중이면 경고 |
 | `components/answer_view.py` | moderate | 답변 카드. 저장 콜백과 항목 ID 가 **둘 다** 있을 때만 편집 상자를 연다 |
 | `components/run_progress.py` | simple | 실행 카드(running/failed/done). 완료 시 요약 한 줄만, 상세는 이력 화면으로 |
-| `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다 |
+| `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다(브라우저 로그인 경로는 삭제됨 — `docs/how-to/2026-09-16-auth-reseed.md`) |
 | `components/schema_gate.py` | simple | 기동 직후 커넥션을 열어 보고 스키마 불일치면 안내 후 `st.stop()` |
 
 ### 서비스 레이어 — 외부 I/O 전담

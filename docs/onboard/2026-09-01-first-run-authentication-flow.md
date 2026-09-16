@@ -1,5 +1,10 @@
 # 최초 실행 시 인증 과정
 
+> **[대체됨]** 이 문서는 헤드리스 인증 전환(2026-09-16) 이전의
+> 브라우저 로그인 동작을 다룬다. 그 경로는 삭제됐다. 현재 절차는
+> [`docs/how-to/2026-09-16-auth-reseed.md`](../how-to/2026-09-16-auth-reseed.md)
+> 를 본다.
+
 > 처음 이 프로젝트를 보는 동료를 위한 온보딩 문서.
 > 대상 코드: `services/auth.py` · `components/auth_gate.py` · `session.py` ·
 > `services/nlm.py` · `core/errors.py`
