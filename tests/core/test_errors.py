@@ -32,19 +32,19 @@ def test_source_processing_failure_is_info() -> None:
 
 
 def test_auth_error_tells_user_to_log_in_again() -> None:
-    """인증 오류는 재로그인을 안내한다."""
+    """인증 오류는 재로그인 안내 정본을 그대로 쓴다."""
     message = errors.to_message(exceptions.AuthError("expired"))
     assert message.level == "error"
-    assert "notebooklm login" in message.text
+    assert message.text == errors.LOGIN_HINT
 
 
 def test_headless_login_required_tells_user_to_log_in_again() -> None:
-    """헤드리스 로그인 필요 오류는 재로그인을 안내한다."""
+    """헤드리스 로그인 필요 오류도 같은 정본을 쓴다."""
     message = errors.to_message(
         exceptions.HeadlessLoginRequiredError("dead session")
     )
     assert message.level == "error"
-    assert "notebooklm login" in message.text
+    assert message.text == errors.LOGIN_HINT
 
 
 def test_rate_limit_error() -> None:
@@ -103,4 +103,9 @@ def test_login_redirect_tells_user_to_log_in_again() -> None:
     message = errors.to_message(error)
 
     assert message.level == "error"
-    assert "notebooklm login" in message.text
+    assert message.text == errors.LOGIN_HINT
+
+
+def test_login_hint_points_at_the_reseed_document() -> None:
+    """만료 안내는 절차 문서를 가리킨다."""
+    assert "auth-reseed" in errors.LOGIN_HINT

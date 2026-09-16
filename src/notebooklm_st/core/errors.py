@@ -37,10 +37,17 @@ _LOGIN_ERRORS: tuple[type[Exception], ...] = (
 )
 """재로그인으로만 풀리는 예외들."""
 
-_LOGIN_HINT = (
-    "인증이 만료되었습니다. 터미널에서 "
-    "`uv run notebooklm login` 을 다시 실행하세요."
+LOGIN_HINT = (
+    "인증이 만료되었습니다. 데스크톱에서"
+    " `uv run notebooklm login` 으로 다시 로그인한 뒤, 만들어진"
+    " storage_state.json 을 인증 배너에서 올리세요."
+    " 절차: docs/how-to/2026-09-16-auth-reseed.md"
 )
+"""만료 안내 문구의 정본.
+
+화면(``components/auth_gate.py``)과 실행 실패 메시지가 같은 문구를
+쓴다. 두 곳에 따로 두면 한쪽만 고쳐져 어긋난다.
+"""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -83,7 +90,7 @@ def to_message(error: Exception) -> UserMessage:
             "자막이 없거나 소스로 쓸 수 없는 영상입니다.", "info"
         )
     if isinstance(error, _LOGIN_ERRORS):
-        return UserMessage(_LOGIN_HINT, "error")
+        return UserMessage(LOGIN_HINT, "error")
     if isinstance(error, exceptions.RateLimitError):
         return UserMessage(
             "요청 한도를 초과했습니다. 잠시 후 다시 시도하세요.", "error"
