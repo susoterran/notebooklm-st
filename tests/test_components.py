@@ -403,6 +403,90 @@ def test_auth_gate_separates_a_failed_probe_from_an_expiry(monkeypatch):
     assert errors.LOGIN_HINT not in app.error[0].value
 
 
+def test_auth_gate_imports_an_uploaded_credential(monkeypatch) -> None:
+    """업로드한 자격증명을 반입하고 곧바로 다시 확인한다."""
+    seen: list[bytes] = []
+    results = iter([False, True])
+
+    def probe() -> bool:
+        """첫 확인은 만료, 반입 뒤에는 정상으로 답한다."""
+        return next(results, True)
+
+    def fake_import(payload: bytes) -> auth.ImportResult:
+        """반입 호출을 기록하고 성공으로 답한다."""
+        seen.append(payload)
+        return auth.ImportResult(ok=True, detail="반입했습니다")
+
+    gate = auth.AuthGate(probe=probe)
+    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
+    monkeypatch.setattr(auth, "import_credentials", fake_import)
+
+    def script():
+        """AppTest 진입점 — 인증 게이트를 그린다."""
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.file_uploader(key="auth_gate_upload").set_value(
+        ("storage_state.json", b'{"cookies": []}', "application/json")
+    )
+    app.run()
+    app.button(key="auth_gate_import").click().run()
+
+    assert not app.exception
+    assert seen == [b'{"cookies": []}']
+    assert gate.ok is True
+
+
+def test_auth_gate_reports_a_failed_import(monkeypatch) -> None:
+    """반입이 실패하면 사유를 보여 주고 판정을 바꾸지 않는다."""
+
+    def fake_import(payload: bytes) -> auth.ImportResult:
+        """실패로 답한다."""
+        return auth.ImportResult(ok=False, detail="쿠키가 모자랍니다")
+
+    gate = auth.AuthGate(probe=lambda: False)
+    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
+    monkeypatch.setattr(auth, "import_credentials", fake_import)
+
+    def script():
+        """AppTest 진입점 — 인증 게이트를 그린다."""
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.file_uploader(key="auth_gate_upload").set_value(
+        ("storage_state.json", b"{}", "application/json")
+    )
+    app.run()
+    app.button(key="auth_gate_import").click().run()
+
+    assert not app.exception
+    assert any("쿠키가 모자랍니다" in box.value for box in app.error)
+    assert gate.ok is False
+
+
+def test_auth_gate_hides_the_uploader_when_authenticated(
+    stub_auth_gate,
+) -> None:
+    """인증이 살아 있으면 업로더를 그리지 않는다."""
+
+    def script():
+        """AppTest 진입점 — 인증 게이트를 그린다."""
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.file_uploader) == 0
+
+
 def test_answer_view_stays_read_only_without_a_save_hook() -> None:
     """저장 훅이 없으면 편집 상자를 그리지 않는다."""
 
