@@ -15,6 +15,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 # 베이스는 빌더와 같은 계열이어야 한다. /app/.venv 가 빌더의
 # 인터프리터 경로를 절대 경로로 참조한다.
 FROM python:3.13-slim-bookworm
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/* \
