@@ -1,0 +1,100 @@
+name: build
+
+on:
+  release:
+    types: [released]          # 정식 릴리스(프리릴리스 제외)에서 정식 배포 이미지
+  workflow_dispatch:           # 수동 실행 시 테스트 배포 이미지(devel)
+
+# 최소권한 기본값: 모든 잡의 GITHUB_TOKEN을 읽기전용으로 시작.
+# image 잡만 packages:write로 승격.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # 이미지 빌드의 전제(needs). ci.yml 이 push 마다 같은 검증을 돌지만,
+    # 릴리스는 별개 시점의 트리라 굽기 직전에 다시 한 번 세운다. 여기서
+    # 걸리면 GHCR 에 아무것도 올라가지 않는다.
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # uv 는 공식 설치 스크립트를 쓴다. 액션의 메이저 버전은 시간이
+      # 지나면 바뀌는데 이 저장소는 CI 를 자주 손볼 곳이 아니다.
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: uv sync --frozen
+      # 로컬은 고치면서 돌지만 CI 는 고치는 대신 실패해야 한다.
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy src tests
+      - run: uv run pytest
+
+  image:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # sbom·provenance 첨부에는 docker-container 드라이버가 필요하다.
+      # 러너 기본 드라이버(docker)로는 attestation을 만들 수 없다.
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        id: meta
+        with:
+          images: ghcr.io/susoterran/notebooklm-st
+          flavor: latest=false          # latest는 아래에서 명시적으로만 부여
+          tags: |
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=devel,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=sha,prefix=sha-
+          # latest·devel은 롤링 태그라 태그만으로는 어느 소스인지 알 수 없다. 운영 중 컨테이너를
+          # 커밋까지 역추적하는 근거를 이미지에 박아둔다.
+          #   docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' <이미지>
+          # created(빌드 시각, RFC3339)는 metadata-action이 자동 부여하므로 재선언하지 않는다.
+          labels: |
+            org.opencontainers.image.title=notebooklm-st
+            org.opencontainers.image.description=YouTube 영상 질의응답 도구
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.event.release.tag_name || 'devel' }}
+
+      # ── 취약점 스캔 게이트 ────────────────────────────────────────────────
+      # push 전에 로컬로만 빌드해 스캔한다. 여기서 걸리면 GHCR에 아무것도 올라가지 않는다.
+      # push를 먼저 하면 스캔이 실패해도 latest·devel 롤링 태그가 이미 취약한 이미지를
+      # 가리키게 되므로, 게이트 역할을 하지 못한다.
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          load: true
+          push: false
+          tags: notebooklm-st:scan
+      - name: 취약점 스캔 게이트 (HIGH·CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: notebooklm-st:scan
+          exit-code: '1'
+          severity: 'HIGH,CRITICAL'
+          # 패치가 아직 없는 CVE는 제외한다. 고칠 수 없는 항목으로 게이트가 상시
+          # 빨간 상태가 되면 아무도 결과를 보지 않게 된다.
+          ignore-unfixed: true
+          format: table
+
+      # ── 게시 ──────────────────────────────────────────────────────────────
+      # 위 스캔 빌드와 컨텍스트·Dockerfile이 같으므로 레이어는 CACHED로 지나간다.
+      # 재빌드가 아니다(잡 안에서 유지되는 buildx 캐시. cache-from/to와는 무관).
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true               # 구성 패키지 목록(SBOM)을 이미지에 첨부 → CVE 발생 시 영향 여부 즉시 조회
+          provenance: mode=max     # 빌드 출처(커밋·워크플로우·러너) 기록 첨부
