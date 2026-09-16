@@ -459,7 +459,15 @@ if st.button("다시 확인"):
 | 상황 | 판별 | 화면 |
 |---|---|---|
 | 만료 | `ok == False`, `probe_error is None` | `errors.LOGIN_HINT` + "다시 확인" |
-| 확인 불가 | `probe_error is not None` | `인증 상태를 확인하지 못했습니다({예외 타입}: {메시지})` + "다시 확인" |
+| 확인 불가 | `probe_error is not None` | `인증 상태를 확인하지 못했습니다({예외 타입})` + "다시 확인" |
+
+**수정 (최종 리뷰, 2026-09-16).** 확인 불가 문구는 예외의 **타입 이름만**
+보여 준다. 최초 설계는 `{예외 타입}: {메시지}` 로 메시지까지 이어 붙이는
+안이었으나, 이 분기가 잡는 주 대상인 `_LoginRedirectError` 의 메시지 자체가
+`"...Final URL: https://accounts.google.com/..."` 형태로 구글 리다이렉트
+URL 을 담고 있어 6절이 막으려던 노출을 이 분기가 되살렸다. 메시지 전문은
+화면 대신 로그로 보낸다 — `AuthGate._verify()` 가 이미 `logger.exception` 을
+부르므로 정보가 사라지지 않는다.
 
 **"다시 확인" 버튼은 두 경우 모두에 나온다.** 확인 불가는 일시적 원인(네트워크
 단절)일 수도 있으므로 사용자가 재시도할 길을 막지 않는다.
@@ -707,12 +715,24 @@ R2 가 이 문서를 이어받는다.
    실패하면 매핑된 예외로 `False` 가 되므로 설계가 기대하는 동작과 같다.
 3. **`uv sync --no-dev` 가 playwright 를 확실히 뺀다는 것.** 구현 5단계에서
    실제로 확인한다.
-4. **`auth import-cookies` 의 실패 출력에 쿠키 값이 섞이지 않는다는 것.**
-   5.4 가 stderr 를 `ImportResult.detail` 에 담고 7.1 이 그것을 화면에 보여
-   준다. 라이브러리는 auth 로거에 대해 *"never logs a captured cookie value"*
-   를 명시하지만, 그것이 이 CLI 의 오류 출력까지 보장하는지는 확인하지
-   않았다. **구현 4단계에서 실제 실패 출력을 눈으로 확인하고, 미덥지 않으면
-   detail 을 종료 코드와 정해진 문구로만 채운다.**
+4. ~~**`auth import-cookies` 의 실패 출력에 쿠키 값이 섞이지 않는다는
+   것.**~~ **검증 완료 (최종 리뷰, 2026-09-16).** 5.4 가 stderr 를
+   `ImportResult.detail` 에 담고 7.1 이 그것을 화면에 보여 준다. 설치된
+   `notebooklm-py` 소스를 직접 읽어 확인했다.
+   - `notebooklm/_app/login_cookie.py:90` — 실패를 나르는
+     `BrowserCookieProbeFailure` 의 독스트링이 이미
+     *"Cookie-probe failure without raw credential-bearing values"*
+     라고 계약을 명시한다.
+   - 같은 파일 `:311-320`(`EMPTY_REQUIRED`)과 `:366-372`
+     (`REQUIRED_DROPPED`)의 실패 메시지는 쿠키 **이름**
+     (`empty_required`, `outcome.missing_required`,
+     `outcome.present_names`)만 문자열에 넣는다. `cookie["value"]`
+     는 존재 여부를 부울로만 검사하고 메시지에 이어 붙이지 않는다.
+   - `notebooklm/cli/_cookie_import.py:44-45` — JSON 파싱 실패는
+     `f"Invalid JSON: {exc}"` 로, `json.JSONDecodeError` 의 문자열
+     표현은 줄·열 위치만 담고 원문 내용은 담지 않는다.
+   - 결론: 실패 경로 전체에서 화면에 닿는 문자열은 쿠키 이름과 파싱
+     위치뿐이다. `detail` 을 종료 코드로 다시 가공할 필요는 없다.
 5. **데스크톱 앱과 컨테이너 앱이 같은 프로필을 동시에 쓸 때.** 개발용으로
    데스크톱에서 앱을 띄우면 그 앱도 `~/.notebooklm/profiles/default/` 를 읽고
    **각자 쿠키를 회전시킨다.** 라이브러리가 락 파일 4개를 두지만 그것은 한
@@ -735,6 +755,21 @@ R2 가 이 문서를 이어받는다.
 - **`login --browser-cookies` 기반 경량 재시드** — 평소 쓰는 브라우저의 세션
   쿠키를 그대로 가져오므로, 서버 쪽 자격증명을 폐기하려면 본인 브라우저까지
   함께 로그아웃된다. 윈도우 동작도 검증하지 못했다.
+- **`AuthGate` 의 `ok → failed` 전이 (최종 리뷰, 2026-09-16 기록).**
+  5.2 는 `ensure()`/`recheck()` 만 정의했고, 5.3 이 근거를 대는 상태
+  전이는 `failed → ok`(재로그인 뒤 `recheck()`) 하나뿐이다. `ok` 가
+  `True` 로 세워진 뒤 그걸 다시 `False` 로 되돌리는 경로가 없다 —
+  `render()` 는 `gate.ok` 가 참이면 그대로 반환하고 끝나므로, 앱이
+  뜬 뒤 첫 확인이 통과하면 그 프로세스가 사는 동안 배너·업로더·
+  "다시 확인" 버튼은 다시 그려지지 않는다. 결과: 배너는 **기동
+  판정**일 뿐이고, 떠 있는 도중에 세션이 죽으면(장기 실행 프로세스의
+  일반적 경우) 재시드 경로에 닿으려면 먼저 **앱을 재시작**해야 한다
+  (반영: `core/errors.py` 의 `LOGIN_HINT`,
+  `docs/how-to/2026-09-16-auth-reseed.md`, `README.md`).
+  이 전이를 제대로 닫으려면 실행 실패 경로(`services/runner.py`)가
+  게이트를 알고 실패 시 `AuthGate.invalidate()` 같은 것을 불러야
+  한다. 그건 이번 릴리스가 건드리지 않기로 한 `runner` 를 건드리는
+  일이라 11절이 정한 경계 밖이다. **R2(컨테이너화) 작업으로 미룬다.**
 
 ### 13.1 업로드 UI 의 전제
 
