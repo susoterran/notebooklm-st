@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import logging
 import subprocess
 import sys
 import threading
@@ -18,6 +19,8 @@ from typing import Protocol
 
 from notebooklm_st.core import errors
 from notebooklm_st.services import nlm
+
+logger = logging.getLogger(__name__)
 
 LOGIN_TIMEOUT = 420.0
 """로그인 자식 프로세스를 기다리는 최대 초.
@@ -134,30 +137,25 @@ def run_login(
 
 
 class AuthGate:
-    """앱이 떠 있는 동안 자동 재인증을 한 번만 돌리기 위한 표식.
+    """앱이 떠 있는 동안 인증 확인을 한 번만 돌리기 위한 표식.
 
     Streamlit 은 세션마다 다른 스레드에서 스크립트를 돌리고, 스크립트는
-    상호작용마다 처음부터 다시 실행된다. 표식이 없으면 재실행마다 인증을
-    확인하게 되고, 잠금이 없으면 탭 두 개가 브라우저 로그인을 동시에
-    띄운다.
+    상호작용마다 처음부터 다시 실행된다. 표식이 없으면 재실행마다
+    느린 네트워크 확인이 돌고, 잠금이 없으면 탭 두 개가 동시에 확인을
+    시작한다.
     """
 
-    def __init__(
-        self,
-        probe: ProbeLike = is_authenticated,
-        login: LoginLike = run_login,
-    ) -> None:
-        """확인·로그인 함수를 받아 둔다.
+    def __init__(self, probe: ProbeLike = is_authenticated) -> None:
+        """확인 함수를 받아 둔다.
 
         Args:
             probe: 인증이 살아 있는지 확인하는 함수.
-            login: 브라우저 로그인을 돌리는 함수.
         """
         self._probe = probe
-        self._login = login
         self._lock = threading.Lock()
         self._tried = False
         self._ok = False
+        self._probe_error: Exception | None = None
 
     @property
     def ok(self) -> bool:
@@ -168,19 +166,24 @@ class AuthGate:
     def tried(self) -> bool:
         """자동 확인을 이미 돌렸는지 여부.
 
-        화면이 이 값을 보고 진행 상자를 그릴지 정한다. 재실행마다 상자를
-        다시 그리면 아무 일도 없는데 화면이 깜빡인다.
+        화면이 이 값을 보고 진행 표시를 그릴지 정한다. 재실행마다 다시
+        그리면 아무 일도 없는데 화면이 깜빡인다.
         """
         return self._tried
 
-    def ensure(self, on_progress: Callable[[str], None]) -> bool:
-        """처음 한 번만 인증을 확인하고, 만료됐으면 되살린다.
+    @property
+    def probe_error(self) -> Exception | None:
+        """확인 **자체**가 실패했을 때 그 예외.
 
-        확인 자체가 라이브러리의 무인 복구를 태우므로, 로그인까지 가는
-        것은 그 무인 복구가 실패했을 때뿐이다.
+        만료(``ok`` 가 ``False``)와 구분된다. 만료는 사람이 재시드로
+        풀 수 있지만, 확인 불가는 라이브러리 구조 변경 같은 다른
+        원인이라 안내가 달라야 한다. 보관해 두지 않으면 재실행 뒤
+        ``_tried`` 때문에 예외가 다시 올라오지 않아 만료로 오인된다.
+        """
+        return self._probe_error
 
-        Args:
-            on_progress: 로그인 진행 문구를 받는 콜백.
+    def ensure(self) -> bool:
+        """처음 한 번만 인증을 확인한다.
 
         Returns:
             인증이 쓸 수 있는 상태면 ``True``.
@@ -188,40 +191,41 @@ class AuthGate:
         with self._lock:
             if self._tried:
                 return self._ok
-            return self._verify(on_progress)
+            return self._verify()
 
-    def relogin(self, on_progress: Callable[[str], None]) -> bool:
-        """사용자가 직접 요청한 재인증을 돌린다.
+    def recheck(self) -> bool:
+        """캐시를 버리고 다시 확인한다.
 
-        확인부터 다시 한다. 실패 판정은 이 객체가 프로세스가 끝날 때까지
-        들고 있는데, 그 사이 다른 경로로 인증이 되살아날 수 있다(터미널
-        로그인, 구글 쪽 세션 복구). 그때 확인 없이 브라우저부터 띄우면
-        멀쩡한 인증을 두고 헛수고를 하고, 그 로그인마저 실패하면 앱은
-        영영 만료 상태로 남는다. 확인은 몇 초면 끝난다.
-
-        Args:
-            on_progress: 진행 문구를 받는 콜백.
+        사용자가 데스크톱에서 재로그인해 자격증명을 갈아 끼운 뒤
+        부른다. 실패 판정은 이 객체가 프로세스가 끝날 때까지 들고
+        있으므로, 이 경로가 없으면 회복하는 유일한 방법이 프로세스
+        재시작이 된다.
 
         Returns:
             인증이 쓸 수 있는 상태면 ``True``.
         """
         with self._lock:
-            return self._verify(on_progress)
+            return self._verify()
 
-    def _verify(self, on_progress: Callable[[str], None]) -> bool:
-        """확인하고, 만료됐으면 로그인해 결과를 기록한다.
+    def _verify(self) -> bool:
+        """확인하고 결과를 기록한다.
 
         호출자가 ``self._lock`` 을 쥔 채로 불러야 한다.
-
-        Args:
-            on_progress: 진행 문구를 받는 콜백.
 
         Returns:
             인증이 쓸 수 있는 상태면 ``True``.
         """
         self._tried = True
-        on_progress(CHECK_NOTICE)
-        self._ok = self._probe() or self._login(on_progress)
+        self._probe_error = None
+        try:
+            self._ok = self._probe()
+        except Exception as error:
+            # 게이트에서만 넓게 잡는다. 여기서 새면 화면에 트레이스백이
+            # 뜨고 사용자는 무엇이 잘못됐는지 알 수 없다.
+            # runner._work 와 같은 근거다.
+            logger.exception("인증 확인 실패")
+            self._ok = False
+            self._probe_error = error
         return self._ok
 
 
