@@ -39,14 +39,18 @@ _LOGIN_ERRORS: tuple[type[Exception], ...] = (
 
 LOGIN_HINT = (
     "인증이 만료되었습니다. 데스크톱에서"
-    " `uv run notebooklm login` 으로 다시 로그인한 뒤, 만들어진"
-    " storage_state.json 을 인증 배너에서 올리세요."
+    " `uv run notebooklm login` 으로 다시 로그인해 자격증명을"
+    " 만드세요. 업로드 폼은 앱이 뜰 때 나오는 인증 배너에 있습니다."
+    " 배너가 보이지 않으면(예: 실행 중 만료) 앱을 재시작하세요."
     " 절차: docs/how-to/2026-09-16-auth-reseed.md"
 )
 """만료 안내 문구의 정본.
 
-화면(``components/auth_gate.py``)과 실행 실패 메시지가 같은 문구를
-쓴다. 두 곳에 따로 두면 한쪽만 고쳐져 어긋난다.
+화면(``components/auth_gate.py``)과 실행 실패 메시지
+(``services/runner.py``)가 같은 문구를 쓴다. 인증 배너는 기동 시
+판정 한 번만 그려지고 실행 중 만료는 다시 띄우지 않으므로, 배너가
+안 보일 수 있는 호출자에서도 말이 되게 "재시작" 경로를 함께
+적는다. 두 곳에 따로 두면 한쪽만 고쳐져 어긋난다.
 """
 
 

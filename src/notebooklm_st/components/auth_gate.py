@@ -39,12 +39,14 @@ def render() -> bool:
     if gate.ok:
         return True
 
-    _render_notice(gate.probe_error)
-    _render_upload(gate)
     if st.button("다시 확인", key=_RECHECK_KEY):
         with st.spinner("다시 확인 중"):
             if gate.recheck():
                 st.rerun()
+    # 버튼 처리(위) 뒤에 안내를 그려야 다시 확인이 바꾼 판정을
+    # 반영한다. 먼저 그리면 눌리기 전 상태로 안내가 고정된다.
+    _render_notice(gate.probe_error)
+    _render_upload(gate)
     return gate.ok
 
 
@@ -57,9 +59,15 @@ def _render_notice(probe_error: Exception | None) -> None:
     if probe_error is None:
         st.error(errors.LOGIN_HINT)
         return
+    # 예외 메시지는 보여 주지 않는다. ``_LoginRedirectError`` 처럼
+    # ``core/errors.py`` 가 매핑을 포기했을 때 흘러 들어오는 예외는
+    # 메시지 안에 구글 리다이렉트 URL 을 그대로 담고 있을 수 있다.
+    # 타입 이름만 보여 주고 나머지는 로그(``AuthGate._verify`` 의
+    # ``logger.exception``)에 맡긴다.
     st.error(
         "인증 상태를 확인하지 못했습니다"
-        f"({type(probe_error).__name__}: {probe_error})"
+        f"({type(probe_error).__name__}). 자세한 사유는 앱 로그에"
+        " 남습니다."
     )
 
 
@@ -85,6 +93,8 @@ def _render_upload(gate: auth.AuthGate) -> None:
         )
         if not st.button("반입", key=_IMPORT_KEY, disabled=uploaded is None):
             return
+        # 버튼이 ``disabled=uploaded is None`` 이라 눌렸으면 런타임엔
+        # 항상 uploaded 가 있다. mypy 의 None 좁히기를 위해 남겨 둔다.
         if uploaded is None:
             return
         with st.spinner("반입 중"):
@@ -92,6 +102,10 @@ def _render_upload(gate: auth.AuthGate) -> None:
         if not result.ok:
             st.error(f"반입하지 못했습니다: {result.detail}")
             return
-        if gate.recheck():
-            st.rerun()
-        st.error("반입했지만 인증이 살아나지 않았습니다.")
+        # ``st.rerun()`` 은 ``NoReturn`` 이다. 성공 분기를 먼저 두면
+        # 순서가 바뀌어도 실패 메시지가 성공 뒤에 잘못 그려질 일이
+        # 없도록, 실패를 먼저 걸러 반환하고 성공은 마지막에 둔다.
+        if not gate.recheck():
+            st.error("반입했지만 인증이 살아나지 않았습니다.")
+            return
+        st.rerun()
