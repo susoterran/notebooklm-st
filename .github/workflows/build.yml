@@ -87,6 +87,66 @@ jobs:
           ignore-unfixed: true
           format: table
 
+      # ── 동작 게이트 ───────────────────────────────────────────────────────
+      # 취약하지 않은 것과 실제로 도는 것은 다른 질문이다. 스캔이 통과해도
+      # PYTHONPATH가 틀렸거나 /data에 쓰지 못하는 이미지는 게시되면 안 된다.
+      # 스캔 빌드가 만든 바로 그 이미지에 compose 태그를 붙여, 홈서버와 같은
+      # 설정(비root·read_only·tmpfs·볼륨)으로 돌려본다. 태그를 먼저 붙이므로
+      # compose는 다시 굽지 않는다. 환경변수는 이미지에 박혀 있어 따로 주지 않는다.
+      - run: docker tag notebooklm-st:scan notebooklm-st:local
+      # compose의 user: 기본값과 맞춘다. 홈서버에서 사람이 밟는 chown 절차와 같다.
+      - run: mkdir -p data && sudo chown 1000:1000 data
+
+      - name: 앱 모듈이 런타임 이미지에서 임포트되는지
+        run: |
+          docker compose run --rm app python -c \
+            "import notebooklm_st.components.auth_gate, notebooklm_st.pages.ask, notebooklm_st.services.nlm, notebooklm_st.session"
+
+      - name: 볼륨에 DB 를 만들 수 있는지
+        run: |
+          docker compose run --rm app python -c \
+            "from notebooklm_st.services import store; store.connect(store.default_db_path()).close()"
+
+      - name: extras 가 빠졌는지 — import 가 실패해야 정상
+        run: |
+          set +e
+          out=$(docker compose run --rm app python -c "import playwright" 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then
+            echo "예상 밖 종료코드 $rc — 이미지가 못 떴을 수 있다" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+          if ! echo "$out" | grep -q "ModuleNotFoundError: No module named 'playwright'"; then
+            echo "종료코드는 1 이지만 사유가 다르다" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+
+      - name: 시간대가 KST 인지
+        run: |
+          docker compose run --rm app python -c \
+            "import datetime, sys; \
+             off = datetime.datetime.now().astimezone().utcoffset(); \
+             sys.exit(0 if off.total_seconds() == 32400 else 1)"
+
+      - name: 기동과 헬스체크
+        run: |
+          docker compose up -d
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9004/_stcore/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+
+      - name: 정리
+        if: always()
+        run: docker compose down
+
       # ── 게시 ──────────────────────────────────────────────────────────────
       # 위 스캔 빌드와 컨텍스트·Dockerfile이 같으므로 레이어는 CACHED로 지나간다.
       # 재빌드가 아니다(잡 안에서 유지되는 buildx 캐시. cache-from/to와는 무관).

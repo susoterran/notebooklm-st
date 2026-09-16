@@ -3,7 +3,7 @@
 - **작성일**: 2026-09-16
 - **상태**: 설계 (구현 계획 수립 전)
 - **대상**: `Dockerfile`, `docker-compose.yml`, `.dockerignore`,
-  `.github/workflows/ci.yml`, 배포·재시드 문서, `README.md`
+  `.github/workflows/build.yml`, 배포·재시드 문서, `README.md`
 - **범위**: 릴리스 R2. **배포만 한다.** 앱의 동작은 바꾸지 않는다.
   선행 조건인 R1(무인 갱신 인증 전환)은 완료되었다
   (`docs/superpowers/specs/2026-09-16-headless-auth-design.md`).
@@ -47,10 +47,10 @@ R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서
 | playwright 부재는 L3 에서 `UNAVAILABLE` 로 처리된다 | `notebooklm/_auth/headless_reauth.py:686` — 예외가 아니라 상태값을 돌려준다 | `allow_headless=True`(`services/nlm.py:129`)를 그대로 둬도 컨테이너에서 안전하다 |
 | `notebooklm/__main__.py` 가 존재한다 | 패키지 파일 | 자격증명 업로드 반입이 부르는 `sys.executable -m notebooklm`(`services/auth.py`)이 컨테이너에서도 그대로 돈다 |
 | `server.address` 의 기본값은 비어 있다 | `streamlit/config.py:1016` | 설정을 주지 않으면 전 인터페이스에 바인딩한다. 컨테이너에서 원하는 기본값이다 |
-| `/_stcore/health` 가 헬스체크 라우트다 | `streamlit/web/server/starlette/starlette_routes.py:438` 의 `create_health_routes`, `starlette_static_routes.py:45` 의 예약 경로 | Dockerfile 의 `HEALTHCHECK` 와 CI 가 이 경로를 쓴다 |
+| `/_stcore/health` 가 헬스체크 라우트다 | `streamlit/web/server/starlette/starlette_routes.py:438` 의 `create_health_routes`, `starlette_static_routes.py:45` 의 예약 경로 | Dockerfile 의 `HEALTHCHECK` 와 동작 게이트가 이 경로를 쓴다 |
 
 반대로, 환경변수를 **안 주면 조용히 깨지는 것** 두 가지가 여기서
-나온다. 둘 다 앱이 정상으로 보이기 때문에 8절의 CI 가 명시적으로
+나온다. 둘 다 앱이 정상으로 보이기 때문에 8절의 동작 게이트가 명시적으로
 확인한다.
 
 - `NOTEBOOKLM_ST_DB` 를 안 주면 `store.default_db_path()` 가 현재 작업
@@ -286,89 +286,99 @@ UI 를 제거하는 별도 작업이다. 이 조건을 배포 문서에 못박�
 
 ---
 
-## 8. 지속적 통합
+## 8. 이미지 배포 워크플로
 
-저장소에 CI 가 없다. 이 릴리스가 도커 빌드를 들여오면서 **조용히
-틀리는 검사** 두 개가 생긴다 — playwright 가 이미지에 딸려 들어와도,
-시간대가 UTC 로 서도 앱은 멀쩡히 돈다. 사람이 손으로 도는 체크리스트는
-릴리스 두세 번이면 안 돌게 되므로 기계에 맡긴다.
+이 릴리스가 도커 빌드를 들여오면서 **조용히 틀리는 검사** 두 개가
+생긴다 — playwright 가 이미지에 딸려 들어와도, 시간대가 UTC 로 서도
+앱은 멀쩡히 돈다. 사람이 손으로 도는 체크리스트는 릴리스 두세 번이면
+안 돌게 되므로 기계에 맡긴다.
+
+워크플로는 하나다. 트리거·권한·액션 핀·게시 방식은 다른 프로젝트와
+같은 규약을 쓴다 — 정식 릴리스에서 배포 이미지를, 수동 실행에서
+`devel` 이미지를 GHCR(`ghcr.io/susoterran/notebooklm-st`)에 올린다.
 
 ```yaml
-# .github/workflows/ci.yml
-name: ci
+# .github/workflows/build.yml
+name: build
 on:
-  push:
-    branches: [master, develop]
-  pull_request:
+  release:
+    types: [released]   # 정식 릴리스 → 배포 이미지
+  workflow_dispatch:    # 수동 실행 → devel 이미지
+
+permissions:            # 최소권한 기본값
+  contents: read
 
 jobs:
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: uv sync --frozen
-      - run: uv run ruff format --check .
-      - run: uv run ruff check .
-      - run: uv run mypy src tests
-      - run: uv run pytest
-
+  verify:               # 검증 4단. image 의 needs
   image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: mkdir -p data && sudo chown 1000:1000 data
-      - run: docker compose build
-      - name: extras 가 빠졌는지 — import 가 실패해야 정상
-        run: |
-          if docker compose run --rm app python -c "import playwright"; then
-            echo "playwright 가 런타임 이미지에 들어 있다" >&2
-            exit 1
-          fi
-      - name: 시간대가 KST 인지
-        run: |
-          docker compose run --rm app python -c \
-            "import datetime,sys; \
-             off=datetime.datetime.now().astimezone().utcoffset(); \
-             sys.exit(0 if off.total_seconds()==32400 else 1)"
-      - name: 기동과 헬스체크
-        run: |
-          docker compose up -d
-          for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:9004/_stcore/health && exit 0
-            sleep 2
-          done
-          docker compose logs
-          exit 1
+    needs: [verify]
+    permissions:
+      contents: read
+      packages: write   # 이 잡만 승격
+    # 1. buildx 로 로컬 빌드 (load: true, push: false)
+    # 2. 취약점 게이트 — trivy HIGH·CRITICAL, ignore-unfixed
+    # 3. 동작 게이트 — 스캔한 그 이미지를 compose 설정으로 돌린다
+    # 4. 게시 — sbom, provenance
 ```
 
-### 8.1 결정과 근거
+### 8.1 게이트 두 개
+
+**취약점 게이트.** push 전에 로컬로만 굽고 스캔한다. 여기서 걸리면
+GHCR 에 아무것도 올라가지 않는다. push 를 먼저 하면 스캔이 실패해도
+`latest`·`devel` 롤링 태그가 이미 취약한 이미지를 가리키게 되어 게이트
+역할을 하지 못한다.
+
+**동작 게이트.** 취약하지 않은 것과 실제로 도는 것은 다른 질문이다.
+`/_stcore/health` 는 Streamlit **서버**가 답하므로, `PYTHONPATH` 가
+틀렸거나 런타임에 의존성이 빠졌거나 `/data` 에 쓰지 못해도 헬스체크는
+200 을 돌려준다. 그래서 다섯 가지를 따로 단언한다.
+
+| 단언 | 무엇을 막나 |
+|---|---|
+| 앱 모듈 임포트 | `PYTHONPATH` 오류, 런타임에 빠진 의존성 |
+| `/data` 에 DB 생성 | DB 가 `/app` 에 생기는 사고(2절), `read_only` 아래 볼륨 쓰기 |
+| `import playwright` 가 `ModuleNotFoundError` 로 실패 | extras 혼입 |
+| UTC 오프셋이 32400 | 시간대가 UTC 로 서는 것(2절) |
+| `/_stcore/health` 응답 | 기동 실패 |
+
+playwright 단언은 **종료 코드가 정확히 1 이고 사유가
+`ModuleNotFoundError`** 일 때만 통과한다. "0 이 아니면 통과" 로 두면
+컨테이너가 못 뜨거나(125) `python` 이 없어도(127) "extras 가 잘
+빠졌다" 로 읽힌다.
+
+스캔 빌드가 만든 **바로 그 이미지**에 compose 태그를 붙여 돌린다.
+태그를 먼저 붙이므로 compose 는 다시 굽지 않고, 검사 대상과 게시
+대상이 같은 아티팩트가 된다. 홈서버와 같은 설정(비root·`read_only`·
+tmpfs·볼륨)으로 도는 것도 여기서 확인된다.
+
+### 8.2 결정과 근거
 
 **검증 명령은 개발 중 쓰는 것과 같게 두되 변형하지 않는 형태로
 바꾼다.** 로컬은 `ruff format .` · `ruff check --fix .` 로 고치면서
-돌지만, CI 는 `--check` · `--fix` 없이 돌려 **고치는 대신 실패**한다.
+돌지만, 워크플로는 `--check` · `--fix` 없이 돌려 **고치는 대신
+실패**한다.
 
-**서드파티 액션을 쓰지 않고 uv 공식 설치 스크립트를 쓴다.** 액션의
-메이저 버전은 시간이 지나면 바뀌고, 이 저장소는 CI 를 자주 손볼 곳이
-아니다. 설치 스크립트는 고정할 버전이 없다.
-
-**이미지 job 은 아무것도 push 하지 않는다.** 검증만 한다. 홈서버는
-계속 자기가 빌드한다(13절). 따라서 레지스트리 인증도, 홈서버
-아키텍처를 맞추는 일도 필요 없다.
+**서드파티 액션은 커밋 SHA 로 핀한다.** uv 만 예외로 공식 설치
+스크립트를 쓴다 — 액션의 메이저 버전은 시간이 지나면 바뀌고, 이
+저장소는 워크플로를 자주 손볼 곳이 아니다. 설치 스크립트는 고정할
+버전이 없다.
 
 **`data/` 를 미리 만들고 `1000:1000` 으로 넘긴다.** compose 의 `user:`
 기본값과 맞춘다. 이걸 빼면 러너 사용자가 만든 디렉터리에 컨테이너가
 쓰지 못해 기동이 실패한다 — 홈서버에서 사람이 겪을 실패와 같은
-것이고, CI 가 이 절차를 먼저 밟는 것 자체가 배포 문서의 `chown`
+것이고, 워크플로가 이 절차를 먼저 밟는 것 자체가 배포 문서의 `chown`
 단계가 옳다는 확인이 된다.
 
-### 8.2 CI 가 잡지 못하는 것
+### 8.3 워크플로가 잡지 못하는 것
+
+**push 에는 아무것도 돌지 않는다.** 트리거가 릴리스와 수동 실행뿐이라
+`develop` 에 쌓이는 커밋은 자동 검증을 받지 않는다. 검증 4단은 사람이
+커밋 전에 로컬에서 돌린다.
 
 10절 검증 항목 중 5~8 번(LAN 접근, 호스트 쪽 소유권, 자격증명 반입
-왕복, 재시작 후 지속성)은 실제 홈서버와 구글 계정이 필요하다. CI 는
-amd64 러너에서 굽기 때문에 홈서버가 ARM 이면 **아키텍처 고유 문제는
-잡지 못한다.** 이 둘은 사람이 도는 체크리스트로 남는다.
+왕복, 재시작 후 지속성)은 실제 홈서버와 구글 계정이 필요하다. 러너는
+amd64 라 홈서버가 ARM 이면 **아키텍처 고유 문제는 잡지 못한다.** 이
+둘은 사람이 도는 체크리스트로 남는다.
 
 ---
 
@@ -414,10 +424,10 @@ amd64 러너에서 굽기 때문에 홈서버가 ARM 이면 **아키텍처 고�
 
 | # | 확인 | 통과 기준 | 누가 |
 |---|---|---|---|
-| 1 | `docker compose build` | 성공. `--frozen` 이 잠금 파일 불일치를 여기서 잡는다 | CI |
-| 2 | `import playwright` | **실패해야 정상.** extras 가 빠졌다는 증거 | CI |
-| 3 | `datetime.now()` 의 UTC 오프셋 | `+09:00`. UTC 면 이력이 9시간 어긋난다 | CI |
-| 4 | `/_stcore/health` | 응답한다. 곧 Streamlit 이 떴다는 뜻 | CI |
+| 1 | `docker compose build` | 성공. `--frozen` 이 잠금 파일 불일치를 여기서 잡는다 | 워크플로 |
+| 2 | `import playwright` | **실패해야 정상.** extras 가 빠졌다는 증거 | 워크플로 |
+| 3 | `datetime.now()` 의 UTC 오프셋 | `+09:00`. UTC 면 이력이 9시간 어긋난다 | 워크플로 |
+| 4 | `/_stcore/health` | 응답한다. 곧 Streamlit 이 떴다는 뜻 | 워크플로 |
 | 5 | 다른 기기에서 `http://<홈서버IP>:9004` | 화면이 뜬다 | 사람 |
 | 6 | 호스트에서 `ls -l data/` | `questions.db` 와 `notebooklm/` 이 `user:` 가 가리키는 UID(기본 `1000:1000`) 소유로 생성된다 | 사람 |
 | 7 | 업로드 UI 로 자격증명 반입 | 배너가 사라진다. `read_only: true` 아래서 파일 업로더가 도는지도 함께 확인된다 | 사람 |
@@ -434,7 +444,7 @@ amd64 러너에서 굽기 때문에 홈서버가 ARM 이면 **아키텍처 고�
 | `Dockerfile` | 신규 (3절) |
 | `docker-compose.yml` | 신규 (5절) |
 | `.dockerignore` | 신규 — `.venv`·`.git`·`*.db`·`.streamlit`·도구 캐시·`.claude`·`.superpowers`·`.ua` |
-| `.github/workflows/ci.yml` | 신규 (8절) |
+| `.github/workflows/build.yml` | 신규 (8절) |
 | `docs/how-to/2026-09-16-homeserver-deploy.md` | 신규 (9.1) |
 | `docs/how-to/2026-09-16-auth-reseed.md` | 경로 정정 (9.2) |
 | `README.md` | 컨테이너 절 (9.2) |

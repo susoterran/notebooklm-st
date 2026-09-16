@@ -119,5 +119,5 @@ uv run notebooklm login
 docker compose run --rm app python -c "import playwright"
 ```
 
-CI 가 매 push 마다 같은 것을 단언한다
-(`.github/workflows/ci.yml`).
+이미지를 굽는 워크플로가 게시 전에 같은 것을 단언한다
+(`.github/workflows/build.yml`).
