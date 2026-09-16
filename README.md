@@ -20,10 +20,11 @@ URL 하나와 질문 목록을 넣으면 다음을 대신 처리합니다.
 |---|---|---|
 | Python | 3.13 이상 | `pyproject.toml` `requires-python` |
 | 패키지 매니저 | [uv](https://docs.astral.sh/uv/) | `run.ps1` 이 `uv` 를 요구 |
-| 주요 의존성 | `notebooklm-py[browser]==0.8.1`, `streamlit>=1.62.0` | `pyproject.toml` |
+| 주요 의존성 | `notebooklm-py==0.8.1` (+ 브라우저 로그인용 `[browser]` 는 dev 그룹), `streamlit>=1.62.0` | `pyproject.toml` |
 | 계정 | 구글 계정 (NotebookLM 접근 권한) | 첫 실행 시 브라우저 로그인 |
 
-`[browser]` extras 가 브라우저 로그인용 크로미움을 함께 설치합니다.
+`[browser]` extras 는 dev 그룹에 있습니다. `uv sync` 하면 따라오고,
+컨테이너 이미지는 `uv sync --no-dev` 로 뺍니다.
 
 ## 설치
 
@@ -61,13 +62,21 @@ uv run streamlit run src/notebooklm_st/app.py
 
 ### 첫 실행 — 인증
 
-로그인 화면은 없습니다. 앱이 뜨면 저장된 인증을 먼저 확인하고, 없거나 만료됐으면 **크로미움 창이 자동으로 열립니다.** 구글 로그인을 마치면 앱이 이어서 진행합니다. 터미널 입력은 필요 없습니다.
+로그인 화면은 없습니다. 앱은 브라우저를 띄우지 않습니다.
 
-자동 복구에 실패하면 화면에 재인증 버튼이 나타납니다. 터미널에서 직접 로그인할 수도 있습니다.
+처음 쓸 때는 터미널에서 한 번 로그인합니다.
 
 ```bash
 uv run notebooklm login
 ```
+
+크로미움이 열립니다. 구글 로그인을 마치면 CLI 가 스스로 저장합니다.
+
+앱은 뜰 때 저장된 인증을 확인하고, 요청이 나갈 때마다 토큰과 쿠키를
+자동으로 갱신합니다. 그 갱신으로도 못 살릴 만큼 세션이 죽으면 화면에
+만료 안내와 **다시 확인** 버튼이 나타납니다. 되살리는 절차는
+[인증이 만료됐을 때 되살리기](docs/how-to/2026-09-16-auth-reseed.md)
+에 있습니다.
 
 ### 사용 순서
 
