@@ -659,14 +659,13 @@ uv run pytest
 
 ```
 호스트 (홈서버)                        컨테이너 내부
-<볼륨 경로>/notebooklm/         ←──→  /root/.notebooklm/
+./data/notebooklm/              ←──→  /data/notebooklm/
       profiles/default/                     profiles/default/
 ```
 
-실제 경로는 R2 가 정한다. 이 문서는 "호스트 쪽에 놓는다" 는 원칙만 적고, 경로가
-정해지면 R2 에서 채운다.
-
-R2 가 이 문서를 이어받는다.
+경로는 R2 에서 확정되었다 — 호스트 `./data/notebooklm/`, 컨테이너
+`/data/notebooklm/`. 설계는
+`docs/superpowers/specs/2026-09-16-container-deploy-design.md` 에 있다.
 
 ### 10.2 README 수정 — 틀리게 되는 서술 4곳
 

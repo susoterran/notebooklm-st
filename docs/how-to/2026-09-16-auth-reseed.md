@@ -5,7 +5,8 @@
 
 배너 판정은 **앱이 뜰 때 한 번만** 한다. 앱이 떠 있는 도중에 세션이
 죽으면 배너는 다시 그려지지 않는다 — 먼저 앱을 재시작해(컨테이너면
-`docker restart`) 배너부터 다시 띄운 뒤 아래 절차를 따른다.
+`docker restart notebooklm-st`) 배너부터 다시 띄운 뒤 아래 절차를
+따른다.
 
 ## 왜 사람이 해야 하나
 
@@ -63,11 +64,12 @@ uv run notebooklm login
 
 ```
 호스트 (홈서버)                        컨테이너 내부
-<볼륨 경로>/notebooklm/         ←──→  /root/.notebooklm/
+./data/notebooklm/              ←──→  /data/notebooklm/
       profiles/default/                     profiles/default/
 ```
 
-실제 볼륨 경로는 R2(컨테이너화)에서 정한다.
+호스트 쪽 `./data` 는 `docker-compose.yml` 을 둔 디렉터리 기준이다.
+컨테이너 쪽 경로는 이미지의 `NOTEBOOKLM_HOME` 이 정한다.
 
 두 가지를 지킨다.
 
@@ -109,8 +111,13 @@ uv run notebooklm login
 둘 다 같은 계정의 쿠키를 각자 회전시킨다. 서로의 갱신을 덮어써 양쪽이
 함께 죽을 수 있다. 개발용으로 데스크톱에서 앱을 띄울 때는 짧게 쓴다.
 
-컨테이너 이미지는 `uv sync --no-dev` 로 Playwright(`[browser]`
-extras)를 뺀다. 이미지에 Playwright 가 정말 없는지 확인할 때는
-`uv run --no-dev ...` 로 실행해야 한다. 그냥 `uv run ...` 을 쓰면
-uv 가 dev 그룹을 조용히 다시 동기화해 Playwright 가 되살아나
-검사가 거짓 통과를 낸다.
+컨테이너 이미지에는 Playwright(`[browser]` extras)가 없다. 런타임
+단계에 `uv` 자체를 넣지 않으므로 dev 그룹이 되살아날 경로가 없다.
+직접 확인하려면 다음이 **실패**해야 한다.
+
+```bash
+docker compose run --rm app python -c "import playwright"
+```
+
+CI 가 매 push 마다 같은 것을 단언한다
+(`.github/workflows/ci.yml`).
