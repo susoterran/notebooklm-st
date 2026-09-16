@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 서드파티 액션의 메이저 버전을 추측하지 않는다. 공식 설치
+      # 스크립트에는 고정할 버전이 없다.
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: uv sync --frozen
+      # 로컬은 고치면서 돌지만 CI 는 고치는 대신 실패해야 한다.
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy src tests
+      - run: uv run pytest
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # compose 의 user: 기본값과 맞춘다. 홈서버에서 사람이 밟는
+      # chown 절차와 같은 것이다.
+      - run: mkdir -p data && sudo chown 1000:1000 data
+      - run: docker compose build
+
+      - name: extras 가 빠졌는지 — import 가 실패해야 정상
+        run: |
+          if docker compose run --rm app python -c "import playwright"; then
+            echo "playwright 가 런타임 이미지에 들어 있다" >&2
+            exit 1
+          fi
+
+      - name: 시간대가 KST 인지
+        run: |
+          docker compose run --rm app python -c \
+            "import datetime, sys; \
+             off = datetime.datetime.now().astimezone().utcoffset(); \
+             sys.exit(0 if off.total_seconds() == 32400 else 1)"
+
+      - name: 기동과 헬스체크
+        run: |
+          docker compose up -d
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9004/_stcore/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
