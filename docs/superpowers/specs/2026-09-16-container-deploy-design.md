@@ -82,8 +82,13 @@ RUN uv sync --frozen --no-dev --no-install-project
 # ── runtime ────────────────────────────────────────────────
 FROM python:3.13-slim-bookworm
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+           /usr/local/lib/python3.*/site-packages/setuptools* \
+           /usr/local/lib/python3.*/site-packages/pkg_resources \
+           /usr/local/bin/pip* \
  && groupadd -g 1000 app \
  && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin app
 COPY --from=builder /app/.venv /app/.venv
@@ -149,6 +154,16 @@ uv 를 얹은 것이라 경로와 ABI 가 일치한다. 베이스를 갈아탈 �
 **비root `app`(UID/GID 1000).** 이 컨테이너는 계정 동등 자격증명을
 들고 있다. 홈서버 사용자의 UID 가 1000 이 아니면 5절의 `user:` 로
 덮는다(재빌드 불필요).
+
+**런타임에서 `pip`·`setuptools` 를 지우고 `apt-get upgrade` 를 돈다.**
+이 이미지는 아무것도 설치하지 않는다 — 의존성은 빌더가 만든
+`/app/.venv` 가 전부이고, 그 venv 는 시스템 site-packages 를 보지
+않으므로(venv 기본값) 베이스가 들고 온 `pip`·`setuptools` 는 앱에서
+임포트되지도 않는다. 쓰이지 않는 코드가 취약점 스캔에만 걸리므로
+지운다(`pip` 이 vendoring 하는 `msgpack` 도 함께 사라진다). OS 쪽은
+베이스 태그가 다시 구워지기 전에 나온 Debian 보안 패치를 받기 위해
+`apt-get upgrade` 를 돈다. 파이썬은 `/usr/local` 에 소스 빌드로 들어
+있어 apt 가 건드리지 않는다.
 
 **`PYTHONDONTWRITEBYTECODE=1`.** 루트 파일시스템을 읽기 전용으로
 걸기 때문에(5절) `/app/src` 옆에 `.pyc` 를 쓰려는 시도가 매 기동마다
