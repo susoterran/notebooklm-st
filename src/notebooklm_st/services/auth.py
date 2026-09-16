@@ -9,7 +9,10 @@
 """
 
 import asyncio
+import dataclasses
 import logging
+import subprocess
+import sys
 import threading
 from collections.abc import Callable
 
@@ -19,6 +22,39 @@ from notebooklm_st.services import nlm
 logger = logging.getLogger(__name__)
 
 ProbeLike = Callable[[], bool]
+
+IMPORT_TIMEOUT = 30.0
+"""반입 자식 프로세스를 기다리는 최대 초.
+
+JSON 을 읽고 파일 하나를 쓰는 일이라 보통 1초 안에 끝난다. 이 값은
+그게 동작하지 않았을 때를 위한 뒷받침이다.
+"""
+
+MAX_PAYLOAD_BYTES = 1 << 20
+"""받아들일 자격증명 파일의 최대 크기.
+
+``storage_state.json`` 은 수 KB 다. 넉넉히 잡아 두고, 잘못 고른 파일을
+CLI 에 넘기기 전에 걸러 낸다.
+"""
+
+RunnerLike = Callable[..., subprocess.CompletedProcess[bytes]]
+"""자식을 돌리는 함수의 모양.
+
+``subprocess.run`` 의 키워드 인자가 많아 Protocol 로 적으면 길기만
+하다. 테스트가 가짜를 끼우는 것이 목적이므로 느슨하게 둔다.
+"""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ImportResult:
+    """자격증명 반입 결과.
+
+    ``detail`` 에 쿠키 값을 담지 않는다. 화면이 이 문자열을 그대로
+    보여 주기 때문이다.
+    """
+
+    ok: bool
+    detail: str
 
 
 def is_authenticated(
@@ -134,6 +170,81 @@ class AuthGate:
             self._ok = False
             self._probe_error = error
         return self._ok
+
+
+def import_credentials(
+    payload: bytes,
+    runner: RunnerLike = subprocess.run,
+) -> ImportResult:
+    """업로드된 쿠키 JSON 을 활성 프로필에 기록한다.
+
+    같은 일을 하는 라이브러리 함수는 private 이고 협력자까지 private
+    이므로, 공개 CLI 를 자식 프로세스로 부른다. CLI 가 도메인 필터와
+    검증, 원자적 쓰기, 파일 권한까지 맡는다.
+
+    ``uv`` 로 부르지 않는다. ``uv`` 는 PATH 에 없을 수 있고, 앱은 이미
+    notebooklm 이 설치된 인터프리터 안에서 돌고 있다.
+
+    반입에 성공해도 인증 판정은 바꾸지 않는다. 호출자가 이어서
+    ``AuthGate.recheck`` 를 부른다. 판정은 한 곳에서만 일어난다.
+
+    Args:
+        payload: 업로드된 파일의 내용.
+        runner: 자식을 돌리는 함수. 테스트가 가짜를 넣을 수 있게
+            뚫어 둔다.
+
+    Returns:
+        성공 여부와 사람에게 보여 줄 사유.
+    """
+    if not payload:
+        return ImportResult(ok=False, detail="빈 파일입니다.")
+    if len(payload) > MAX_PAYLOAD_BYTES:
+        return ImportResult(
+            ok=False,
+            detail=f"파일이 너무 큽니다({len(payload)} 바이트).",
+        )
+    try:
+        completed = runner(
+            [
+                sys.executable,
+                "-m",
+                "notebooklm",
+                "auth",
+                "import-cookies",
+                "-",
+            ],
+            input=payload,
+            capture_output=True,
+            timeout=IMPORT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return ImportResult(
+            ok=False,
+            detail=f"{int(IMPORT_TIMEOUT)}초 안에 끝나지 않았습니다.",
+        )
+    if completed.returncode == 0:
+        return ImportResult(ok=True, detail="자격증명을 반입했습니다.")
+    return ImportResult(
+        ok=False, detail=_failure_detail(completed.stderr, completed.stdout)
+    )
+
+
+def _failure_detail(stderr: bytes, stdout: bytes, limit: int = 300) -> str:
+    """자식의 실패 출력을 화면에 쓸 짧은 문자열로 만든다.
+
+    Args:
+        stderr: 자식의 표준 오류.
+        stdout: 자식의 표준 출력. stderr 가 비었을 때 대신 쓴다.
+        limit: 남길 최대 글자 수.
+
+    Returns:
+        끝에서 ``limit`` 글자. 아무 말도 없으면 대체 문구.
+    """
+    raw = stderr or stdout or b""
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return "자세한 사유를 알 수 없습니다."
+    return text[-limit:]
 
 
 async def _open_once(client_factory: nlm.ClientFactory) -> None:

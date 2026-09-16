@@ -1,6 +1,8 @@
-"""인증 확인과 재로그인 테스트."""
+"""인증 확인·게이트·자격증명 반입 테스트."""
 
 import contextlib
+import subprocess
+import sys
 
 import pytest
 from notebooklm._auth import extraction as auth_extraction
@@ -155,3 +157,104 @@ def test_recheck_clears_a_stale_probe_error() -> None:
 
     assert gate.recheck() is True
     assert gate.probe_error is None
+
+
+class FakeCompleted:
+    """``subprocess.run`` 의 반환값을 흉내낸다."""
+
+    def __init__(self, returncode, stdout=b"", stderr=b""):
+        """종료 코드와 출력을 저장한다."""
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def fake_runner(result, calls):
+    """호출 인자를 기록하고 준비된 결과를 돌려주는 러너를 만든다."""
+
+    def run(args, **kwargs):
+        """subprocess.run 을 대신한다."""
+        calls.append((args, kwargs))
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    return run
+
+
+def test_import_credentials_feeds_the_payload_to_stdin() -> None:
+    """자기 인터프리터로 CLI 를 부르고 payload 를 stdin 으로 넘긴다."""
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    runner = fake_runner(FakeCompleted(0), calls)
+
+    result = auth.import_credentials(b'{"cookies": []}', runner=runner)
+
+    assert result.ok is True
+    args, kwargs = calls[0]
+    assert args[0] == sys.executable
+    assert args[1:] == [
+        "-m",
+        "notebooklm",
+        "auth",
+        "import-cookies",
+        "-",
+    ]
+    assert kwargs["input"] == b'{"cookies": []}'
+
+
+def test_import_credentials_reports_a_nonzero_exit() -> None:
+    """종료 코드가 0 이 아니면 실패로 보고 사유를 담는다."""
+    runner = fake_runner(
+        FakeCompleted(1, stderr="쿠키가 모자랍니다".encode()), []
+    )
+
+    result = auth.import_credentials(b"{}", runner=runner)
+
+    assert result.ok is False
+    assert "쿠키가 모자랍니다" in result.detail
+
+
+def test_import_credentials_reports_a_timeout() -> None:
+    """제한 시간 안에 안 끝나면 그 사실을 알린다."""
+    runner = fake_runner(
+        subprocess.TimeoutExpired(cmd="notebooklm", timeout=30.0), []
+    )
+
+    result = auth.import_credentials(b"{}", runner=runner)
+
+    assert result.ok is False
+    assert "30" in result.detail
+
+
+def test_import_credentials_rejects_an_oversized_payload() -> None:
+    """상한을 넘는 입력은 CLI 에 넘기기 전에 거절한다."""
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    runner = fake_runner(FakeCompleted(0), calls)
+    payload = b"x" * (auth.MAX_PAYLOAD_BYTES + 1)
+
+    result = auth.import_credentials(payload, runner=runner)
+
+    assert result.ok is False
+    assert not calls
+
+
+def test_import_credentials_rejects_an_empty_payload() -> None:
+    """빈 파일은 CLI 에 넘기지 않는다."""
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    runner = fake_runner(FakeCompleted(0), calls)
+
+    result = auth.import_credentials(b"", runner=runner)
+
+    assert result.ok is False
+    assert not calls
+
+
+def test_import_credentials_leaves_the_gate_alone() -> None:
+    """반입은 판정을 바꾸지 않는다. 판정은 recheck 가 한다."""
+    gate, probe = make_gate([False])
+    gate.ensure()
+
+    auth.import_credentials(b"{}", runner=fake_runner(FakeCompleted(0), []))
+
+    assert gate.ok is False
+    assert probe.calls == 1
