@@ -5,7 +5,7 @@ description = "YouTube 영상 질의응답 도구"
 requires-python = ">=3.13"
 dependencies = [
     "notebooklm-py==0.8.1",
-    "streamlit>=1.62.0",
+    "streamlit>=1.63.0",
 ]
 
 [build-system]
