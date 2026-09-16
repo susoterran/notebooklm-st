@@ -12,7 +12,7 @@ URL 하나와 질문 목록을 넣으면 다음을 대신 처리합니다.
 
 질의는 백그라운드 스레드에서 돌기 때문에 **페이지를 옮기거나 창을 닫아도 실행이 계속됩니다.**
 
-**개인용 로컬 도구입니다.** 서버는 `127.0.0.1` 에만 바인딩되며, 다중 사용자·대화형 후속 질문·오디오 생성은 범위 밖입니다.
+**개인용 도구입니다.** 데스크톱 실행은 `127.0.0.1` 에만 바인딩되고, 홈서버 컨테이너는 홈 LAN 에만 엽니다(인터넷 노출 금지 — 아래 「홈서버 (Docker)」). 다중 사용자·대화형 후속 질문·오디오 생성은 범위 밖입니다.
 
 ## 요구사항
 
@@ -20,10 +20,12 @@ URL 하나와 질문 목록을 넣으면 다음을 대신 처리합니다.
 |---|---|---|
 | Python | 3.13 이상 | `pyproject.toml` `requires-python` |
 | 패키지 매니저 | [uv](https://docs.astral.sh/uv/) | `run.ps1` 이 `uv` 를 요구 |
-| 주요 의존성 | `notebooklm-py[browser]==0.8.1`, `streamlit>=1.62.0` | `pyproject.toml` |
-| 계정 | 구글 계정 (NotebookLM 접근 권한) | 첫 실행 시 브라우저 로그인 |
+| 주요 의존성 | `notebooklm-py==0.8.1` (+ 브라우저 로그인용 `[browser]` 는 dev 그룹), `streamlit>=1.63.0` | `pyproject.toml` |
+| 계정 | 구글 계정 (NotebookLM 접근 권한) | 첫 로그인은 사람이 CLI 로 한 번 |
+| 컨테이너 | Docker Engine + Compose v2 | 홈서버 배포 시에만. `docker-compose.yml` |
 
-`[browser]` extras 가 브라우저 로그인용 크로미움을 함께 설치합니다.
+`[browser]` extras 는 dev 그룹에 있습니다. `uv sync` 하면 따라오고,
+컨테이너 이미지는 `uv sync --no-dev` 로 뺍니다.
 
 ## 설치
 
@@ -57,17 +59,41 @@ uv run streamlit run src/notebooklm_st/app.py
 .\run.ps1 -NoSync -- --server.port 8612  # streamlit 인자 전달
 ```
 
-접속 주소는 **http://127.0.0.1:8611** 입니다. 주소와 포트의 정본은 `.streamlit/config.toml` 이며, 실행 스크립트가 이 파일을 읽어 안내합니다.
+데스크톱 접속 주소는 **http://127.0.0.1:8611** 입니다. 주소와 포트의 정본은 `.streamlit/config.toml` 이며, 실행 스크립트가 이 파일을 읽어 안내합니다. 컨테이너는 이 파일을 쓰지 않습니다(아래 「홈서버 (Docker)」).
+
+### 홈서버 (Docker)
+
+```bash
+mkdir -p data && sudo chown 1000:1000 data
+docker compose up -d --build
+```
+
+접속 주소는 **http://<홈서버IP>:9004** 입니다. 컨테이너 안에서는 8611 에서 돌고, `docker-compose.yml` 이 호스트 9004 에 붙입니다.
+
+절차와 운영 규칙은 [홈서버에 배포하기](docs/how-to/2026-09-16-homeserver-deploy.md) 에 있습니다.
+
+> **인터넷에 노출하지 마세요.** 대시보드의 자격증명 업로드 폼은 앱이 외부에 노출되지 않는다는 전제 위에 있습니다.
 
 ### 첫 실행 — 인증
 
-로그인 화면은 없습니다. 앱이 뜨면 저장된 인증을 먼저 확인하고, 없거나 만료됐으면 **크로미움 창이 자동으로 열립니다.** 구글 로그인을 마치면 앱이 이어서 진행합니다. 터미널 입력은 필요 없습니다.
+로그인 화면은 없습니다. 앱은 브라우저를 띄우지 않습니다.
 
-자동 복구에 실패하면 화면에 재인증 버튼이 나타납니다. 터미널에서 직접 로그인할 수도 있습니다.
+처음 쓸 때는 터미널에서 한 번 로그인합니다.
 
 ```bash
 uv run notebooklm login
 ```
+
+크로미움이 열립니다. 구글 로그인을 마치면 CLI 가 스스로 저장합니다.
+
+앱은 뜰 때 저장된 인증을 확인하고, 요청이 나갈 때마다 토큰과 쿠키를
+자동으로 갱신합니다. 이 판정은 **뜰 때 한 번만** 합니다. 갱신으로도
+못 살릴 만큼 세션이 죽은 채로 앱이 뜨면 화면에 만료 안내와
+**다시 확인** 버튼이 나타나지만, 떠 있는 도중에 세션이 죽으면
+배너는 다시 그려지지 않습니다 — 이때는 앱을 재시작해야(컨테이너면
+`docker restart notebooklm-st`) 배너를 다시 볼 수 있습니다. 되살리는 절차는
+[인증이 만료됐을 때 되살리기](docs/how-to/2026-09-16-auth-reseed.md)
+에 있습니다.
 
 ### 사용 순서
 
@@ -79,7 +105,7 @@ uv run notebooklm login
 
 ### 데이터 저장 위치
 
-기본값은 실행 디렉터리의 `questions.db` (SQLite) 입니다. 환경 변수로 바꿀 수 있습니다.
+기본값은 실행 디렉터리의 `questions.db` (SQLite) 입니다. 환경 변수로 바꿀 수 있습니다. 컨테이너는 이미지가 `NOTEBOOKLM_ST_DB=/data/questions.db` 를 정해 두므로 호스트의 `./data/questions.db` 에 남습니다.
 
 ```bash
 NOTEBOOKLM_ST_DB=/path/to/my.db uv run streamlit run src/notebooklm_st/app.py

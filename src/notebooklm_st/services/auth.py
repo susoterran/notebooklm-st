@@ -1,59 +1,60 @@
-"""인증 상태 확인과 브라우저 재로그인.
+"""인증 상태 확인.
 
-라이브러리는 만료된 인증을 스스로 되살리려 여러 단계를 밟는다. 토큰
-재추출과 쿠키 회전은 항상 시도하고, 저장된 브라우저 프로필로 무인
-재인증을 하는 단계는 ``allow_headless`` 를 켜야 돈다(→ ``nlm``).
+라이브러리는 만료된 인증을 스스로 되살리려 토큰 재추출과 쿠키 회전을
+시도한다. 클라이언트를 여는 것만으로 그 복구가 돌기 때문에, 이 모듈은
+열어 보는 것으로 확인을 대신한다.
 
-그 무인 단계마저 실패하면 남는 방법은 브라우저를 띄우는 로그인뿐이다.
-그건 라이브러리 API 가 아니라 CLI 가 하므로 자식 프로세스로 부른다.
+그 복구가 실패하면 사람이 데스크톱에서 다시 로그인해 자격증명을
+가져와야 한다. 앱은 브라우저를 띄우지 않는다.
 """
 
 import asyncio
+import dataclasses
+import logging
 import subprocess
 import sys
 import threading
-import time
-from collections.abc import Callable, Iterable
-from typing import Protocol
+from collections.abc import Callable
 
 from notebooklm_st.core import errors
 from notebooklm_st.services import nlm
 
-LOGIN_TIMEOUT = 420.0
-"""로그인 자식 프로세스를 기다리는 최대 초.
+logger = logging.getLogger(__name__)
 
-CLI 자신도 브라우저를 300초까지만 기다리므로 보통은 그쪽이 먼저 끝난다.
-이 값은 그게 동작하지 않았을 때를 위한 뒷받침이다.
-"""
-
-CHECK_NOTICE = "인증 상태 확인 중"
-"""확인 단계가 화면에 남기는 문구.
-
-확인은 콜백을 부르지 않으므로 이 줄이 없으면 상자가 빈 채로 몇 초 동안
-멈춰 있고, 실패로 끝나면 단서가 한 줄도 남지 않는다.
-"""
-
-
-class ProcessLike(Protocol):
-    """로그인 자식 프로세스의 최소 모양."""
-
-    @property
-    def stdout(self) -> Iterable[str] | None:
-        """자식이 흘려 보내는 출력. 줄 단위로 읽는다."""
-        ...
-
-    def wait(self, timeout: float | None = None) -> int:
-        """자식이 끝나기를 기다리고 종료 코드를 돌려준다."""
-        ...
-
-    def kill(self) -> None:
-        """자식을 죽인다."""
-        ...
-
-
-PopenLike = Callable[..., ProcessLike]
 ProbeLike = Callable[[], bool]
-LoginLike = Callable[[Callable[[str], None]], bool]
+
+IMPORT_TIMEOUT = 30.0
+"""반입 자식 프로세스를 기다리는 최대 초.
+
+JSON 을 읽고 파일 하나를 쓰는 일이라 보통 1초 안에 끝난다. 이 값은
+그게 동작하지 않았을 때를 위한 뒷받침이다.
+"""
+
+MAX_PAYLOAD_BYTES = 1 << 20
+"""받아들일 자격증명 파일의 최대 크기.
+
+``storage_state.json`` 은 수 KB 다. 넉넉히 잡아 두고, 잘못 고른 파일을
+CLI 에 넘기기 전에 걸러 낸다.
+"""
+
+RunnerLike = Callable[..., subprocess.CompletedProcess[bytes]]
+"""자식을 돌리는 함수의 모양.
+
+``subprocess.run`` 의 키워드 인자가 많아 Protocol 로 적으면 길기만
+하다. 테스트가 가짜를 끼우는 것이 목적이므로 느슨하게 둔다.
+"""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ImportResult:
+    """자격증명 반입 결과.
+
+    ``detail`` 에 쿠키 값을 담지 않는다. 화면이 이 문자열을 그대로
+    보여 주기 때문이다.
+    """
+
+    ok: bool
+    detail: str
 
 
 def is_authenticated(
@@ -78,86 +79,26 @@ def is_authenticated(
     return True
 
 
-def run_login(
-    on_progress: Callable[[str], None],
-    timeout: float = LOGIN_TIMEOUT,
-    popen: PopenLike = subprocess.Popen,
-) -> bool:
-    """브라우저 로그인을 자식 프로세스로 띄우고 끝날 때까지 지켜본다.
-
-    ``uv`` 로 부르지 않는다. ``uv`` 는 PATH 에 없을 수 있고, 앱은 이미
-    notebooklm 이 설치된 venv 안에서 돌고 있다. 그래서 자기 인터프리터로
-    CLI 모듈을 직접 부른다.
-
-    터미널 입력은 필요 없다. CLI 가 로그인을 감지하면 스스로 저장하고
-    끝나므로 표준 입력을 막아 둔다. 이미 로그인된 브라우저 프로필이
-    남아 있으면 사용자가 아무것도 하지 않아도 통과한다.
-
-    실패는 반드시 한 줄을 남긴다. 자식이 아무 말도 못 하고 죽으면
-    화면에 빈 상자와 "실패" 만 남아, 무엇이 잘못됐는지 알아낼 단서가
-    아무것도 없다.
-
-    Args:
-        on_progress: 자식의 출력 한 줄을 받는 콜백.
-        timeout: 자식을 기다리는 최대 초.
-        popen: 자식을 띄우는 함수. 테스트가 가짜를 넣을 수 있게 뚫어 둔다.
-
-    Returns:
-        로그인이 성공하면 ``True``.
-    """
-    process = popen(
-        [sys.executable, "-m", "notebooklm", "login"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    deadline = time.monotonic() + timeout
-    if process.stdout is not None:
-        for line in process.stdout:
-            on_progress(line.rstrip())
-            if time.monotonic() > deadline:
-                break
-    remaining = max(deadline - time.monotonic(), 0.0)
-    try:
-        code = process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        on_progress(f"로그인이 {int(timeout)}초 안에 끝나지 않아 멈췄습니다.")
-        return False
-    if code != 0:
-        on_progress(f"로그인 CLI 가 종료 코드 {code} 로 끝났습니다.")
-    return code == 0
-
-
 class AuthGate:
-    """앱이 떠 있는 동안 자동 재인증을 한 번만 돌리기 위한 표식.
+    """앱이 떠 있는 동안 인증 확인을 한 번만 돌리기 위한 표식.
 
     Streamlit 은 세션마다 다른 스레드에서 스크립트를 돌리고, 스크립트는
-    상호작용마다 처음부터 다시 실행된다. 표식이 없으면 재실행마다 인증을
-    확인하게 되고, 잠금이 없으면 탭 두 개가 브라우저 로그인을 동시에
-    띄운다.
+    상호작용마다 처음부터 다시 실행된다. 표식이 없으면 재실행마다
+    느린 네트워크 확인이 돌고, 잠금이 없으면 탭 두 개가 동시에 확인을
+    시작한다.
     """
 
-    def __init__(
-        self,
-        probe: ProbeLike = is_authenticated,
-        login: LoginLike = run_login,
-    ) -> None:
-        """확인·로그인 함수를 받아 둔다.
+    def __init__(self, probe: ProbeLike = is_authenticated) -> None:
+        """확인 함수를 받아 둔다.
 
         Args:
             probe: 인증이 살아 있는지 확인하는 함수.
-            login: 브라우저 로그인을 돌리는 함수.
         """
         self._probe = probe
-        self._login = login
         self._lock = threading.Lock()
         self._tried = False
         self._ok = False
+        self._probe_error: Exception | None = None
 
     @property
     def ok(self) -> bool:
@@ -168,19 +109,24 @@ class AuthGate:
     def tried(self) -> bool:
         """자동 확인을 이미 돌렸는지 여부.
 
-        화면이 이 값을 보고 진행 상자를 그릴지 정한다. 재실행마다 상자를
-        다시 그리면 아무 일도 없는데 화면이 깜빡인다.
+        화면이 이 값을 보고 진행 표시를 그릴지 정한다. 재실행마다 다시
+        그리면 아무 일도 없는데 화면이 깜빡인다.
         """
         return self._tried
 
-    def ensure(self, on_progress: Callable[[str], None]) -> bool:
-        """처음 한 번만 인증을 확인하고, 만료됐으면 되살린다.
+    @property
+    def probe_error(self) -> Exception | None:
+        """확인 **자체**가 실패했을 때 그 예외.
 
-        확인 자체가 라이브러리의 무인 복구를 태우므로, 로그인까지 가는
-        것은 그 무인 복구가 실패했을 때뿐이다.
+        만료(``ok`` 가 ``False``)와 구분된다. 만료는 사람이 재시드로
+        풀 수 있지만, 확인 불가는 라이브러리 구조 변경 같은 다른
+        원인이라 안내가 달라야 한다. 보관해 두지 않으면 재실행 뒤
+        ``_tried`` 때문에 예외가 다시 올라오지 않아 만료로 오인된다.
+        """
+        return self._probe_error
 
-        Args:
-            on_progress: 로그인 진행 문구를 받는 콜백.
+    def ensure(self) -> bool:
+        """처음 한 번만 인증을 확인한다.
 
         Returns:
             인증이 쓸 수 있는 상태면 ``True``.
@@ -188,41 +134,117 @@ class AuthGate:
         with self._lock:
             if self._tried:
                 return self._ok
-            return self._verify(on_progress)
+            return self._verify()
 
-    def relogin(self, on_progress: Callable[[str], None]) -> bool:
-        """사용자가 직접 요청한 재인증을 돌린다.
+    def recheck(self) -> bool:
+        """캐시를 버리고 다시 확인한다.
 
-        확인부터 다시 한다. 실패 판정은 이 객체가 프로세스가 끝날 때까지
-        들고 있는데, 그 사이 다른 경로로 인증이 되살아날 수 있다(터미널
-        로그인, 구글 쪽 세션 복구). 그때 확인 없이 브라우저부터 띄우면
-        멀쩡한 인증을 두고 헛수고를 하고, 그 로그인마저 실패하면 앱은
-        영영 만료 상태로 남는다. 확인은 몇 초면 끝난다.
-
-        Args:
-            on_progress: 진행 문구를 받는 콜백.
+        사용자가 데스크톱에서 재로그인해 자격증명을 갈아 끼운 뒤
+        부른다. 실패 판정은 이 객체가 프로세스가 끝날 때까지 들고
+        있으므로, 이 경로가 없으면 회복하는 유일한 방법이 프로세스
+        재시작이 된다.
 
         Returns:
             인증이 쓸 수 있는 상태면 ``True``.
         """
         with self._lock:
-            return self._verify(on_progress)
+            return self._verify()
 
-    def _verify(self, on_progress: Callable[[str], None]) -> bool:
-        """확인하고, 만료됐으면 로그인해 결과를 기록한다.
+    def _verify(self) -> bool:
+        """확인하고 결과를 기록한다.
 
         호출자가 ``self._lock`` 을 쥔 채로 불러야 한다.
-
-        Args:
-            on_progress: 진행 문구를 받는 콜백.
 
         Returns:
             인증이 쓸 수 있는 상태면 ``True``.
         """
         self._tried = True
-        on_progress(CHECK_NOTICE)
-        self._ok = self._probe() or self._login(on_progress)
+        self._probe_error = None
+        try:
+            self._ok = self._probe()
+        except Exception as error:
+            # 게이트에서만 넓게 잡는다. 여기서 새면 화면에 트레이스백이
+            # 뜨고 사용자는 무엇이 잘못됐는지 알 수 없다.
+            # runner._work 와 같은 근거다.
+            logger.exception("인증 확인 실패")
+            self._ok = False
+            self._probe_error = error
         return self._ok
+
+
+def import_credentials(
+    payload: bytes,
+    runner: RunnerLike = subprocess.run,
+) -> ImportResult:
+    """업로드된 쿠키 JSON 을 활성 프로필에 기록한다.
+
+    같은 일을 하는 라이브러리 함수는 private 이고 협력자까지 private
+    이므로, 공개 CLI 를 자식 프로세스로 부른다. CLI 가 도메인 필터와
+    검증, 원자적 쓰기, 파일 권한까지 맡는다.
+
+    ``uv`` 로 부르지 않는다. ``uv`` 는 PATH 에 없을 수 있고, 앱은 이미
+    notebooklm 이 설치된 인터프리터 안에서 돌고 있다.
+
+    반입에 성공해도 인증 판정은 바꾸지 않는다. 호출자가 이어서
+    ``AuthGate.recheck`` 를 부른다. 판정은 한 곳에서만 일어난다.
+
+    Args:
+        payload: 업로드된 파일의 내용.
+        runner: 자식을 돌리는 함수. 테스트가 가짜를 넣을 수 있게
+            뚫어 둔다.
+
+    Returns:
+        성공 여부와 사람에게 보여 줄 사유.
+    """
+    if not payload:
+        return ImportResult(ok=False, detail="빈 파일입니다.")
+    if len(payload) > MAX_PAYLOAD_BYTES:
+        return ImportResult(
+            ok=False,
+            detail=f"파일이 너무 큽니다({len(payload)} 바이트).",
+        )
+    try:
+        completed = runner(
+            [
+                sys.executable,
+                "-m",
+                "notebooklm",
+                "auth",
+                "import-cookies",
+                "-",
+            ],
+            input=payload,
+            capture_output=True,
+            timeout=IMPORT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return ImportResult(
+            ok=False,
+            detail=f"{int(IMPORT_TIMEOUT)}초 안에 끝나지 않았습니다.",
+        )
+    if completed.returncode == 0:
+        return ImportResult(ok=True, detail="자격증명을 반입했습니다.")
+    return ImportResult(
+        ok=False, detail=_failure_detail(completed.stderr, completed.stdout)
+    )
+
+
+def _failure_detail(stderr: bytes, stdout: bytes, limit: int = 300) -> str:
+    """자식의 실패 출력을 화면에 쓸 짧은 문자열로 만든다.
+
+    Args:
+        stderr: 자식의 표준 오류.
+        stdout: 자식의 표준 출력. stderr 가 비었을 때 대신 쓴다.
+        limit: 남길 최대 글자 수.
+
+    Returns:
+        끝에서 ``limit`` 글자. 아무 말도 없으면 대체 문구.
+    """
+    raw = stderr or stdout or b""
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return "자세한 사유를 알 수 없습니다."
+    return text[-limit:]
 
 
 async def _open_once(client_factory: nlm.ClientFactory) -> None:

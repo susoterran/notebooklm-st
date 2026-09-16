@@ -22,11 +22,11 @@ def app_db(monkeypatch, tmp_path) -> Iterator[sqlite3.Connection]:
 
 @pytest.fixture(autouse=True)
 def stub_auth_gate(monkeypatch) -> auth.AuthGate:
-    """테스트가 실제 인증이나 브라우저를 건드리지 않게 막는다.
+    """테스트가 실제 인증을 건드리지 않게 막는다.
 
     화면 테스트는 앱 진입점을 그대로 돌린다. 막지 않으면 인증 확인이
-    네트워크를 타고, 실패하면 브라우저 창까지 뜬다.
+    네트워크를 탄다.
     """
-    gate = auth.AuthGate(probe=lambda: True, login=lambda on_progress: True)
+    gate = auth.AuthGate(probe=lambda: True)
     monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
     return gate
