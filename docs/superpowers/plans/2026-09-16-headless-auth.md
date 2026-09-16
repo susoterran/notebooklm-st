@@ -18,6 +18,12 @@
 - **mypy**: `notebooklm_st.core.*` 와 `notebooklm_st.services.*` 는 `disallow_untyped_defs = true`. 이 두 곳의 모든 함수에 타입 주석을 붙인다.
 - **`tests/**` 는 `ANN` 만 면제**된다(`per-file-ignores`). 타입 주석은 생략해도 되지만 docstring 은 필요하다. 기존 테스트는 `-> None` 을 붙이는 관례를 따르므로 그대로 따른다.
 - **경계 규칙**: `core/` 와 `services/` 는 `import streamlit` 을 하지 않는다 (README 에 명시된 이 프로젝트의 규칙).
+- **import 는 모듈 단위로** (`.claude/rules/streamlit-implement.md` §4.1) — 개별 클래스·함수를 import 하지 않고 모듈을 import 해 정규화된 이름으로 쓴다. `import dataclasses` 뒤 `@dataclasses.dataclass`, `from notebooklm_st.services import auth` 뒤 `auth.import_credentials`. **예외로 허용**: `typing`, `collections.abc`, `typing_extensions` 에서의 심볼 import(`from collections.abc import Callable` 는 괜찮다). **ruff 가 검사하지 않으므로 사람이 지킨다.**
+- **독스트링과 주석은 72자**에서 줄바꿈한다(코드는 80자). 같은 규칙 §4.2.
+- **`# noqa` 는 규칙 코드를 반드시 명시**한다(`# noqa: E501`). 맨 `# noqa` 금지.
+- **의존성 조작은 `uv add` · `uv add --dev` · `uv remove` 로만** 한다(§1). `uv.lock` 은 커밋 대상이며 손으로 편집하지 않는다.
+- **`except Exception:` 은 원칙적으로 금지**(§4.4). 이 계획에서 딱 한 곳 예외를 둔다 — Task 2 의 `AuthGate._verify()`. 근거와 판단은 Task 2 배경에 적었다.
+- 함수가 40줄을 넘으면 분리를 검토한다. 한 파일이 300줄을 넘으면 경계를 기준으로 나눈다.
 - **검증 4단** — 모든 커밋 전에 순서대로 돌린다.
   ```
   uv run ruff format .
@@ -188,6 +194,14 @@ EOF
 **배경:** `relogin()` 을 그냥 지우면 안 된다. 그 docstring 이 적어 둔 역할 — *"그 사이 다른 경로로 인증이 되살아날 수 있다(터미널 로그인…)"* — 이 **재시드 절차 그 자체**다. 프로필을 갈아 끼운 뒤 앱이 알아챌 경로가 없으면 컨테이너 재시작이 유일한 회복 수단이 된다. `recheck()` 가 그 자리를 대신한다.
 
 `probe_error` 가 필요한 이유는 스펙 §5.3 이다. 보관하지 않으면 "확인 불가" 가 첫 렌더에만 보이고, 재실행 후에는 `_tried` 가 True 라 예외가 다시 안 올라와 **만료 배너로 바뀐다.**
+
+**`except Exception` 에 대한 판단.** `.claude/rules/streamlit-implement.md` §4.4 는 맨 `except Exception:` 을 금지한다. `_verify()` 는 이 계획에서 유일한 예외다. 근거 셋:
+
+1. `is_authenticated()` 는 **매핑하지 못한 예외를 일부러 올린다.** 그 집합은 열려 있어 좁게 잡을 수 없다. 좁게 잡으려 하면 `probe_error` 라는 장치 자체가 성립하지 않는다.
+2. **같은 패턴이 이미 코드베이스에 있다.** `services/runner.py:96` 이 스레드 최상위에서 `except Exception as error:` 를 쓰고, "여기서 예외가 새면 화면이 영원히 '실행 중' 에 머문다" 는 주석을 달아 두었다. `_verify()` 도 같은 성질의 경계다 — 새면 화면에 트레이스백이 뜬다.
+3. 스펙 §5.3 이 이 코드를 그대로 명시하고 사용자 검토를 통과했다.
+
+**반드시 지킬 것:** `runner.py` 와 같이 **바로 위에 이유를 적은 주석**을 단다. 주석 없는 광범위 catch 는 규칙 위반이다.
 
 - [ ] **Step 1: 게이트 테스트 재작성**
 
@@ -1224,30 +1238,34 @@ EOF
 
 **배경:** 컨테이너 이미지에서 playwright 를 빼야 한다. 그런데 `[browser]` 를 기본에서 통째로 지우면 **데스크톱에서도 `notebooklm login` 이 안 된다** — 재시드 절차 자체가 막힌다. dev 그룹으로 옮겨 로컬은 `uv sync` 로 브라우저를 갖고, 이미지는 `uv sync --no-dev` 로 뺀다.
 
-- [ ] **Step 1: 의존성 재배치**
+- [ ] **Step 1: 의존성 재배치 — `uv` 로만 한다**
 
-`pyproject.toml` 의 `dependencies` 를 고친다.
+`.claude/rules/streamlit-implement.md` §1 이 **의존성 조작은 `uv add`·`uv add --dev`·`uv remove` 로만** 하도록 정한다. `pyproject.toml` 의 `dependencies` 를 손으로 고치지 않는다. `uv.lock` 은 절대 손대지 않는다.
 
-```toml
-dependencies = [
-    "notebooklm-py==0.8.1",
-    "streamlit>=1.62.0",
-]
+```bash
+uv remove notebooklm-py
+uv add "notebooklm-py==0.8.1"
+uv add --dev "notebooklm-py[browser]==0.8.1"
 ```
 
-`[dependency-groups]` 의 `dev` 에 한 줄을 더한다.
+첫 명령이 `[browser]` 가 붙은 기존 항목을 걷어내고, 둘째가 extras 없이 기본 의존성에 다시 넣고, 셋째가 dev 그룹에 브라우저판을 넣는다.
 
-```toml
-[dependency-groups]
-dev = [
-    "notebooklm-py[browser]==0.8.1",
-    "mypy>=2.3.1",
-    "pytest>=9.1.1",
-    "ruff>=0.16.5",
-]
+**결과를 확인한다.**
+
+```bash
+uv run python -c "
+import tomllib, pathlib
+data = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+print('deps:', data['project']['dependencies'])
+print('dev :', data['dependency-groups']['dev'])
+"
 ```
 
-`[browser]` 줄 위에 주석을 붙인다.
+Expected: `deps` 에 `notebooklm-py==0.8.1`(extras 없음)과 `streamlit>=1.62.0`, `dev` 에 `notebooklm-py[browser]==0.8.1` 과 기존 `mypy`·`pytest`·`ruff`.
+
+`uv` 가 기대와 다르게 배치했을 때만(예: extras 가 남았거나 dev 그룹이 아닌 곳에 들어갔을 때) `pyproject.toml` 을 최소한으로 손봐 위 모양으로 맞추고, 반드시 `uv lock` 으로 잠금 파일을 다시 만든다.
+
+**마지막으로 dev 그룹의 `[browser]` 줄 위에 주석을 붙인다.** 이건 의존성 조작이 아니라 설명이므로 직접 편집해도 된다.
 
 ```toml
     # 데스크톱에서 notebooklm login 을 돌리는 데 필요하다. 컨테이너
