@@ -1,62 +1,24 @@
-"""인증 상태 확인과 브라우저 재로그인.
+"""인증 상태 확인.
 
-라이브러리는 만료된 인증을 스스로 되살리려 여러 단계를 밟는다. 토큰
-재추출과 쿠키 회전은 항상 시도하고, 저장된 브라우저 프로필로 무인
-재인증을 하는 단계는 ``allow_headless`` 를 켜야 돈다(→ ``nlm``).
+라이브러리는 만료된 인증을 스스로 되살리려 토큰 재추출과 쿠키 회전을
+시도한다. 클라이언트를 여는 것만으로 그 복구가 돌기 때문에, 이 모듈은
+열어 보는 것으로 확인을 대신한다.
 
-그 무인 단계마저 실패하면 남는 방법은 브라우저를 띄우는 로그인뿐이다.
-그건 라이브러리 API 가 아니라 CLI 가 하므로 자식 프로세스로 부른다.
+그 복구가 실패하면 사람이 데스크톱에서 다시 로그인해 자격증명을
+가져와야 한다. 앱은 브라우저를 띄우지 않는다.
 """
 
 import asyncio
 import logging
-import subprocess
-import sys
 import threading
-import time
-from collections.abc import Callable, Iterable
-from typing import Protocol
+from collections.abc import Callable
 
 from notebooklm_st.core import errors
 from notebooklm_st.services import nlm
 
 logger = logging.getLogger(__name__)
 
-LOGIN_TIMEOUT = 420.0
-"""로그인 자식 프로세스를 기다리는 최대 초.
-
-CLI 자신도 브라우저를 300초까지만 기다리므로 보통은 그쪽이 먼저 끝난다.
-이 값은 그게 동작하지 않았을 때를 위한 뒷받침이다.
-"""
-
-CHECK_NOTICE = "인증 상태 확인 중"
-"""확인 단계가 화면에 남기는 문구.
-
-확인은 콜백을 부르지 않으므로 이 줄이 없으면 상자가 빈 채로 몇 초 동안
-멈춰 있고, 실패로 끝나면 단서가 한 줄도 남지 않는다.
-"""
-
-
-class ProcessLike(Protocol):
-    """로그인 자식 프로세스의 최소 모양."""
-
-    @property
-    def stdout(self) -> Iterable[str] | None:
-        """자식이 흘려 보내는 출력. 줄 단위로 읽는다."""
-        ...
-
-    def wait(self, timeout: float | None = None) -> int:
-        """자식이 끝나기를 기다리고 종료 코드를 돌려준다."""
-        ...
-
-    def kill(self) -> None:
-        """자식을 죽인다."""
-        ...
-
-
-PopenLike = Callable[..., ProcessLike]
 ProbeLike = Callable[[], bool]
-LoginLike = Callable[[Callable[[str], None]], bool]
 
 
 def is_authenticated(
@@ -79,61 +41,6 @@ def is_authenticated(
     except errors.MAPPED_ERRORS:
         return False
     return True
-
-
-def run_login(
-    on_progress: Callable[[str], None],
-    timeout: float = LOGIN_TIMEOUT,
-    popen: PopenLike = subprocess.Popen,
-) -> bool:
-    """브라우저 로그인을 자식 프로세스로 띄우고 끝날 때까지 지켜본다.
-
-    ``uv`` 로 부르지 않는다. ``uv`` 는 PATH 에 없을 수 있고, 앱은 이미
-    notebooklm 이 설치된 venv 안에서 돌고 있다. 그래서 자기 인터프리터로
-    CLI 모듈을 직접 부른다.
-
-    터미널 입력은 필요 없다. CLI 가 로그인을 감지하면 스스로 저장하고
-    끝나므로 표준 입력을 막아 둔다. 이미 로그인된 브라우저 프로필이
-    남아 있으면 사용자가 아무것도 하지 않아도 통과한다.
-
-    실패는 반드시 한 줄을 남긴다. 자식이 아무 말도 못 하고 죽으면
-    화면에 빈 상자와 "실패" 만 남아, 무엇이 잘못됐는지 알아낼 단서가
-    아무것도 없다.
-
-    Args:
-        on_progress: 자식의 출력 한 줄을 받는 콜백.
-        timeout: 자식을 기다리는 최대 초.
-        popen: 자식을 띄우는 함수. 테스트가 가짜를 넣을 수 있게 뚫어 둔다.
-
-    Returns:
-        로그인이 성공하면 ``True``.
-    """
-    process = popen(
-        [sys.executable, "-m", "notebooklm", "login"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    deadline = time.monotonic() + timeout
-    if process.stdout is not None:
-        for line in process.stdout:
-            on_progress(line.rstrip())
-            if time.monotonic() > deadline:
-                break
-    remaining = max(deadline - time.monotonic(), 0.0)
-    try:
-        code = process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        on_progress(f"로그인이 {int(timeout)}초 안에 끝나지 않아 멈췄습니다.")
-        return False
-    if code != 0:
-        on_progress(f"로그인 CLI 가 종료 코드 {code} 로 끝났습니다.")
-    return code == 0
 
 
 class AuthGate:
