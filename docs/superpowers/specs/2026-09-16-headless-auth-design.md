@@ -5,8 +5,9 @@
 - **대상**: `services/auth.py`, `components/auth_gate.py`, `core/errors.py`,
   `pyproject.toml`. 질의 파이프라인(`services/nlm.py`)과 실행 모델
   (`services/runner.py`·`runs.py`)은 건드리지 않는다.
-- **범위**: 릴리스 R1. 컨테이너 전환(R2)의 **선행 조건**이다. 기능을 더하지
-  않고 덜어 내는 릴리스다.
+- **범위**: 릴리스 R1. 컨테이너 전환(R2)의 **선행 조건**이다. 인증의 주도권을
+  앱에서 사람에게 넘긴다 — 앱이 인증을 **시작하는** 능력(브라우저 로그인)을
+  덜어내고, 자격증명을 **받는** 능력(업로드)을 더한다.
 
 ---
 
@@ -185,6 +186,28 @@ L3 가 아예 실행되지 않으므로 **이 예외는 나오지 않는다.**
 매핑(`core/errors.py:33`)은 셋 다 유지한다. 로컬에서 유효하고 컨테이너에서는
 안 걸릴 뿐이다.
 
+### 2.8 자격증명 반입은 공개 CLI 로만 해야 한다
+
+`auth import-cookies` 는 쿠키 JSON 을 받아 도메인 필터·검증·원자적 쓰기·권한
+설정까지 수행한다. 헬프 원문이 *"written atomically to the active profile's
+`storage_state.json` ... with private file permissions"* 다. `-` 로 stdin 을
+받는 것도 문서화된 용법이고, **extras 없는 기본 패키지로 동작함을 2.4 와 같은
+격리 환경에서 확인했다.**
+
+그런데 같은 일을 하는 **파이썬 함수는 공개 API 가 아니다.**
+
+```
+notebooklm.auth (공개)  → convert_rookiepy_cookies_to_storage_state,
+                          도메인 상수뿐. import 함수 없음
+import_cookie_payload   → notebooklm._app.login_cookie        (private)
+                          협력자 2개를 주입받는데 그중 하나가
+                          cli.services.playwright_login       (private)
+```
+
+함수를 직접 부르면 private 의존이 2~3개 늘어난다. 7.2 가 **이미 있는 private
+의존 하나**(`_LoginRedirectError`)를 위험으로 다루고 방어 코드를 넣는 중이므로,
+여기에 더 얹지 않는다. **자식 프로세스로 공개 CLI 를 부른다.**
+
 ---
 
 ## 3. 설계 결정
@@ -192,7 +215,9 @@ L3 가 아예 실행되지 않으므로 **이 예외는 나오지 않는다.**
 | 결정 | 선택 | 근거 |
 |---|---|---|
 | 브라우저 로그인 경로 | **완전 제거** | 컨테이너에서 불가능. 로컬에서도 사용자가 터미널에서 직접 하는 편이 명확하다. env 로 모드를 가르면 인증 경로가 둘이 되어 둘 다 테스트하고 둘 다 유지해야 한다 |
-| 재시드 수단 | **`notebooklm login` + 프로필 디렉터리 복사** | 새 세션으로 로그인하므로 평소 쓰는 브라우저의 세션과 분리된다. 서버 쪽 자격증명만 따로 폐기할 여지가 생긴다. 검토했다 제외한 대안은 13절에 있다 |
+| 재시드 수단 | **`notebooklm login`** (데스크톱) | 새 세션으로 로그인하므로 평소 쓰는 브라우저의 세션과 분리된다. 서버 쪽 자격증명만 따로 폐기할 여지가 생긴다. 검토했다 제외한 대안은 13절에 있다 |
+| 자격증명 반입 | **대시보드 업로드를 정본으로, 볼륨 직접 복사를 대체 경로로** | 사람이 매번 scp·공유 폴더로 디렉터리를 옮기고 권한까지 맞추는 것보다, 브라우저에서 JSON 하나를 올리는 편이 낫다. 업로드 → 반입 → 자동 재확인이 한 흐름으로 끝난다. **앱 비노출이 전제다**(13절) |
+| 반입 구현 | **공개 CLI 를 자식 프로세스로** | 2.8. 라이브러리 함수는 private 이고 협력자까지 private 이다. `login` 자식 프로세스를 지우면서 다른 자식 프로세스를 넣는 모양이지만 성격이 다르다 — 브라우저 없음, 대화형 아님, 수 초 내 종료, **컨테이너에서 동작 확인됨** |
 | 기동 시 사전 확인 | **유지** | 만료 시 사용자가 할 일(데스크톱 재로그인 + 프로필 복사)이 즉각적이지 않다. 질문을 고르고 실행을 누르기 전에 아는 값이 크다. 2.5 에 따라 갱신 기회이기도 하다 |
 | `relogin()` 자리 | **`recheck()` 로 대체** | 프로필을 갈아 끼운 뒤 앱이 그것을 알아챌 경로가 필요하다. 없으면 컨테이너 재시작이 유일한 회복 수단이 된다 |
 | 만료 문구 | **`core/errors.py` 로 단일화** | 지금 `errors._LOGIN_HINT` 와 `auth_gate._EXPIRED_HINT` 로 갈라져 있고 **둘 다 틀리게 된다.** 어차피 양쪽을 고쳐야 하므로 이번에 합친다 |
@@ -203,13 +228,13 @@ L3 가 아예 실행되지 않으므로 **이 예외는 나오지 않는다.**
 
 ## 4. 구조
 
-R1 은 **새 모듈을 만들지 않는다.** 기존 파일에서 덜어내고 문구를 한 곳으로
-모은다.
+R1 은 **새 모듈을 만들지 않는다.** 기존 파일에서 브라우저 로그인을 덜어내고,
+그 자리에 자격증명 반입과 업로더를 넣는다. 흩어진 문구는 한 곳으로 모은다.
 
 ```
                               현재      R1 이후
-services/auth.py              237줄  →  ~90줄
-components/auth_gate.py        67줄  →  ~45줄
+services/auth.py              237줄  →  ~130줄   (−run_login, +import_credentials)
+components/auth_gate.py        67줄  →   ~75줄   (−재인증, +다시 확인·업로더)
 core/errors.py                101줄  →  ~105줄
 pyproject.toml                        의존성 재배치
 docs/how-to/...-auth-reseed.md     (신규)
@@ -241,7 +266,8 @@ README 에 명시된 규칙(`core/` 와 `services/` 는 `import streamlit` 을 �
 | `ProcessLike` · `PopenLike` · `LoginLike` | 삭제 — 자식 프로세스가 사라진다 |
 | `LOGIN_TIMEOUT` · `run_login()` | 삭제 |
 | `CHECK_NOTICE` | 삭제 — 진행 문구를 흘릴 단계가 없다 |
-| `import subprocess` · `import sys` · `import time` | 삭제 |
+| `import time` | 삭제 |
+| `import subprocess` · `import sys` | **유지** — 5.4 의 자격증명 반입이 쓴다 |
 
 ### 5.2 남는 계약
 
@@ -272,6 +298,13 @@ class AuthGate:
 `is_authenticated()` 의 계약은 그대로 둔다 — **매핑하지 못한 예외는 삼키지
 않고 올린다.** 진짜 버그를 숨기지 않기 위해서다.
 
+`_lock`·`_tried`·`_ok` 는 남긴다. 원래 근거 중 "브라우저 창이 하나만 뜨게"는
+사라지지만 "탭을 여러 개 열어도 느린 네트워크 확인이 한 번만 돈다"는 그대로
+유효하다.
+
+`ensure()` 와 `recheck()` 는 "아직 안 해봤으면 해라" / "무조건 해라" 차이뿐
+이므로 공통 몸통은 `_verify()` 로 남긴다.
+
 ### 5.3 `probe_error` 가 필요한 이유
 
 그 예외를 **게이트가 받아 보관한다.** 보관하지 않으면 상태가 한 번만 보이고
@@ -297,12 +330,47 @@ def _verify(self) -> bool:
 경계는 유지된다. `services/auth.py` 는 예외를 **보관만** 하고 문구를 만들지
 않는다. 문구는 `components/auth_gate.py` 가 그린다.
 
-`_lock`·`_tried`·`_ok` 는 남긴다. 원래 근거 중 "브라우저 창이 하나만 뜨게"는
-사라지지만 "탭을 여러 개 열어도 느린 네트워크 확인이 한 번만 돈다"는 그대로
-유효하다.
+### 5.4 자격증명 반입 — `import_credentials()`
 
-`ensure()` 와 `recheck()` 는 "아직 안 해봤으면 해라" / "무조건 해라" 차이뿐
-이므로 공통 몸통은 `_verify()` 로 남긴다.
+2.8 에 따라 공개 CLI 를 자식 프로세스로 부른다.
+
+```python
+IMPORT_TIMEOUT = 30.0
+MAX_PAYLOAD_BYTES = 1 << 20   # storage_state.json 은 수 KB 다
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ImportResult:
+    """반입 결과. 쿠키 값은 담지 않는다."""
+
+    ok: bool
+    detail: str
+
+
+def import_credentials(
+    payload: bytes,
+    runner: RunnerLike = subprocess.run,
+) -> ImportResult: ...
+```
+
+부르는 명령은 이것뿐이다.
+
+```
+sys.executable -m notebooklm auth import-cookies -      (stdin 으로 payload)
+```
+
+- `sys.executable` 을 쓴다. `uv` 는 PATH 에 없을 수 있고, 앱은 이미 패키지가
+  설치된 인터프리터 안에서 돈다. 지워지는 `run_login` 이 같은 이유로 그렇게
+  했다.
+- `runner` 를 주입 가능하게 둔다. 사라지는 `popen` 주입과 같은 결이고, 테스트가
+  실제 자식 프로세스를 띄우지 않게 한다.
+- `MAX_PAYLOAD_BYTES` 를 넘으면 CLI 에 넘기기 전에 거절한다. 정상 입력은 수
+  KB 라, 잘못 고른 파일을 일찍 걸러 낸다.
+- 반입에 성공해도 이 함수는 **인증 상태를 바꾸지 않는다.** 호출자가 이어서
+  `recheck()` 를 부른다. 판정은 `_verify()` 한 곳에서만 일어난다.
+
+경계는 5.3 과 같다. 이 함수는 **성공 여부와 사유만** 돌려주고 화면 문구를
+만들지 않는다.
 
 ---
 
@@ -342,6 +410,17 @@ if gate.probe_error is None:
 else:
     st.error(_probe_failed_text(gate.probe_error))
 
+with st.expander("자격증명 올리기"):
+    uploaded = st.file_uploader("storage_state.json", type="json")
+    if uploaded is not None and st.button("반입"):
+        result = auth.import_credentials(uploaded.getvalue())
+        if not result.ok:
+            st.error(f"반입하지 못했습니다: {result.detail}")
+        elif gate.recheck():
+            st.rerun()
+        else:
+            st.error("반입했지만 인증이 살아나지 않았습니다.")
+
 if st.button("다시 확인"):
     with st.spinner("다시 확인 중"):
         if gate.recheck():
@@ -352,6 +431,18 @@ if st.button("다시 확인"):
 - `_run()` 삭제 — 자식 출력을 스트리밍할 일이 없으므로 `st.status` 대신
   `st.spinner`
 - "재인증" 버튼 → **"다시 확인"** 버튼
+- **업로더는 만료됐을 때만 그려진다.** `gate.ok` 면 이 코드에 닿지 않는다
+
+### 7.1.1 업로드 경로에서 지키는 것
+
+- `st.file_uploader` 가 주는 `UploadedFile` 은 메모리 버퍼다. `getvalue()` 를
+  바로 stdin 으로 넘겨 **디스크에 임시 파일을 만들지 않는다.**
+- **화면에 쿠키 내용을 절대 표시하지 않는다.** 성공/실패와 사유까지만 보여
+  준다. 업로드된 바이트를 로그에도 남기지 않는다.
+- 업로드 폼은 **쓰기 전용**이다. 저장된 자격증명을 읽어 가는 경로를 만들지
+  않는다. 잘못 쓰였을 때 최악은 덮어쓰기로 인한 서비스 거부다.
+- 볼륨에 직접 복사하는 길은 **막지 않는다.** 업로드가 안 될 때의 대체 경로로
+  how-to 문서에 함께 적는다(10.1).
 
 ### 7.2 판정 실패와 만료를 구분한다
 
@@ -458,6 +549,15 @@ tests/services/test_auth.py
                                             있는지 (재실행 시나리오)
   test_recheck_clears_a_stale_probe_error ← 되살아나면 probe_error 도 지워짐
 
+  test_import_credentials_feeds_the_payload_to_stdin
+                                          ← 5.4. sys.executable 로 부르고
+                                            payload 가 stdin 으로 가는지
+  test_import_credentials_reports_a_nonzero_exit
+  test_import_credentials_rejects_an_oversized_payload
+  test_import_credentials_leaves_the_gate_alone
+                                          ← 판정은 recheck() 가 한다.
+                                            반입 함수가 ok 를 건드리지 않는지
+
 tests/test_components.py
   test_auth_gate_offers_recheck_when_expired
   test_auth_gate_rechecks_when_the_button_is_pressed
@@ -466,6 +566,11 @@ tests/test_components.py
                                             던지면 LOGIN_HINT 가 아니라
                                             "확인 불가" 문구가 나오고, 앱이
                                             트레이스백 없이 계속 뜨는지
+  test_auth_gate_imports_an_uploaded_credential
+                                          ← 업로드 → 반입 → recheck 한 흐름
+  test_auth_gate_reports_a_failed_import
+  test_auth_gate_hides_the_uploader_when_authenticated
+                                          ← gate.ok 면 업로더를 그리지 않는지
 ```
 
 ### 9.4 딸려 바뀌는 곳
@@ -493,12 +598,17 @@ tests/core/test_errors.py
 1. `errors.LOGIN_HINT` 상수화 + 문구 교체 (test_errors 갱신 → 구현)
 2. `AuthGate.recheck()` 와 `probe_error` (신규 테스트 → 구현)
 3. `auth.py` 삭제 작업 (죽은 테스트 제거 → 코드 제거)
-4. `auth_gate.py` 재작성 (신규 3테스트 → 구현)
-5. `pyproject.toml` 의존성 재배치 (`uv sync --no-dev` 로 확인)
-6. README · 신규 문서
+4. `import_credentials()` (신규 테스트 → 구현)
+5. `auth_gate.py` 재작성 — 배너 · 다시 확인 · 업로더 (신규 테스트 → 구현)
+6. `pyproject.toml` 의존성 재배치 (`uv sync --no-dev` 로 확인)
+7. README · 신규 문서
 
 3을 2 뒤에 두는 이유는, `recheck()` 가 먼저 서 있어야 `relogin()` 을 지울 때
 대체재가 이미 검증된 상태이기 때문이다.
+
+3에서는 `import subprocess`·`import sys` 까지 **일단 함께 지운다.** 5.1 이
+"유지"라고 적은 것은 최종 상태를 말한다. 3 시점에는 쓰는 곳이 없어 ruff 가
+unused import 로 잡으므로, 4에서 필요한 것만 다시 들여온다.
 
 검증은 4단 그대로다.
 
@@ -515,8 +625,21 @@ uv run pytest
 
 ### 10.1 신규 — `docs/how-to/2026-09-16-auth-reseed.md`
 
-데스크톱 로그인 → 프로필 디렉터리 복사 → "다시 확인" 까지의 절차. 2.6 에서
-확인한 운영 조건을 명시한다.
+두 경로를 적는다. **업로드가 정본이고, 볼륨 직접 복사는 대체 경로다.**
+
+**정본 — 대시보드 업로드**
+
+```
+데스크톱   uv run notebooklm login          # 브라우저 로그인
+             → ~/.notebooklm/profiles/default/storage_state.json
+
+대시보드   만료 배너 → [자격증명 올리기] → 그 파일을 업로드 → [반입]
+             → 자동으로 재확인까지 끝난다
+```
+
+**대체 — 볼륨 직접 복사** (업로드가 안 될 때)
+
+2.6 에서 확인한 운영 조건을 명시한다.
 
 - **디렉터리 전체를 복사할 것** (락·회전 상태가 형제 파일로 있다)
 - **볼륨은 쓰기 가능할 것**
@@ -552,8 +675,8 @@ R2 가 이 문서를 이어받는다.
 
 | 파일 | 변경 |
 |---|---|
-| `src/notebooklm_st/services/auth.py` | 대폭 축소 (237줄 → ~90줄) |
-| `src/notebooklm_st/components/auth_gate.py` | 재작성 (67줄 → ~45줄) |
+| `src/notebooklm_st/services/auth.py` | 브라우저 로그인 제거 + `recheck()`·`probe_error`·`import_credentials()` (237줄 → ~130줄) |
+| `src/notebooklm_st/components/auth_gate.py` | 재작성 — 배너·다시 확인·업로더 (67줄 → ~75줄) |
 | `src/notebooklm_st/core/errors.py` | `LOGIN_HINT` 상수화 + 문구 교체 |
 | `pyproject.toml` | `[browser]` 를 dev 그룹으로 |
 | `tests/services/test_auth.py` | 삭제·개명·신규 |
@@ -584,7 +707,13 @@ R2 가 이 문서를 이어받는다.
    실패하면 매핑된 예외로 `False` 가 되므로 설계가 기대하는 동작과 같다.
 3. **`uv sync --no-dev` 가 playwright 를 확실히 뺀다는 것.** 구현 5단계에서
    실제로 확인한다.
-4. **데스크톱 앱과 컨테이너 앱이 같은 프로필을 동시에 쓸 때.** 개발용으로
+4. **`auth import-cookies` 의 실패 출력에 쿠키 값이 섞이지 않는다는 것.**
+   5.4 가 stderr 를 `ImportResult.detail` 에 담고 7.1 이 그것을 화면에 보여
+   준다. 라이브러리는 auth 로거에 대해 *"never logs a captured cookie value"*
+   를 명시하지만, 그것이 이 CLI 의 오류 출력까지 보장하는지는 확인하지
+   않았다. **구현 4단계에서 실제 실패 출력을 눈으로 확인하고, 미덥지 않으면
+   detail 을 종료 코드와 정해진 문구로만 채운다.**
+5. **데스크톱 앱과 컨테이너 앱이 같은 프로필을 동시에 쓸 때.** 개발용으로
    데스크톱에서 앱을 띄우면 그 앱도 `~/.notebooklm/profiles/default/` 를 읽고
    **각자 쿠키를 회전시킨다.** 라이브러리가 락 파일 4개를 두지만 그것은 한
    파일 시스템 안의 이야기이고, 데스크톱과 홈서버는 별개다. 서로의 갱신을
@@ -606,5 +735,17 @@ R2 가 이 문서를 이어받는다.
 - **`login --browser-cookies` 기반 경량 재시드** — 평소 쓰는 브라우저의 세션
   쿠키를 그대로 가져오므로, 서버 쪽 자격증명을 폐기하려면 본인 브라우저까지
   함께 로그아웃된다. 윈도우 동작도 검증하지 못했다.
-- **대시보드의 쿠키 JSON 업로드 UI** — 계정 동등 자격증명을 웹 폼으로 받는
-  구조라 별도 검토가 필요하다.
+
+### 13.1 업로드 UI 의 전제
+
+5.4·7.1 의 자격증명 업로드는 **앱이 외부에 노출되지 않는다는 전제** 위에 있다.
+비노출이면 업로드 폼은 홈 네트워크 안에서만 닿고, 폼 자체는 쓰기 전용이라
+저장된 자격증명이 새어 나갈 경로가 아니다.
+
+**이 전제가 깨지면 — 앱을 외부에 노출하기로 바꾸면 — 업로드 UI 를 제거하고
+볼륨 직접 복사로 되돌린다.** 계정 동등 자격증명을 인터넷에서 닿는 웹 폼으로
+받는 구조는 별도 검토 없이 두지 않는다.
+
+같은 이유로, 앱과 대시보드 사이 구간이 평문 HTTP 라는 점을 how-to 문서에
+적는다. 홈 네트워크 안이라도 같은 Wi-Fi 의 다른 기기에는 보인다. Tailscale 등
+암호화된 경로로 접근하면 이 구간이 덮인다.
