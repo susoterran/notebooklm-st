@@ -110,7 +110,9 @@ def test_create_document_posts_to_the_create_endpoint() -> None:
 
     url, kwargs = calls[0]
     assert url == f"{BASE_URL}/api/documents.create"
-    assert kwargs["headers"]["Authorization"] == f"Bearer {TOKEN}"
+    headers = kwargs["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == f"Bearer {TOKEN}"
     assert kwargs["json"] == {
         "title": "AI 에이전트의 미래",
         "text": "# 본문",
