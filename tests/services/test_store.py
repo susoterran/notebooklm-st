@@ -126,11 +126,15 @@ def test_connect_adds_run_metadata_to_an_older_database(tmp_path) -> None:
         );
 
         CREATE TABLE runs (
-            id         INTEGER PRIMARY KEY,
-            url        TEXT NOT NULL,
-            video_id   TEXT NOT NULL,
-            title      TEXT,
-            created_at TEXT NOT NULL
+            id            INTEGER PRIMARY KEY,
+            url           TEXT NOT NULL,
+            video_id      TEXT NOT NULL,
+            title         TEXT,
+            created_at    TEXT NOT NULL,
+            outline_id    TEXT,
+            outline_url   TEXT,
+            outline_title TEXT,
+            exported_at   TEXT
         );
 
         CREATE TABLE answers (
@@ -167,3 +171,53 @@ def test_connect_adds_run_metadata_to_an_older_database(tmp_path) -> None:
 
     assert columns == {"run_id", "channel", "upload_date"}
     assert survivor["title"] == "옛 실행"
+
+
+def test_connect_rejects_a_database_without_the_outline_columns(
+    tmp_path,
+) -> None:
+    """R4 이전 스키마의 DB 는 연결 시점에 거부된다.
+
+    이 프로젝트는 마이그레이션을 두지 않는다. 옛 이력을 버리고 새로
+    시작하는 것이 R4 의 결정이므로, 조용히 열리는 대신 안내와 함께
+    멈춰야 한다.
+    """
+    db_path = tmp_path / "before_outline.db"
+    raw = sqlite3.connect(db_path)
+    raw.executescript(
+        """
+        CREATE TABLE questions (
+            id         INTEGER PRIMARY KEY,
+            title      TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE runs (
+            id         INTEGER PRIMARY KEY,
+            url        TEXT NOT NULL,
+            video_id   TEXT NOT NULL,
+            title      TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE answers (
+            id             INTEGER PRIMARY KEY,
+            run_id         INTEGER NOT NULL REFERENCES runs(id)
+                           ON DELETE CASCADE,
+            question_title TEXT NOT NULL,
+            question_text  TEXT NOT NULL,
+            answer         TEXT,
+            citations      TEXT,
+            error          TEXT
+        );
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    with pytest.raises(store.StaleSchemaError) as excinfo:
+        store.connect(db_path)
+    assert "runs" in str(excinfo.value)
+    assert "exported_at" in str(excinfo.value)
