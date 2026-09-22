@@ -10,12 +10,22 @@ TOKEN = "ol_api_secret_value"
 COLLECTION = "0f2c1a4e-0000-4000-8000-000000000001"
 
 
-def set_env(monkeypatch, base_url=BASE_URL, token=TOKEN, collection=COLLECTION):
-    """환경변수 셋을 채운다. 빈 문자열을 주면 그 변수는 지운다."""
+PUBLIC_URL = "https://outline.example.com"
+
+
+def set_env(
+    monkeypatch,
+    base_url=BASE_URL,
+    token=TOKEN,
+    collection=COLLECTION,
+    public_url="",
+):
+    """환경변수를 채운다. 빈 문자열을 주면 그 변수는 지운다."""
     for name, value in (
         (outline.URL_ENV_VAR, base_url),
         (outline.TOKEN_ENV_VAR, token),
         (outline.COLLECTION_ENV_VAR, collection),
+        (outline.PUBLIC_URL_ENV_VAR, public_url),
     ):
         if value:
             monkeypatch.setenv(name, value)
@@ -66,10 +76,13 @@ def test_config_drops_the_trailing_slash(monkeypatch) -> None:
     assert config.base_url == "http://192.168.0.10:3000"
 
 
-def make_config() -> outline.OutlineConfig:
-    """테스트용 설정."""
+def make_config(public_url=None) -> outline.OutlineConfig:
+    """테스트용 설정. 공개 주소를 안 주면 연결 주소와 같다."""
     return outline.OutlineConfig(
-        base_url=BASE_URL, token=TOKEN, collection_id=COLLECTION
+        base_url=BASE_URL,
+        public_url=public_url if public_url is not None else BASE_URL,
+        token=TOKEN,
+        collection_id=COLLECTION,
     )
 
 
@@ -187,15 +200,98 @@ def test_rejected_token_says_so() -> None:
     assert "토큰" in create_with(failed(401))
 
 
-def test_forbidden_is_also_a_token_problem() -> None:
-    """403 도 같은 안내로 묶는다. scope 가 좁아도 여기로 온다."""
-    assert "토큰" in create_with(failed(403))
+def test_forbidden_points_at_the_collection_first() -> None:
+    """403 은 토큰보다 컬렉션을 먼저 의심하게 한다.
 
+    실측: 없는 컬렉션 ID 로 documents.create 를 부르면 404 가 아니라
+    403 authorization_error 가 온다. Outline 이 "없다" 와 "권한 없다" 를
+    한 응답으로 뭉치기 때문이다. 토큰을 먼저 의심하게 하면 멀쩡한
+    토큰을 파게 된다.
+    """
+    message = create_with(failed(403))
 
-def test_missing_collection_says_so() -> None:
-    """404 는 컬렉션 ID 나 주소 문제다."""
-    message = create_with(failed(404))
     assert "컬렉션" in message
+    assert message.index("컬렉션") < message.index("scope")
+
+
+def test_validation_error_points_at_the_collection_id() -> None:
+    """400 은 값이 틀렸다는 뜻이다. 컬렉션 ID 가 첫 용의자다.
+
+    실측: 컬렉션 이름을 UUID 자리에 넣으면 400 이 온다.
+    """
+    assert "UUID" in create_with(failed(400))
+
+
+def test_error_carries_outlines_own_message() -> None:
+    """Outline 이 보낸 설명을 함께 보여 준다.
+
+    이유를 버리고 상태 코드만 남기면 사람이 추측으로 파게 된다.
+    토큰은 헤더에 있지 응답 본문에 없으므로 본문을 보여 줘도 샐 것이
+    없다.
+    """
+    response = httpx.Response(
+        400,
+        json={
+            "ok": False,
+            "error": "validation_error",
+            "message": "collectionId: must be uuid",
+        },
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    assert "collectionId: must be uuid" in create_with(response)
+
+
+def test_error_without_a_readable_body_says_only_the_status() -> None:
+    """본문이 비어 있으면 상태 코드만 남긴다. 지어내지 않는다."""
+    response = httpx.Response(
+        500,
+        text="",
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    message = create_with(response)
+
+    assert "500" in message
+    assert "Outline 이 말한 것:" not in message
+
+
+def test_a_body_that_echoes_the_secret_is_dropped() -> None:
+    """서버가 무엇을 돌려주든 비밀값은 화면에 올리지 않는다.
+
+    Outline 은 그러지 않지만, 화면에 무엇이 실리는지는 우리가 통제할
+    수 있어야 한다.
+    """
+    response = httpx.Response(
+        400,
+        json={"message": "rejected value " + TOKEN},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    message = create_with(response)
+
+    assert TOKEN not in message
+    assert "UUID" in message  # 설명만 버리고 안내는 남는다
+
+
+def test_a_long_body_is_truncated() -> None:
+    """본문이 길어도 화면을 덮지 않는다."""
+    response = httpx.Response(
+        400,
+        json={"message": "가" * 1000},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    assert len(create_with(response)) < 500
+
+
+def test_not_found_points_at_the_address() -> None:
+    """404 는 주소 문제다.
+
+    컬렉션이 없을 때는 404 가 아니라 403 이 온다(실측). 그래서 404 에서
+    컬렉션을 의심하게 하면 엉뚱한 곳을 보게 된다.
+    """
+    assert "주소" in create_with(failed(404))
 
 
 def test_server_error_carries_the_status_code() -> None:
@@ -233,7 +329,10 @@ def test_a_malformed_base_url_reads_as_a_connection_failure() -> None:
     설정에서 실제로 나오는 경로다.
     """
     config = outline.OutlineConfig(
-        base_url="http://host:port", token=TOKEN, collection_id=COLLECTION
+        base_url="http://host:port",
+        public_url="http://host:port",
+        token=TOKEN,
+        collection_id=COLLECTION,
     )
 
     with pytest.raises(outline.OutlineError) as excinfo:
@@ -241,3 +340,90 @@ def test_a_malformed_base_url_reads_as_a_connection_failure() -> None:
 
     assert "연결하지 못했습니다" in str(excinfo.value)
     assert TOKEN not in str(excinfo.value)
+
+
+def test_config_public_url_defaults_to_the_base_url(monkeypatch) -> None:
+    """공개 주소를 안 주면 연결 주소를 그대로 쓴다.
+
+    주소가 하나뿐인 흔한 구성에서는 설정이 늘지 않아야 한다.
+    """
+    set_env(monkeypatch)
+
+    config = outline.config_from_env()
+
+    assert config is not None
+    assert config.public_url == BASE_URL
+
+
+def test_config_reads_a_separate_public_url(monkeypatch) -> None:
+    """주면 그 값이 공개 주소가 된다. 연결 주소는 그대로다."""
+    set_env(monkeypatch, public_url=PUBLIC_URL)
+
+    config = outline.config_from_env()
+
+    assert config is not None
+    assert config.base_url == BASE_URL
+    assert config.public_url == PUBLIC_URL
+
+
+def test_config_drops_the_trailing_slash_of_the_public_url(
+    monkeypatch,
+) -> None:
+    """공개 주소의 끝 슬래시도 여기서 한 번 뗀다."""
+    set_env(monkeypatch, public_url=PUBLIC_URL + "/")
+
+    config = outline.config_from_env()
+
+    assert config is not None
+    assert config.public_url == PUBLIC_URL
+
+
+def test_config_without_a_base_url_is_none_even_with_a_public_url(
+    monkeypatch,
+) -> None:
+    """공개 주소만 있어서는 설정이 되지 않는다. 붙을 곳이 없다."""
+    set_env(monkeypatch, base_url="", public_url=PUBLIC_URL)
+
+    assert outline.config_from_env() is None
+
+
+def test_create_document_builds_the_link_from_the_public_url() -> None:
+    """상대 경로는 공개 주소를 앞에 붙여 절대 URL 로 만든다.
+
+    앱이 붙는 곳과 사람이 브라우저로 여는 곳이 다를 수 있다. 저장되는
+    링크는 세션이 있는 쪽을 가리켜야 한다.
+    """
+    document = outline.create_document(
+        make_config(public_url=PUBLIC_URL),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(url="/doc/ai-agents-abc123"), []),
+    )
+
+    assert document.url == f"{PUBLIC_URL}/doc/ai-agents-abc123"
+
+
+def test_create_document_still_posts_to_the_base_url() -> None:
+    """공개 주소를 따로 줘도 API 는 연결 주소로 부른다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    outline.create_document(
+        make_config(public_url=PUBLIC_URL),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(), calls),
+    )
+
+    assert calls[0][0] == f"{BASE_URL}/api/documents.create"
+
+
+def test_create_document_keeps_an_absolute_url_over_the_public_url() -> None:
+    """Outline 이 절대 URL 을 주면 공개 주소를 붙이지 않는다."""
+    document = outline.create_document(
+        make_config(public_url=PUBLIC_URL),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(url="https://wiki.example.com/doc/x"), []),
+    )
+
+    assert document.url == "https://wiki.example.com/doc/x"

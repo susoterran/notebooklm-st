@@ -15,6 +15,9 @@ services:
       NOTEBOOKLM_ST_OUTLINE_URL: "${NOTEBOOKLM_ST_OUTLINE_URL:-}"
       NOTEBOOKLM_ST_OUTLINE_TOKEN: "${NOTEBOOKLM_ST_OUTLINE_TOKEN:-}"
       NOTEBOOKLM_ST_OUTLINE_COLLECTION: "${NOTEBOOKLM_ST_OUTLINE_COLLECTION:-}"
+      # 선택. 앱이 붙는 주소와 사람이 브라우저로 여는 주소가 다를 때만
+      # 채운다. 비우면 위 URL 을 그대로 링크에 쓴다.
+      NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL: "${NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL:-}"
     ports:
       # 호스트 9004 → 컨테이너 8611. 홈 LAN 에만 연다.
       # 인터넷에 포워딩하지 않는다(스펙 6절).

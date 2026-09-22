@@ -103,21 +103,57 @@ uv run notebooklm login
 4. **이력** 화면에서 답변을 확인하고, 제목을 정한 뒤 **Outline 에 저장**합니다. 저장하면 로컬에는 문서명과 링크만 남고 수정·삭제·검색은 Outline 에서 합니다.
 5. **정리** 화면에서 삭제되지 않고 남은 임시 노트북(`tmp-` 접두사)을 지웁니다.
 
-Outline 문서 맨 앞에는 YAML frontmatter 가 붙습니다. 영상명과 URL 은
-항상 들어가고, 채널명과 업로드일자는 실행 시점에 yt-dlp 로 가져와
-저장해 둔 값이 있을 때만 들어갑니다.
+Outline 문서는 메타데이터 리스트로 시작하고 구분선 아래에 답변이
+이어집니다.
+
+```markdown
+- 제목: '매수' 의견 믿으면 안 되는 이유 | 증권사 리포트 읽는 법
+- 채널: 어피티 UPPITY
+- 업로드 일자: 2026-08-14
+- 영상 URL: https://www.youtube.com/watch?v=j2R_dgayplU
+
+---
+
+## 첫 질문
+
+답변 본문…
+```
+
+제목과 영상 URL 은 항상 들어가고, 채널명과 업로드일자는 실행 시점에
+yt-dlp 로 가져와 저장해 둔 값이 있을 때만 들어갑니다. 값이 없으면 그
+줄 자체가 빠집니다.
+
+질문 원문은 문서에 싣지 않습니다. 이력 화면의 접은 영역에는 그대로
+남습니다.
 
 ### Outline 연결
 
-| 환경변수 | 값 |
-|---|---|
-| `NOTEBOOKLM_ST_OUTLINE_URL` | Outline 주소 (예: `http://192.168.0.10:3000`) |
-| `NOTEBOOKLM_ST_OUTLINE_TOKEN` | API 토큰. scope 는 `documents.create` 하나면 됩니다 |
-| `NOTEBOOKLM_ST_OUTLINE_COLLECTION` | 문서를 넣을 컬렉션 ID (UUID) |
+| 환경변수 | 필수 | 값 |
+|---|---|---|
+| `NOTEBOOKLM_ST_OUTLINE_URL` | ✅ | **앱이 붙을** Outline 주소 (예: `http://192.168.0.10:3000`) |
+| `NOTEBOOKLM_ST_OUTLINE_TOKEN` | ✅ | API 토큰. scope 는 `documents.create` 하나면 됩니다 |
+| `NOTEBOOKLM_ST_OUTLINE_COLLECTION` | ✅ | 문서를 넣을 컬렉션 ID (**UUID**. 컬렉션 이름이 아닙니다) |
+| `NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL` | | **사람이 브라우저로 열** Outline 주소. 비우면 위 주소를 그대로 씁니다 |
 
-셋 중 하나라도 비면 이력 화면의 저장 버튼 자리에 안내가 나옵니다. 앱은
-그대로 뜨고 지난 실행도 읽을 수 있습니다. 발급 절차는
+필수 셋 중 하나라도 비면 이력 화면의 저장 버튼 자리에 안내가 나옵니다.
+앱은 그대로 뜨고 지난 실행도 읽을 수 있습니다. 발급 절차는
 `docs/how-to/2026-09-16-homeserver-deploy.md` 에 있습니다.
+
+**공개 주소는 언제 필요한가.** 앱은 저장할 때 API 를 한 번 부르고, 문서
+링크를 문자열로 적어 둡니다. 나중에 그 링크를 여는 것은 **브라우저**이지
+앱이 아닙니다. 둘이 같은 주소로 Outline 에 닿을 수 있으면 이 변수는
+필요 없습니다.
+
+다른 경우가 있습니다. 예를 들어 Outline 이 `https://wiki.example.com`
+으로 서비스되는데 같은 홈서버의 컨테이너가 그 공인 주소로 되돌아 나가지
+못하면(NAT 헤어핀), 앱은 호스트 주소로 붙어야 합니다. 그런데 그 호스트
+주소에는 사용자의 Outline 세션 쿠키가 없어서 링크로 쓰면 로그인 화면만
+나옵니다. 이때 둘을 나눕니다.
+
+```
+NOTEBOOKLM_ST_OUTLINE_URL=http://192.168.0.10:4000          # 앱이 붙을 곳
+NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL=https://wiki.example.com   # 링크에 적을 곳
+```
 
 ### 데이터 저장 위치
 
