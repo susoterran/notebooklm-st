@@ -1280,11 +1280,13 @@ MSG
 | `tests/test_components.py` | `test_answer_view_stays_read_only_for_an_item_without_an_id`, `test_answer_view_saves_the_edited_body` |
 | `tests/pages/test_history.py` | `test_answer_is_editable_when_citations_are_shown`, `test_editing_saves_the_new_body`, `test_editing_rejects_an_empty_body`, `test_hiding_citations_locks_editing` |
 
-`tests/test_components.py` 의
-`test_answer_view_is_read_only_without_a_save_hook` 은 **남긴다.** 이름이
-전제를 잃었으므로 함께 고친다 — docstring 을 "편집 상자를 그리지
-않는다" 로 바꾸고 함수 이름을 `test_answer_view_never_draws_an_editor`
-로 바꾼다.
+`tests/test_components.py:539` 의
+`test_answer_view_stays_read_only_without_a_save_hook` 은 **남긴다.**
+이름이 전제("저장 훅이 없으면")를 잃었으므로 함께 고친다 — 함수 이름을
+`test_answer_view_never_draws_an_editor` 로, docstring 을 "편집 상자를
+그리지 않는다. 수정은 Outline 이 맡는다." 로 바꾸고, `render_items`
+호출에서 사라진 인자가 없는지 확인한다(이 테스트는 원래 훅을 넘기지
+않으므로 호출부는 그대로다).
 
 - [ ] **Step 2: 남은 테스트 하나를 고친다**
 
