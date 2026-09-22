@@ -24,6 +24,13 @@ CREATE_TIMEOUT = 20.0
 
 _CREATE_PATH = "/api/documents.create"
 
+DETAIL_LIMIT = 200
+"""Outline 이 보낸 설명에서 화면에 옮길 최대 글자 수.
+
+`st.error` 한 칸에 들어가야 한다. 더 길면 정작 우리가 쓴 안내 문장이
+밀려 안 읽힌다.
+"""
+
 PostLike = Callable[..., httpx.Response]
 """``httpx.post`` 자리에 넣을 수 있는 것.
 
@@ -144,7 +151,9 @@ def create_document(
             f"Outline 에 연결하지 못했습니다({type(error).__name__})."
         ) from error
     if response.status_code >= 400:
-        raise OutlineError(_status_message(response.status_code))
+        raise OutlineError(
+            _failure_message(response, config.token, response.status_code)
+        )
     return _parse(config, response)
 
 
@@ -187,8 +196,35 @@ def _absolute(public_url: str, url: str) -> str:
     return f"{public_url}/{url.lstrip('/')}"
 
 
+def _failure_message(response: httpx.Response, token: str, status: int) -> str:
+    """실패 응답을 사람이 읽고 고칠 수 있는 한 문장으로 만든다.
+
+    우리가 지은 안내 뒤에 **Outline 이 보낸 설명**을 붙인다. 설명을
+    버리고 상태 코드만 남기면, 서버가 무엇이 틀렸는지 정확히 말해
+    줬는데도 사람이 추측으로 파게 된다. 실제로 그렇게 됐다.
+
+    Args:
+        response: 오류 응답.
+        token: 화면에 오르면 안 되는 값. 본문에 섞여 있으면 설명째
+            버린다.
+        status: HTTP 상태 코드.
+
+    Returns:
+        화면에 그대로 나갈 한국어 문장.
+    """
+    detail = _detail(response, token)
+    if not detail:
+        return _status_message(status)
+    return f"{_status_message(status)} Outline 이 말한 것: {detail}"
+
+
 def _status_message(status: int) -> str:
-    """오류 상태 코드를 사람이 읽고 고칠 수 있는 문장으로 옮긴다.
+    """오류 상태 코드를 "무엇부터 확인하라" 는 안내로 옮긴다.
+
+    순서가 중요하다. 실측해 보니 **없는 컬렉션 ID** 가 404 가 아니라
+    403 으로 온다 — Outline 이 "없다" 와 "권한 없다" 를 한 응답으로
+    뭉치기 때문이다. 그래서 403 에서 토큰을 먼저 의심하게 하면 멀쩡한
+    토큰을 파게 된다.
 
     Args:
         status: HTTP 상태 코드.
@@ -196,13 +232,49 @@ def _status_message(status: int) -> str:
     Returns:
         화면에 그대로 나갈 한국어 문장.
     """
-    if status in (401, 403):
+    if status == 400:
         return (
-            "Outline 이 API 토큰을 거부했습니다."
-            " 토큰과 scope(documents.create)를 확인하세요."
+            "Outline 이 값을 받아들이지 않았습니다."
+            " 컬렉션 ID 가 UUID 인지 확인하세요 — 컬렉션 이름은"
+            " 받지 않습니다."
+        )
+    if status == 401:
+        return (
+            "Outline 이 API 토큰을 받아들이지 않았습니다."
+            " 토큰이 맞는지, 만료되지 않았는지 확인하세요."
+        )
+    if status == 403:
+        return (
+            "Outline 이 요청을 거부했습니다."
+            " 컬렉션 ID 가 이 토큰의 계정이 쓸 수 있는 컬렉션인지"
+            " 먼저 확인하세요 — 없는 컬렉션도 이 오류로 옵니다."
+            " 그다음 토큰 scope(documents.create)를 봅니다."
         )
     if status == 404:
-        return (
-            "Outline 컬렉션을 찾지 못했습니다. 컬렉션 ID 와 주소를 확인하세요."
-        )
+        return "Outline 이 대상을 찾지 못했습니다. 주소를 확인하세요."
     return f"Outline 이 오류를 냈습니다(HTTP {status})."
+
+
+def _detail(response: httpx.Response, token: str) -> str:
+    """응답 본문에서 사람에게 보여 줄 한 줄을 뽑는다.
+
+    토큰은 헤더에 있지 본문에 없으므로 본문을 보여 줘도 샐 것이 없다.
+    그래도 서버가 무엇을 돌려주든 화면에 무엇이 실리는지는 우리가
+    통제해야 하므로, 토큰이 섞여 있으면 설명째 버린다.
+
+    Args:
+        response: 오류 응답.
+        token: 본문에 있으면 안 되는 값.
+
+    Returns:
+        한 줄로 접고 길이를 자른 설명. 읽을 것이 없으면 빈 문자열.
+    """
+    try:
+        body = response.json()
+        text = str(body.get("message") or body.get("error") or "")
+    except (ValueError, AttributeError):
+        text = response.text
+    text = " ".join(text.split())[:DETAIL_LIMIT]
+    if not text or token in text:
+        return ""
+    return text

@@ -200,15 +200,98 @@ def test_rejected_token_says_so() -> None:
     assert "토큰" in create_with(failed(401))
 
 
-def test_forbidden_is_also_a_token_problem() -> None:
-    """403 도 같은 안내로 묶는다. scope 가 좁아도 여기로 온다."""
-    assert "토큰" in create_with(failed(403))
+def test_forbidden_points_at_the_collection_first() -> None:
+    """403 은 토큰보다 컬렉션을 먼저 의심하게 한다.
 
+    실측: 없는 컬렉션 ID 로 documents.create 를 부르면 404 가 아니라
+    403 authorization_error 가 온다. Outline 이 "없다" 와 "권한 없다" 를
+    한 응답으로 뭉치기 때문이다. 토큰을 먼저 의심하게 하면 멀쩡한
+    토큰을 파게 된다.
+    """
+    message = create_with(failed(403))
 
-def test_missing_collection_says_so() -> None:
-    """404 는 컬렉션 ID 나 주소 문제다."""
-    message = create_with(failed(404))
     assert "컬렉션" in message
+    assert message.index("컬렉션") < message.index("scope")
+
+
+def test_validation_error_points_at_the_collection_id() -> None:
+    """400 은 값이 틀렸다는 뜻이다. 컬렉션 ID 가 첫 용의자다.
+
+    실측: 컬렉션 이름을 UUID 자리에 넣으면 400 이 온다.
+    """
+    assert "UUID" in create_with(failed(400))
+
+
+def test_error_carries_outlines_own_message() -> None:
+    """Outline 이 보낸 설명을 함께 보여 준다.
+
+    이유를 버리고 상태 코드만 남기면 사람이 추측으로 파게 된다.
+    토큰은 헤더에 있지 응답 본문에 없으므로 본문을 보여 줘도 샐 것이
+    없다.
+    """
+    response = httpx.Response(
+        400,
+        json={
+            "ok": False,
+            "error": "validation_error",
+            "message": "collectionId: must be uuid",
+        },
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    assert "collectionId: must be uuid" in create_with(response)
+
+
+def test_error_without_a_readable_body_says_only_the_status() -> None:
+    """본문이 비어 있으면 상태 코드만 남긴다. 지어내지 않는다."""
+    response = httpx.Response(
+        500,
+        text="",
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    message = create_with(response)
+
+    assert "500" in message
+    assert "Outline 이 말한 것:" not in message
+
+
+def test_a_body_that_echoes_the_secret_is_dropped() -> None:
+    """서버가 무엇을 돌려주든 비밀값은 화면에 올리지 않는다.
+
+    Outline 은 그러지 않지만, 화면에 무엇이 실리는지는 우리가 통제할
+    수 있어야 한다.
+    """
+    response = httpx.Response(
+        400,
+        json={"message": "rejected value " + TOKEN},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    message = create_with(response)
+
+    assert TOKEN not in message
+    assert "UUID" in message  # 설명만 버리고 안내는 남는다
+
+
+def test_a_long_body_is_truncated() -> None:
+    """본문이 길어도 화면을 덮지 않는다."""
+    response = httpx.Response(
+        400,
+        json={"message": "가" * 1000},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    assert len(create_with(response)) < 500
+
+
+def test_not_found_points_at_the_address() -> None:
+    """404 는 주소 문제다.
+
+    컬렉션이 없을 때는 404 가 아니라 403 이 온다(실측). 그래서 404 에서
+    컬렉션을 의심하게 하면 엉뚱한 곳을 보게 된다.
+    """
+    assert "주소" in create_with(failed(404))
 
 
 def test_server_error_carries_the_status_code() -> None:
