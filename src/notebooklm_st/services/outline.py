@@ -14,6 +14,7 @@ import httpx
 URL_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_URL"
 TOKEN_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_TOKEN"
 COLLECTION_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_COLLECTION"
+PUBLIC_URL_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL"
 
 CREATE_TIMEOUT = 20.0
 """문서 생성 요청에 주는 최대 초.
@@ -32,9 +33,20 @@ PostLike = Callable[..., httpx.Response]
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class OutlineConfig:
-    """Outline 에 붙는 데 필요한 값 셋."""
+    """Outline 에 붙는 데 필요한 값들."""
 
     base_url: str
+    """앱이 API 를 부를 주소."""
+
+    public_url: str
+    """사람이 브라우저로 열 주소. 링크를 만들 때만 쓴다.
+
+    둘이 다를 수 있다. 컨테이너가 공인 도메인으로 되돌아 나가지 못하는
+    망(NAT 헤어핀)에서는 앱이 호스트 주소로 붙어야 하는데, 그 주소에는
+    사용자의 Outline 세션 쿠키가 없어 링크로는 쓸 수 없다. 실제 배포에서
+    겪은 구성이다.
+    """
+
     token: str
     collection_id: str
 
@@ -59,21 +71,27 @@ class OutlineError(RuntimeError):
 def config_from_env() -> OutlineConfig | None:
     """환경변수에서 설정을 읽는다.
 
-    셋 다 있을 때만 설정으로 친다. 토큰만 빠진 채로 호출해 401 을
-    맞는 것보다, 처음부터 못 한다고 말하는 편이 진단하기 쉽다.
+    주소·토큰·컬렉션 셋 다 있을 때만 설정으로 친다. 토큰만 빠진 채로
+    호출해 401 을 맞는 것보다, 처음부터 못 한다고 말하는 편이 진단하기
+    쉽다.
+
+    공개 주소는 **선택**이다. 비어 있으면 연결 주소를 그대로 쓴다 —
+    주소가 하나뿐인 흔한 구성에서는 설정이 늘지 않는다.
 
     Returns:
-        설정. 하나라도 비어 있으면 ``None``.
+        설정. 필수 셋 중 하나라도 비어 있으면 ``None``.
     """
     base_url = os.environ.get(URL_ENV_VAR, "").strip()
     token = os.environ.get(TOKEN_ENV_VAR, "").strip()
     collection_id = os.environ.get(COLLECTION_ENV_VAR, "").strip()
+    public_url = os.environ.get(PUBLIC_URL_ENV_VAR, "").strip()
     if not (base_url and token and collection_id):
         return None
     # 끝 슬래시는 여기서 한 번 뗀다. 붙이고 떼는 일이 호출 지점마다
     # 흩어지면 //api/... 같은 URL 이 언젠가 나온다.
     return OutlineConfig(
         base_url=base_url.rstrip("/"),
+        public_url=(public_url or base_url).rstrip("/"),
         token=token,
         collection_id=collection_id,
     )
@@ -134,7 +152,7 @@ def _parse(config: OutlineConfig, response: httpx.Response) -> SavedDocument:
     """응답 본문에서 문서를 꺼낸다.
 
     Args:
-        config: 상대 URL 앞에 붙일 주소를 가진 설정.
+        config: 상대 URL 앞에 붙일 공개 주소를 가진 설정.
         response: ``documents.create`` 의 응답.
 
     Returns:
@@ -151,19 +169,22 @@ def _parse(config: OutlineConfig, response: httpx.Response) -> SavedDocument:
     except (ValueError, KeyError, TypeError) as error:
         raise OutlineError("Outline 의 응답을 이해하지 못했습니다.") from error
     return SavedDocument(
-        id=document_id, title=title, url=_absolute(config.base_url, url)
+        id=document_id, title=title, url=_absolute(config.public_url, url)
     )
 
 
-def _absolute(base_url: str, url: str) -> str:
-    """응답의 문서 URL 을 절대 URL 로 만든다.
+def _absolute(public_url: str, url: str) -> str:
+    """응답의 문서 URL 을 사람이 열 수 있는 절대 URL 로 만든다.
 
-    ``/doc/제목-슬러그`` 같은 상대 경로로 오는 것을 전제하되, 절대
-    URL 로 오는 배포판도 그대로 받는다(스펙 13.1).
+    Outline 은 ``/doc/제목-슬러그`` 같은 **상대 경로**를 준다(실측).
+    그래서 앞에 붙이는 주소가 곧 사람이 나중에 누를 주소가 된다 —
+    연결 주소가 아니라 **공개 주소**를 써야 하는 이유다.
+
+    절대 URL 로 오는 배포판도 있을 수 있어 그때는 그대로 받는다.
     """
     if url.startswith(("http://", "https://")):
         return url
-    return f"{base_url}/{url.lstrip('/')}"
+    return f"{public_url}/{url.lstrip('/')}"
 
 
 def _status_message(status: int) -> str:

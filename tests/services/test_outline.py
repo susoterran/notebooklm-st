@@ -10,12 +10,22 @@ TOKEN = "ol_api_secret_value"
 COLLECTION = "0f2c1a4e-0000-4000-8000-000000000001"
 
 
-def set_env(monkeypatch, base_url=BASE_URL, token=TOKEN, collection=COLLECTION):
-    """환경변수 셋을 채운다. 빈 문자열을 주면 그 변수는 지운다."""
+PUBLIC_URL = "https://outline.example.com"
+
+
+def set_env(
+    monkeypatch,
+    base_url=BASE_URL,
+    token=TOKEN,
+    collection=COLLECTION,
+    public_url="",
+):
+    """환경변수를 채운다. 빈 문자열을 주면 그 변수는 지운다."""
     for name, value in (
         (outline.URL_ENV_VAR, base_url),
         (outline.TOKEN_ENV_VAR, token),
         (outline.COLLECTION_ENV_VAR, collection),
+        (outline.PUBLIC_URL_ENV_VAR, public_url),
     ):
         if value:
             monkeypatch.setenv(name, value)
@@ -66,10 +76,13 @@ def test_config_drops_the_trailing_slash(monkeypatch) -> None:
     assert config.base_url == "http://192.168.0.10:3000"
 
 
-def make_config() -> outline.OutlineConfig:
-    """테스트용 설정."""
+def make_config(public_url=None) -> outline.OutlineConfig:
+    """테스트용 설정. 공개 주소를 안 주면 연결 주소와 같다."""
     return outline.OutlineConfig(
-        base_url=BASE_URL, token=TOKEN, collection_id=COLLECTION
+        base_url=BASE_URL,
+        public_url=public_url if public_url is not None else BASE_URL,
+        token=TOKEN,
+        collection_id=COLLECTION,
     )
 
 
@@ -233,7 +246,10 @@ def test_a_malformed_base_url_reads_as_a_connection_failure() -> None:
     설정에서 실제로 나오는 경로다.
     """
     config = outline.OutlineConfig(
-        base_url="http://host:port", token=TOKEN, collection_id=COLLECTION
+        base_url="http://host:port",
+        public_url="http://host:port",
+        token=TOKEN,
+        collection_id=COLLECTION,
     )
 
     with pytest.raises(outline.OutlineError) as excinfo:
@@ -241,3 +257,90 @@ def test_a_malformed_base_url_reads_as_a_connection_failure() -> None:
 
     assert "연결하지 못했습니다" in str(excinfo.value)
     assert TOKEN not in str(excinfo.value)
+
+
+def test_config_public_url_defaults_to_the_base_url(monkeypatch) -> None:
+    """공개 주소를 안 주면 연결 주소를 그대로 쓴다.
+
+    주소가 하나뿐인 흔한 구성에서는 설정이 늘지 않아야 한다.
+    """
+    set_env(monkeypatch)
+
+    config = outline.config_from_env()
+
+    assert config is not None
+    assert config.public_url == BASE_URL
+
+
+def test_config_reads_a_separate_public_url(monkeypatch) -> None:
+    """주면 그 값이 공개 주소가 된다. 연결 주소는 그대로다."""
+    set_env(monkeypatch, public_url=PUBLIC_URL)
+
+    config = outline.config_from_env()
+
+    assert config is not None
+    assert config.base_url == BASE_URL
+    assert config.public_url == PUBLIC_URL
+
+
+def test_config_drops_the_trailing_slash_of_the_public_url(
+    monkeypatch,
+) -> None:
+    """공개 주소의 끝 슬래시도 여기서 한 번 뗀다."""
+    set_env(monkeypatch, public_url=PUBLIC_URL + "/")
+
+    config = outline.config_from_env()
+
+    assert config is not None
+    assert config.public_url == PUBLIC_URL
+
+
+def test_config_without_a_base_url_is_none_even_with_a_public_url(
+    monkeypatch,
+) -> None:
+    """공개 주소만 있어서는 설정이 되지 않는다. 붙을 곳이 없다."""
+    set_env(monkeypatch, base_url="", public_url=PUBLIC_URL)
+
+    assert outline.config_from_env() is None
+
+
+def test_create_document_builds_the_link_from_the_public_url() -> None:
+    """상대 경로는 공개 주소를 앞에 붙여 절대 URL 로 만든다.
+
+    앱이 붙는 곳과 사람이 브라우저로 여는 곳이 다를 수 있다. 저장되는
+    링크는 세션이 있는 쪽을 가리켜야 한다.
+    """
+    document = outline.create_document(
+        make_config(public_url=PUBLIC_URL),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(url="/doc/ai-agents-abc123"), []),
+    )
+
+    assert document.url == f"{PUBLIC_URL}/doc/ai-agents-abc123"
+
+
+def test_create_document_still_posts_to_the_base_url() -> None:
+    """공개 주소를 따로 줘도 API 는 연결 주소로 부른다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    outline.create_document(
+        make_config(public_url=PUBLIC_URL),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(), calls),
+    )
+
+    assert calls[0][0] == f"{BASE_URL}/api/documents.create"
+
+
+def test_create_document_keeps_an_absolute_url_over_the_public_url() -> None:
+    """Outline 이 절대 URL 을 주면 공개 주소를 붙이지 않는다."""
+    document = outline.create_document(
+        make_config(public_url=PUBLIC_URL),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(url="https://wiki.example.com/doc/x"), []),
+    )
+
+    assert document.url == "https://wiki.example.com/doc/x"
