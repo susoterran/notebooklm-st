@@ -105,17 +105,26 @@ def create_document(
         OutlineError: 연결이 안 되거나, 거부당했거나, 응답이 기대한
             모양이 아닌 경우.
     """
-    response = poster(
-        f"{config.base_url}{_CREATE_PATH}",
-        headers={"Authorization": f"Bearer {config.token}"},
-        json={
-            "title": title,
-            "text": markdown,
-            "collectionId": config.collection_id,
-            "publish": True,
-        },
-        timeout=timeout,
-    )
+    try:
+        response = poster(
+            f"{config.base_url}{_CREATE_PATH}",
+            headers={"Authorization": f"Bearer {config.token}"},
+            json={
+                "title": title,
+                "text": markdown,
+                "collectionId": config.collection_id,
+                "publish": True,
+            },
+            timeout=timeout,
+        )
+    except httpx.HTTPError as error:
+        # httpx 의 원문 예외를 그대로 흘리지 않는다. 요청 정보가 따라
+        # 나올 수 있고, 무엇보다 사람이 읽고 고칠 수 있는 문장이 아니다.
+        raise OutlineError(
+            f"Outline 에 연결하지 못했습니다({type(error).__name__})."
+        ) from error
+    if response.status_code >= 400:
+        raise OutlineError(_status_message(response.status_code))
     return _parse(config, response)
 
 
@@ -153,3 +162,24 @@ def _absolute(base_url: str, url: str) -> str:
     if url.startswith(("http://", "https://")):
         return url
     return f"{base_url}/{url.lstrip('/')}"
+
+
+def _status_message(status: int) -> str:
+    """오류 상태 코드를 사람이 읽고 고칠 수 있는 문장으로 옮긴다.
+
+    Args:
+        status: HTTP 상태 코드.
+
+    Returns:
+        화면에 그대로 나갈 한국어 문장.
+    """
+    if status in (401, 403):
+        return (
+            "Outline 이 API 토큰을 거부했습니다."
+            " 토큰과 scope(documents.create)를 확인하세요."
+        )
+    if status == 404:
+        return (
+            "Outline 컬렉션을 찾지 못했습니다. 컬렉션 ID 와 주소를 확인하세요."
+        )
+    return f"Outline 이 오류를 냈습니다(HTTP {status})."

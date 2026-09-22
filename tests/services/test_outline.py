@@ -160,3 +160,64 @@ def test_create_document_rejects_a_response_without_data() -> None:
         )
 
     assert "이해하지 못했습니다" in str(excinfo.value)
+
+
+def failed(status: int):
+    """오류 상태 코드의 응답을 만든다."""
+    return httpx.Response(
+        status,
+        json={"message": "nope"},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+
+def create_with(response) -> str:
+    """준비된 응답(또는 예외)으로 저장을 시도하고 오류 문구를 돌려준다."""
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.create_document(
+            make_config(), "제목", "# 본문", poster=fake_poster(response, [])
+        )
+    return str(excinfo.value)
+
+
+def test_rejected_token_says_so() -> None:
+    """401 은 토큰 문제다."""
+    assert "토큰" in create_with(failed(401))
+
+
+def test_forbidden_is_also_a_token_problem() -> None:
+    """403 도 같은 안내로 묶는다. scope 가 좁아도 여기로 온다."""
+    assert "토큰" in create_with(failed(403))
+
+
+def test_missing_collection_says_so() -> None:
+    """404 는 컬렉션 ID 나 주소 문제다."""
+    message = create_with(failed(404))
+    assert "컬렉션" in message
+
+
+def test_server_error_carries_the_status_code() -> None:
+    """5xx 는 상태 코드를 그대로 보여 준다."""
+    assert "503" in create_with(failed(503))
+
+
+def test_timeout_reads_as_a_connection_failure() -> None:
+    """응답이 없으면 연결 실패로 묶는다."""
+    assert "연결하지 못했습니다" in create_with(
+        httpx.TimeoutException("timed out")
+    )
+
+
+def test_connection_error_reads_as_a_connection_failure() -> None:
+    """붙지 못한 경우도 같은 문장이다."""
+    assert "연결하지 못했습니다" in create_with(httpx.ConnectError("refused"))
+
+
+def test_the_token_never_appears_in_an_error_message() -> None:
+    """어떤 실패 경로에서도 토큰이 새지 않는다."""
+    for response in (
+        failed(401),
+        failed(500),
+        httpx.TimeoutException("timed out"),
+    ):
+        assert TOKEN not in create_with(response)
