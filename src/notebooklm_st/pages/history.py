@@ -208,10 +208,10 @@ def _export(
                 document_title=document.title,
                 document_url=document.url,
             )
-        except Exception as error:
-            # 화면 경계의 최후 방어선이다: mark_exported 가 무엇을
-            # 던지든(잠긴 DB 등) 문서는 이미 Outline 에 만들어져
-            # 있으므로 구체적 예외로 좁히지 않고 넓게 잡는다.
+        except (ValueError, sqlite3.Error) as error:
+            # mark_exported 가 실제로 내는 둘만 잡는다. 더 넓게 잡으면
+            # 나중에 생길 프로그래밍 오류까지 "문서가 둘이 됩니다" 로
+            # 둔갑해 진짜 버그가 드러나지 않는다.
             # 되돌리지 않는다. 방금 만든 문서를 지우려면 그 삭제도
             # 실패할 수 있어 틈이 한 겹 더 생길 뿐이다. 사실대로
             # 보여 주고 사람이 링크를 들고 판단하게 한다.

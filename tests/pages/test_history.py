@@ -522,3 +522,29 @@ def test_exporting_an_older_run_redraws_that_same_run(
     links = app.get("link_button")
     assert len(links) == 1
     assert links[0].proto.id.endswith(f"history_open_{older}")
+
+
+def test_export_does_not_swallow_a_programming_error(
+    app_db, monkeypatch
+) -> None:
+    """기록 단계의 프로그래밍 오류는 감추지 않고 드러낸다.
+
+    넓게 잡으면 리팩터링이 남긴 AttributeError 까지 "문서가 둘이
+    됩니다" 라는 안내로 둔갑해, 진짜 버그가 영영 보이지 않는다.
+    """
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(outline, "create_document", fake_create([]))
+
+    def boom(*args, **kwargs):
+        """리팩터링이 남긴 버그를 흉내 낸다."""
+        raise AttributeError("no attribute 'mark_exported'")
+
+    monkeypatch.setattr(run_history, "mark_exported", boom)
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_export_1").click().run()
+
+    assert len(app.exception) == 1
+    assert "둘이 됩니다" not in " ".join(element.value for element in app.error)
