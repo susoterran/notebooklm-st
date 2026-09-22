@@ -79,6 +79,7 @@ def fetch(
             ],
             capture_output=True,
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return MetadataResult(

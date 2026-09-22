@@ -57,6 +57,7 @@ def test_fetch_calls_yt_dlp_with_a_normalized_url() -> None:
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     ]
     assert kwargs["capture_output"] is True
+    assert kwargs["stdin"] == subprocess.DEVNULL
 
 
 def test_fetch_reads_the_channel() -> None:
