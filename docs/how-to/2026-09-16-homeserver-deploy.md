@@ -70,20 +70,67 @@ uv run notebooklm login
 업로드가 안 될 때의 대체 경로와 자격증명 취급 수칙은
 [인증이 만료됐을 때 되살리기](2026-09-16-auth-reseed.md) 에 있다.
 
-## 4. 기존 데이터 옮기기 (선택)
+## 4. Outline 연결하기
 
-데스크톱에서 쓰던 질문 템플릿과 이력을 가져오려면 앱을 내린 뒤
-`questions.db` 를 복사한다.
+요약본은 Outline 에 저장된다. 앱에는 문서명과 링크만 남는다.
+
+### 4.1 API 키 만들기
+
+Outline 웹에서 **프로필 → Settings → API Keys → New API Key**.
+
+- **Scopes** 에 `documents.create` 만 넣는다. 앱이 부르는 엔드포인트는
+  그것 하나뿐이라, 키가 새더라도 읽기·삭제·사용자 조회가 막힌다.
+- 키 값은 만든 직후 한 번만 보인다. 바로 복사한다.
+
+키는 **만든 사용자의 권한을 상속한다.** "이 컬렉션에만" 이라는 범위
+지정은 없으므로, 컬렉션 단위로 가두려면 그 컬렉션에만 접근 가능한
+사용자를 따로 만들어 그 사용자로 키를 발급해야 한다.
+
+### 4.2 컬렉션 ID 찾기
+
+`collectionId` 는 UUID 다. 화면 주소의 슬러그와 다르므로 API 로
+확인한다. 이 조회에만 scope 를 넓힌 임시 키가 필요하고, 확인이 끝나면
+지운다.
 
 ```bash
-docker compose down
-scp <사용자>@<데스크톱>:notebooklm-st/questions.db ./data/questions.db
-sudo chown "$(id -u):$(id -g)" data/questions.db
+read -rs OUTLINE_TOKEN   # 화면에 안 찍히고 히스토리에도 안 남는다
+curl -s -X POST http://localhost:3000/api/collections.list \
+  -H "Authorization: Bearer $OUTLINE_TOKEN" \
+  -H "Content-Type: application/json" -d '{}' \
+  | python3 -c 'import json,sys; [print(c["id"], c["name"]) for c in json.load(sys.stdin)["data"]]'
+```
+
+### 4.3 값 넣기
+
+1 절에서 만든 compose 환경 파일에 세 줄을 더한다. 이 파일은
+`.gitignore` 와 `.dockerignore` 에 이미 들어 있어 저장소나 이미지로
+새지 않는다.
+
+```bash
+cat >> .env <<'EOF'
+NOTEBOOKLM_ST_OUTLINE_URL=http://192.168.0.10:3000
+NOTEBOOKLM_ST_OUTLINE_TOKEN=<복사한 키>
+NOTEBOOKLM_ST_OUTLINE_COLLECTION=<위에서 찾은 UUID>
+EOF
 docker compose up -d
 ```
 
-스키마가 다르면 앱이 연결 시점에 안내와 함께 멈춘다. 이 프로젝트는
-마이그레이션을 지원하지 않으므로, 그때는 파일을 지우고 새로 시작한다.
+셋 중 하나라도 비면 앱은 그대로 뜨고 이력 화면의 저장 버튼 자리에
+안내만 나온다.
+
+### 4.4 옛 DB 지우기
+
+R4 는 `runs` 테이블에 컬럼을 넷 더한다. 이 프로젝트는 마이그레이션을
+두지 않으므로 **R4 이전 `questions.db` 는 열리지 않는다.** 앱이 연결
+시점에 안내와 함께 멈춘다.
+
+```bash
+docker compose down
+rm data/questions.db
+docker compose up -d
+```
+
+질문 템플릿도 함께 사라진다. 질문 관리 화면에서 다시 등록한다.
 
 ## 5. 검증
 
@@ -100,7 +147,8 @@ docker compose up -d
 | 5 | 다른 기기에서 `http://<홈서버IP>:9004` | 화면이 뜬다 |
 | 6 | `ls -l data/` | `questions.db`·`notebooklm/` 이 내 UID 소유 |
 | 7 | 업로드 UI 로 자격증명 반입 | 배너가 사라진다 |
-| 8 | `docker compose down && docker compose up -d` | 질문·이력·인증이 보존된다 |
+| 8 | `docker compose down && docker compose up -d` | 질문·문서 링크·인증이 보존된다 |
+| 9 | 이력에서 실행 하나를 Outline 에 저장 | 문서가 컬렉션에 생기고, 이력이 링크 한 줄로 바뀐다 |
 
 ## 운영 규칙
 
