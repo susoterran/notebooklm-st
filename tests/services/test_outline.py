@@ -223,3 +223,21 @@ def test_the_token_never_appears_in_an_error_message() -> None:
         httpx.TimeoutException("timed out"),
     ):
         assert TOKEN not in create_with(response)
+
+
+def test_a_malformed_base_url_reads_as_a_connection_failure() -> None:
+    """주소가 망가져 있어도 화면에 원문 예외를 흘리지 않는다.
+
+    ``httpx.InvalidURL`` 은 ``HTTPError`` 를 상속하지 않아 따로 잡지
+    않으면 화면까지 그대로 올라간다. 자리표시자를 그대로 둔 첫
+    설정에서 실제로 나오는 경로다.
+    """
+    config = outline.OutlineConfig(
+        base_url="http://host:port", token=TOKEN, collection_id=COLLECTION
+    )
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.create_document(config, "제목", "# 본문")
+
+    assert "연결하지 못했습니다" in str(excinfo.value)
+    assert TOKEN not in str(excinfo.value)

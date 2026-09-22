@@ -102,8 +102,8 @@ def create_document(
         만들어진 문서의 ID·제목·절대 URL.
 
     Raises:
-        OutlineError: 연결이 안 되거나, 거부당했거나, 응답이 기대한
-            모양이 아닌 경우.
+        OutlineError: 주소가 URL 로 읽히지 않거나, 연결이 안 되거나,
+            거부당했거나, 응답이 기대한 모양이 아닌 경우.
     """
     try:
         response = poster(
@@ -117,9 +117,11 @@ def create_document(
             },
             timeout=timeout,
         )
-    except httpx.HTTPError as error:
+    except (httpx.HTTPError, httpx.InvalidURL) as error:
         # httpx 의 원문 예외를 그대로 흘리지 않는다. 요청 정보가 따라
         # 나올 수 있고, 무엇보다 사람이 읽고 고칠 수 있는 문장이 아니다.
+        # InvalidURL 은 HTTPError 를 상속하지 않아 따로 적어야 한다.
+        # 자리표시자가 그대로 남은 첫 설정에서 실제로 나온다.
         raise OutlineError(
             f"Outline 에 연결하지 못했습니다({type(error).__name__})."
         ) from error
