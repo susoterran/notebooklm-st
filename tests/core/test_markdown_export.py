@@ -147,6 +147,23 @@ def test_to_markdown_escapes_quotes_and_backslashes_in_the_title() -> None:
     assert text.splitlines()[1] == ('title: "그는 \\"생각\\"한다 \\\\ 아마도"')
 
 
+def test_to_markdown_strips_del_and_c1_controls_from_the_title() -> None:
+    """DEL 과 C1 제어문자도 YAML 스칼라에서 지워진다.
+
+    PyYAML 은 DEL(0x7f)과 C1(0x80-0x9f) 대부분을 인쇄 불가로 보아
+    ReaderError 를 던지고 0x85 는 줄바꿈으로 해석한다. 영상 제목은
+    제3자 문자열이라 이 범위가 섞여 들어올 수 있다.
+    """
+    summary = make_summary(title="제목\x7f안\x85녕")
+
+    text = markdown_export.to_markdown(summary, [make_item()])
+
+    title_line = text.splitlines()[1]
+    assert title_line == 'title: "제목안녕"'
+    assert "\x7f" not in title_line
+    assert "\x85" not in title_line
+
+
 def test_to_markdown_escapes_newlines_in_the_channel() -> None:
     """개행이 든 값도 한 줄로 접힌다."""
     metadata = models.VideoMetadata(channel="안될\n공학", upload_date=None)

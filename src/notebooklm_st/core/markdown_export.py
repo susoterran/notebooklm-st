@@ -27,10 +27,15 @@ _FORBIDDEN = re.compile(r'[<>:"/\|?*\x00-\x1f]')
 
 _REPEATED_SPACE = re.compile(r"\s+")
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 """YAML 문자열에서 지울 제어문자.
 
-탭·개행·캐리지리턴은 이스케이프해서 살리므로 여기서 뺀다.
+C0(``\\x00-\\x1f``)뿐 아니라 DEL(``\\x7f``)과 C1(``\\x80-\\x9f``)
+범위도 포함한다. PyYAML 은 이 범위 대부분을 인쇄 불가로 보아
+``ReaderError`` 를 던지고 ``\\x85`` 는 줄바꿈으로 해석한다. 영상
+제목은 제3자 문자열이라 이 범위가 하나만 섞여도 문서 전체가
+frontmatter 를 쓰는 목적인 파싱 자체에 실패한다. 탭·개행·캐리지리턴은
+이스케이프해서 살리므로 여기서 뺀다.
 """
 
 
@@ -52,9 +57,10 @@ def to_markdown(
         YAML frontmatter 로 시작하고 줄바꿈 하나로 끝나는 마크다운
         문서.
     """
+    title = summary.title or summary.video_id
     blocks = [
-        _frontmatter(summary, metadata),
-        f"# {summary.title or summary.video_id}",
+        _frontmatter(summary, title, metadata),
+        f"# {title}",
         f"- 출처: {summary.url}\n- 실행: {summary.created_at}",
     ]
     blocks.extend(_item_block(item) for item in items)
@@ -76,15 +82,28 @@ def to_filename(title: str | None, video_id: str) -> str:
 
 
 def _frontmatter(
-    summary: models.RunSummary, metadata: models.VideoMetadata | None
+    summary: models.RunSummary,
+    title: str,
+    metadata: models.VideoMetadata | None,
 ) -> str:
     """문서 맨 앞에 둘 YAML 블록을 만든다.
 
     값이 없는 키는 ``null`` 로 적지 않고 아예 뺀다. ``null`` 을
     적으면 읽는 쪽이 "값이 null 인 채널" 과 "모르는 채널" 을
     구분하지 못한다.
+
+    Args:
+        summary: URL 과 영상 ID 에 쓸 실행 요약.
+        title: H1 머리글과 같은 값으로 호출자가 미리 정한 제목.
+            ``summary.title`` 이 비었을 때의 대체값 계산을 여기서
+            다시 하지 않는다 — 두 곳에서 따로 계산하면 어긋날 수
+            있다.
+        metadata: 영상에서 뽑아 온 메타데이터.
+
+    Returns:
+        ``---`` 로 감싼 YAML frontmatter 블록.
     """
-    lines = [f"title: {_yaml_string(summary.title or summary.video_id)}"]
+    lines = [f"title: {_yaml_string(title)}"]
     if metadata is not None and metadata.channel:
         lines.append(f"channel: {_yaml_string(metadata.channel)}")
     if metadata is not None and metadata.upload_date:
