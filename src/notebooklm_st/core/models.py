@@ -81,6 +81,18 @@ class RunSummary:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class VideoMetadata:
+    """영상에서 뽑아 온 메타데이터.
+
+    영상명과 URL 은 담지 않는다. ``RunSummary`` 에 이미 있어
+    중복이 된다.
+    """
+
+    channel: str | None
+    upload_date: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class TempNotebook:
     """정리 대상인 임시 노트북."""
 
