@@ -3,7 +3,7 @@
 from streamlit.testing import v1
 
 from notebooklm_st.core import models, youtube
-from notebooklm_st.services import run_history
+from notebooklm_st.services import outline, run_history
 
 
 def script():
@@ -111,13 +111,13 @@ def test_citations_are_shown_by_default(app_db) -> None:
     assert "[1]" in rendered
 
 
-def test_hiding_citations_strips_markers_and_the_tail(app_db) -> None:
-    """체크박스를 켜면 인용 번호와 후속 제안이 사라진다."""
+def test_excluding_citations_strips_markers_and_the_tail(app_db) -> None:
+    """체크박스를 끄면 인용 번호와 후속 제안이 사라진다."""
     run_history.save_run(app_db, make_result(answer=ANSWER_WITH_CITATIONS))
 
     app = v1.AppTest.from_function(script)
     app.run()
-    app.checkbox[0].check().run()
+    app.checkbox[0].uncheck().run()
 
     assert not app.exception
     rendered = " ".join(element.value for element in app.markdown)
@@ -126,13 +126,13 @@ def test_hiding_citations_strips_markers_and_the_tail(app_db) -> None:
     assert "근거 구절" not in rendered
 
 
-def test_hiding_citations_keeps_the_question_expander(app_db) -> None:
-    """숨겨도 질문 원문은 남는다. 인용이 아니라 기록이다."""
+def test_excluding_citations_keeps_the_question_expander(app_db) -> None:
+    """꺼도 질문 원문은 남는다. 인용이 아니라 기록이다."""
     run_history.save_run(app_db, make_result(answer=ANSWER_WITH_CITATIONS))
 
     app = v1.AppTest.from_function(script)
     app.run()
-    app.checkbox[0].check().run()
+    app.checkbox[0].uncheck().run()
 
     labels = [element.label for element in app.expander]
     assert "질문 원문" in labels
@@ -269,3 +269,113 @@ def test_deleting_an_exported_run_warns_about_the_document(app_db) -> None:
 
     assert not app.exception
     assert "Outline 문서는 그대로 남습니다" in app.warning[0].value
+
+
+def set_outline_env(monkeypatch) -> None:
+    """저장 버튼이 나오도록 설정을 채운다."""
+    monkeypatch.setenv(outline.URL_ENV_VAR, "http://192.168.0.10:3000")
+    monkeypatch.setenv(outline.TOKEN_ENV_VAR, "ol_secret")
+    monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
+
+
+def fake_create(calls, document=None):
+    """create_document 를 대신해 호출을 기록한다."""
+
+    def create(config, title, markdown, **kwargs):
+        """호출 인자를 기록하고 만들어진 문서를 돌려준다."""
+        calls.append((config, title, markdown))
+        return document or outline.SavedDocument(
+            id="doc-1",
+            title=title,
+            url="http://192.168.0.10:3000/doc/x",
+        )
+
+    return create
+
+
+def test_export_button_is_hidden_without_configuration(app_db) -> None:
+    """설정이 없으면 저장 버튼 대신 안내를 낸다."""
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert "history_export_1" not in [element.key for element in app.button]
+    messages = " ".join(element.value for element in app.info)
+    assert outline.URL_ENV_VAR in messages
+
+
+def test_export_button_appears_with_configuration(app_db, monkeypatch) -> None:
+    """설정이 있으면 제목 입력과 저장 버튼이 나온다."""
+    set_outline_env(monkeypatch)
+    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert app.text_input[0].value == "밸류에이션 강의"
+
+
+def test_export_title_falls_back_to_the_video_id(app_db, monkeypatch) -> None:
+    """저장된 영상 제목이 없으면 영상 ID 를 기본값으로 쓴다."""
+    set_outline_env(monkeypatch)
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert app.text_input[0].value == "dQw4w9WgXcQ"
+
+
+def test_export_sends_the_confirmed_title_and_body(app_db, monkeypatch) -> None:
+    """확인한 제목과 화면에 보이는 본문이 그대로 올라간다."""
+    set_outline_env(monkeypatch)
+    calls: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(outline, "create_document", fake_create(calls))
+    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_input[0].set_value("사람이 고친 제목").run()
+    app.button(key="history_export_1").click().run()
+
+    assert not app.exception
+    assert len(calls) == 1
+    _, title, markdown = calls[0]
+    assert title == "사람이 고친 제목"
+    assert 'title: "사람이 고친 제목"' in markdown
+    assert "세 가지다." in markdown
+
+
+def test_export_records_the_link_and_drops_the_body(
+    app_db, monkeypatch
+) -> None:
+    """성공하면 링크가 남고 로컬 본문이 사라진다."""
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(outline, "create_document", fake_create([]))
+    run_id = run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_export_1").click().run()
+
+    assert not app.exception
+    run = run_history.list_runs(app_db)[0]
+    assert run.outline_url == "http://192.168.0.10:3000/doc/x"
+    assert run_history.load_run_items(app_db, run_id) == []
+
+
+def test_export_can_leave_the_citations_out(app_db, monkeypatch) -> None:
+    """체크박스를 끄면 걸러진 본문이 올라간다."""
+    set_outline_env(monkeypatch)
+    calls: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(outline, "create_document", fake_create(calls))
+    run_history.save_run(app_db, make_result(answer=ANSWER_WITH_CITATIONS))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.checkbox[0].uncheck().run()
+    app.button(key="history_export_1").click().run()
+
+    markdown = calls[0][2]
+    assert "[1]" not in markdown
+    assert "제안 문단" not in markdown

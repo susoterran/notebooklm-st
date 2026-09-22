@@ -1,13 +1,14 @@
 """실행 이력 화면."""
 
 import sqlite3
+from collections.abc import Sequence
 
 import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
-from notebooklm_st.core import answer_text, models
-from notebooklm_st.services import run_history
+from notebooklm_st.core import answer_text, markdown_export, models
+from notebooklm_st.services import outline, run_history
 
 _SELECTED_KEY = "history_selected"
 
@@ -15,7 +16,7 @@ _SELECTED_KEY = "history_selected"
 # 쓴다.
 _TITLE_MAX_CHARS = 60
 
-_HIDE_CITATIONS_KEY = "history_hide_citations"
+_INCLUDE_CITATIONS_KEY = "history_include_citations"
 
 # 위젯 키가 아니라 우리가 소유한 세션 키다. 위젯이 만들어진 뒤 그
 # 위젯의 키를 건드리면 Streamlit 이 예외를 던지므로, 삭제 후 상태를
@@ -26,7 +27,7 @@ _DELETE_ARMED_KEY = "history_delete_armed"
 def render() -> None:
     """최근 실행을 고르고 그 답변들을 보여 준다.
 
-    인용 숨기기 체크박스를 켜면 ``answer_text.for_display`` 가 만든
+    인용 포함 체크박스를 끄면 ``answer_text.for_display`` 가 만든
     사본을 그린다.
     삭제는 실수로 한 번에 지워지지 않도록 확인 버튼을 한 번 더
     거치는 2단계로 되어 있다(``_render_delete`` 참고).
@@ -51,14 +52,24 @@ def render() -> None:
     if selected.exported_at is not None:
         _render_saved(selected)
         return
-    hidden = st.checkbox(
-        "인용 숨기기",
-        key=_HIDE_CITATIONS_KEY,
-        help="인용 번호와 인용 본문, 맨 아래 후속 제안을 감춥니다.",
+    title = st.text_input(
+        "문서 제목",
+        value=selected.title or selected.video_id,
+        key=f"history_title_{selected.id}",
+        help="Outline 문서의 제목이 됩니다.",
+    )
+    included = st.checkbox(
+        "인용 포함",
+        value=True,
+        key=_INCLUDE_CITATIONS_KEY,
+        help="끄면 인용 번호와 인용 본문, 맨 아래 후속 제안을 뺀 채로"
+        " 올립니다. 화면도 같은 상태로 보입니다.",
     )
     items = run_history.load_run_items(connection, selected.id)
-    if hidden:
+    if not included:
         items = [answer_text.for_display(item) for item in items]
+    metadata = run_history.load_metadata(connection, selected.id)
+    _render_export(connection, selected, title, items, metadata)
     answer_view.render_items(items)
 
 
@@ -130,6 +141,68 @@ def _render_saved(selected: models.RunSummary) -> None:
             selected.outline_url,
             key=f"history_open_{selected.id}",
         )
+
+
+def _render_export(
+    connection: sqlite3.Connection,
+    selected: models.RunSummary,
+    title: str,
+    items: Sequence[models.AnswerItem],
+    metadata: models.VideoMetadata | None,
+) -> None:
+    """저장 버튼을 그린다. 설정이 없으면 안내로 대신한다.
+
+    이력 열람 자체는 막지 않는다. Outline 을 아직 붙이지 않았어도
+    지난 실행을 읽는 데에는 아무 문제가 없다.
+    """
+    config = outline.config_from_env()
+    if config is None:
+        st.info(
+            "Outline 연결이 설정되지 않았습니다."
+            f" {outline.URL_ENV_VAR}·{outline.TOKEN_ENV_VAR}"
+            f"·{outline.COLLECTION_ENV_VAR} 를 설정하세요."
+        )
+        return
+    if st.button(
+        "Outline 에 저장",
+        key=f"history_export_{selected.id}",
+        disabled=not title.strip(),
+        help="지금 보이는 그대로 올립니다. 올린 뒤에는 로컬에 링크만 남습니다.",
+    ):
+        _export(connection, config, selected, title.strip(), items, metadata)
+
+
+def _export(
+    connection: sqlite3.Connection,
+    config: outline.OutlineConfig,
+    selected: models.RunSummary,
+    title: str,
+    items: Sequence[models.AnswerItem],
+    metadata: models.VideoMetadata | None,
+) -> None:
+    """문서를 만들고 링크를 기록한다.
+
+    실패하면 로컬을 손대지 않는다. 원인을 고친 뒤 같은 버튼을 다시
+    누르면 된다.
+    """
+    with st.spinner("Outline 에 저장 중"):
+        try:
+            document = outline.create_document(
+                config,
+                title,
+                markdown_export.to_markdown(selected, items, title, metadata),
+            )
+        except outline.OutlineError as error:
+            st.error(str(error))
+            return
+        run_history.mark_exported(
+            connection,
+            selected.id,
+            document_id=document.id,
+            document_title=document.title,
+            document_url=document.url,
+        )
+    st.rerun()
 
 
 def _delete(connection: sqlite3.Connection, run_id: int) -> None:
