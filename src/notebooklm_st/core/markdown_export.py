@@ -27,9 +27,17 @@ _FORBIDDEN = re.compile(r'[<>:"/\|?*\x00-\x1f]')
 
 _REPEATED_SPACE = re.compile(r"\s+")
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+"""YAML 문자열에서 지울 제어문자.
+
+탭·개행·캐리지리턴은 이스케이프해서 살리므로 여기서 뺀다.
+"""
+
 
 def to_markdown(
-    summary: models.RunSummary, items: Sequence[models.AnswerItem]
+    summary: models.RunSummary,
+    items: Sequence[models.AnswerItem],
+    metadata: models.VideoMetadata | None = None,
 ) -> str:
     """실행 하나를 마크다운 문서 한 장으로 만든다.
 
@@ -37,11 +45,15 @@ def to_markdown(
         summary: 머리글과 출처에 쓸 실행 요약.
         items: 문서에 담을 답변 목록. 화면이 그리는 것과 같은 목록을
             받으므로 인용을 숨긴 상태면 인용이 비어 들어온다.
+        metadata: 영상에서 뽑아 온 메타데이터. 없으면 frontmatter 에
+            ``title`` 과 ``url`` 만 남는다.
 
     Returns:
-        줄바꿈 하나로 끝나는 마크다운 문서.
+        YAML frontmatter 로 시작하고 줄바꿈 하나로 끝나는 마크다운
+        문서.
     """
     blocks = [
+        _frontmatter(summary, metadata),
         f"# {summary.title or summary.video_id}",
         f"- 출처: {summary.url}\n- 실행: {summary.created_at}",
     ]
@@ -61,6 +73,54 @@ def to_filename(title: str | None, video_id: str) -> str:
     """
     stem = _sanitize(title or "") or _sanitize(video_id) or "run"
     return f"{stem}.md"
+
+
+def _frontmatter(
+    summary: models.RunSummary, metadata: models.VideoMetadata | None
+) -> str:
+    """문서 맨 앞에 둘 YAML 블록을 만든다.
+
+    값이 없는 키는 ``null`` 로 적지 않고 아예 뺀다. ``null`` 을
+    적으면 읽는 쪽이 "값이 null 인 채널" 과 "모르는 채널" 을
+    구분하지 못한다.
+    """
+    lines = [f"title: {_yaml_string(summary.title or summary.video_id)}"]
+    if metadata is not None and metadata.channel:
+        lines.append(f"channel: {_yaml_string(metadata.channel)}")
+    if metadata is not None and metadata.upload_date:
+        lines.append(f"upload_date: {metadata.upload_date}")
+    lines.append(f"url: {_source_url(summary)}")
+    return "---\n" + "\n".join(lines) + "\n---"
+
+
+def _source_url(summary: models.RunSummary) -> str:
+    """Frontmatter 에 적을 URL 을 고른다.
+
+    저장된 원문에는 재생목록·추적 파라미터나 ``#`` 이 붙어 있을 수
+    있어 따옴표 없는 YAML 값으로 쓰기 위험하다. 검증된 영상 ID 로
+    정규 URL 을 다시 짓고, ID 가 없는 옛 이력만 원문을 따옴표로
+    감싼다.
+    """
+    if summary.video_id:
+        return f"https://www.youtube.com/watch?v={summary.video_id}"
+    return _yaml_string(summary.url)
+
+
+def _yaml_string(value: str) -> str:
+    """큰따옴표로 감싼 YAML 스칼라로 만든다.
+
+    역슬래시를 먼저 바꾼다. 나중에 바꾸면 앞서 넣은 이스케이프까지
+    다시 이스케이프된다.
+    """
+    escaped = (
+        _CONTROL.sub("", value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
 
 
 def _item_block(item: models.AnswerItem) -> str:
