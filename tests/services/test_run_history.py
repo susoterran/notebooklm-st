@@ -311,3 +311,79 @@ def test_list_runs_carries_the_document_link(connection) -> None:
     assert run.outline_url == "http://192.168.0.10:3000/doc/x"
     assert run.outline_title == "정리한 제목"
     assert run.exported_at == "2026-09-22T15:00:00"
+
+
+def export(connection, run_id: int) -> None:
+    """테스트용 저장 기록 한 번."""
+    run_history.mark_exported(
+        connection,
+        run_id,
+        document_id="doc-1",
+        document_title="정리한 제목",
+        document_url="http://192.168.0.10:3000/doc/x",
+    )
+
+
+def test_mark_exported_writes_the_document_link(connection) -> None:
+    """문서 ID·제목·URL 과 저장 시각이 남는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    export(connection, run_id)
+
+    run = run_history.list_runs(connection)[0]
+    assert run.outline_id == "doc-1"
+    assert run.outline_title == "정리한 제목"
+    assert run.outline_url == "http://192.168.0.10:3000/doc/x"
+    assert run.exported_at is not None
+
+
+def test_mark_exported_deletes_the_local_answers(connection) -> None:
+    """진실의 원천을 하나로 둔다 — 본문은 Outline 에만 남는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    export(connection, run_id)
+
+    assert run_history.load_run_items(connection, run_id) == []
+
+
+def test_mark_exported_deletes_the_local_metadata(connection) -> None:
+    """메타데이터도 문서 frontmatter 로 옮겨 갔으므로 지운다."""
+    run_id = run_history.save_run(
+        connection,
+        make_result(),
+        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
+    )
+
+    export(connection, run_id)
+
+    assert run_history.load_metadata(connection, run_id) is None
+
+
+def test_mark_exported_keeps_the_run_itself(connection) -> None:
+    """실행 행은 남는다. 링크를 걸어 둘 자리가 필요하다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    export(connection, run_id)
+
+    runs = run_history.list_runs(connection)
+    assert len(runs) == 1
+    assert runs[0].id == run_id
+    assert runs[0].answer_count == 0
+
+
+def test_mark_exported_rejects_an_unknown_run(connection) -> None:
+    """없는 실행에 링크를 걸지 않는다."""
+    with pytest.raises(ValueError):
+        export(connection, 999)
+
+
+def test_mark_exported_keeps_the_answers_of_an_unknown_run(
+    connection,
+) -> None:
+    """실패하면 아무것도 지우지 않는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    with pytest.raises(ValueError):
+        export(connection, 999)
+
+    assert len(run_history.load_run_items(connection, run_id)) == 2

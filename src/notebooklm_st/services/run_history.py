@@ -160,6 +160,52 @@ def load_metadata(
     )
 
 
+def mark_exported(
+    connection: sqlite3.Connection,
+    run_id: int,
+    *,
+    document_id: str,
+    document_title: str,
+    document_url: str,
+) -> None:
+    """문서 링크를 적고 로컬 본문을 지운다.
+
+    세 문장을 커밋 하나로 묶는다. 중간에 죽어도 "본문은 사라졌는데
+    링크는 없는" 상태가 생기지 않는다.
+
+    Outline 의 자료형을 받지 않고 문자열 셋을 받는다. 저장소가 외부
+    서비스를 알 이유가 없다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_id: 링크를 걸 실행 ID.
+        document_id: Outline 문서 ID. 나중에 문서를 다시 읽을 때 쓴다.
+        document_title: Outline 에 붙은 문서 제목.
+        document_url: 사람이 열 수 있는 절대 URL.
+
+    Raises:
+        ValueError: 그 ID 의 실행이 없는 경우. 이때는 아무것도 지우지
+            않는다.
+    """
+    cursor = connection.execute(
+        "UPDATE runs SET outline_id = ?, outline_url = ?,"
+        " outline_title = ?, exported_at = ? WHERE id = ?",
+        (
+            document_id,
+            document_url,
+            document_title,
+            store.now(),
+            run_id,
+        ),
+    )
+    if cursor.rowcount == 0:
+        connection.rollback()
+        raise ValueError(f"실행 {run_id} 을 찾을 수 없습니다.")
+    connection.execute("DELETE FROM answers WHERE run_id = ?", (run_id,))
+    connection.execute("DELETE FROM run_metadata WHERE run_id = ?", (run_id,))
+    connection.commit()
+
+
 def update_answer(
     connection: sqlite3.Connection, answer_id: int, answer: str
 ) -> None:
