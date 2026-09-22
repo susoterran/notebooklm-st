@@ -191,3 +191,74 @@ def test_delete_keeps_the_other_runs(app_db) -> None:
     assert not app.exception
     remaining = run_history.list_runs(app_db)
     assert [run.url for run in remaining] == ["https://youtu.be/aaaaaaaaaaa"]
+
+
+def export(app_db, run_id: int) -> None:
+    """실행 하나를 저장된 상태로 만든다."""
+    run_history.mark_exported(
+        app_db,
+        run_id,
+        document_id="doc-1",
+        document_title="정리한 제목",
+        document_url="http://192.168.0.10:3000/doc/x",
+    )
+
+
+def test_exported_run_shows_the_document_link(app_db) -> None:
+    """저장된 실행은 문서명과 링크만 보여 준다."""
+    run_id = run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+    export(app_db, run_id)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "정리한 제목" in rendered
+    links = app.get("link_button")
+    assert len(links) == 1
+    assert links[0].proto.url == "http://192.168.0.10:3000/doc/x"
+
+
+def test_exported_run_draws_no_answer_cards(app_db) -> None:
+    """본문이 로컬에 없으므로 그릴 것도 없다."""
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.subheader) == 0
+
+
+def test_exported_run_label_uses_the_document_title(app_db) -> None:
+    """목록에서는 위키에 있는 이름으로 찾는다."""
+    run_id = run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+    export(app_db, run_id)
+
+    app = v1.AppTest.from_function(script).run()
+
+    label = app.selectbox[0].options[0]
+    assert label.startswith("정리한 제목 · ")
+    assert label.endswith(" · 문서")
+
+
+def test_unexported_run_label_says_so(app_db) -> None:
+    """미저장 실행은 그렇게 적어 둔다."""
+    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert app.selectbox[0].options[0].endswith(" · 미저장 · 답변 1건")
+
+
+def test_deleting_an_exported_run_warns_about_the_document(app_db) -> None:
+    """지우면 링크만 사라진다는 것을 알려 준다."""
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert "Outline 문서는 그대로 남습니다" in app.warning[0].value

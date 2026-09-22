@@ -48,6 +48,9 @@ def render() -> None:
         return
     st.caption(selected.url)
     _render_delete(connection, selected)
+    if selected.exported_at is not None:
+        _render_saved(selected)
+        return
     hidden = st.checkbox(
         "인용 숨기기",
         key=_HIDE_CITATIONS_KEY,
@@ -65,9 +68,15 @@ def _format_run(run: models.RunSummary) -> str:
     제목을 앞에 둔다. 목록에서 고르는 사람이 먼저 알고 싶은 것은
     시각이 아니라 어떤 영상이었는지다. 목록은 최신순으로 고정되어
     있으므로 시각은 뒤에 있어도 읽는 데 지장이 없다.
+
+    저장된 실행은 위키에 붙은 이름으로 찾게 된다. 그래서 영상 제목이
+    아니라 문서 제목을 쓴다.
     """
+    if run.exported_at is not None:
+        label = _shorten(run.outline_title or run.video_id)
+        return f"{label} · {run.created_at} · 문서"
     label = _shorten(run.title) if run.title else run.video_id
-    return f"{label} · {run.created_at} · 답변 {run.answer_count}건"
+    return f"{label} · {run.created_at} · 미저장 · 답변 {run.answer_count}건"
 
 
 def _shorten(title: str) -> str:
@@ -96,13 +105,27 @@ def _render_delete(
                 st.session_state[_DELETE_ARMED_KEY] = selected.id
                 st.rerun()
             return
-        st.warning("딸린 답변도 함께 사라집니다. 되돌릴 수 없습니다.")
+        if selected.exported_at is not None:
+            st.warning("로컬 링크만 지웁니다. Outline 문서는 그대로 남습니다.")
+        else:
+            st.warning("딸린 답변도 함께 사라집니다. 되돌릴 수 없습니다.")
         left, right = st.columns(2)
         if left.button("정말 삭제", key="history_delete_confirm"):
             _delete(connection, selected.id)
         if right.button("취소", key="history_delete_cancel"):
             _disarm()
             st.rerun()
+
+
+def _render_saved(selected: models.RunSummary) -> None:
+    """저장된 실행을 문서명과 링크로 그린다.
+
+    본문은 로컬에 없다. 수정·삭제·검색은 Outline 이 맡는다.
+    """
+    st.success(f"Outline 에 저장됨 · {selected.exported_at}")
+    st.markdown(f"**{selected.outline_title}**")
+    if selected.outline_url:
+        st.link_button("Outline 에서 열기", selected.outline_url)
 
 
 def _delete(connection: sqlite3.Connection, run_id: int) -> None:
