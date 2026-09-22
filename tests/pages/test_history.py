@@ -2,7 +2,7 @@
 
 from streamlit.testing import v1
 
-from notebooklm_st.core import markdown_export, models, youtube
+from notebooklm_st.core import models, youtube
 from notebooklm_st.services import run_history
 
 
@@ -191,71 +191,3 @@ def test_delete_keeps_the_other_runs(app_db) -> None:
     assert not app.exception
     remaining = run_history.list_runs(app_db)
     assert [run.url for run in remaining] == ["https://youtu.be/aaaaaaaaaaa"]
-
-
-def test_selected_run_offers_a_markdown_download(app_db) -> None:
-    """선택한 실행을 마크다운으로 내려받는 버튼을 준다."""
-    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
-    app = v1.AppTest.from_function(script).run()
-    assert not app.exception
-    buttons = app.get("download_button")
-    assert len(buttons) == 1
-    assert buttons[0].proto.url.endswith(".md")
-
-
-def test_download_stays_available_while_citations_are_hidden(app_db) -> None:
-    """인용을 숨긴 동안에도 내려받기는 그대로 있다."""
-    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
-    app = v1.AppTest.from_function(script).run()
-    app.checkbox[0].check().run()
-    assert not app.exception
-    assert len(app.get("download_button")) == 1
-
-
-def test_download_works_for_a_run_with_metadata(app_db) -> None:
-    """메타데이터가 있는 실행도 내려받기 버튼이 그대로 나온다."""
-    run_history.save_run(
-        app_db,
-        make_result(title="밸류에이션 강의"),
-        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
-    )
-
-    app = v1.AppTest.from_function(script).run()
-
-    assert not app.exception
-    assert len(app.get("download_button")) == 1
-
-
-def test_download_passes_the_stored_metadata_to_markdown_export(
-    app_db, monkeypatch
-) -> None:
-    """내려받기가 저장된 메타데이터를 to_markdown 에 그대로 넘긴다.
-
-    ``AppTest`` 는 다운로드 버튼의 실제 바이트를 읽을 수 없어
-    ``proto.url`` 확인만으로는 세 번째 인자가 빠지거나 ``None`` 이
-    들어가도 테스트가 통과한다. ``to_markdown`` 호출 자체를 가로채
-    실제로 저장된 메타데이터가 전달되는지 확인한다.
-    """
-    captured: list[object] = []
-    original = markdown_export.to_markdown
-
-    def capture(summary, items, metadata=None):
-        """호출 인자를 기록하고 원래 함수처럼 문서를 만든다."""
-        captured.append(metadata)
-        return original(summary, items, metadata)
-
-    monkeypatch.setattr(markdown_export, "to_markdown", capture)
-    run_history.save_run(
-        app_db,
-        make_result(title="밸류에이션 강의"),
-        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
-    )
-
-    app = v1.AppTest.from_function(script).run()
-
-    assert not app.exception
-    assert len(captured) == 1
-    metadata = captured[0]
-    assert isinstance(metadata, models.VideoMetadata)
-    assert metadata.channel == "안될공학"
-    assert metadata.upload_date == "2026-09-15"

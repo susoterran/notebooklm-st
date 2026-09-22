@@ -1,13 +1,12 @@
 """실행 이력 화면."""
 
 import sqlite3
-from collections.abc import Sequence
 
 import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
-from notebooklm_st.core import answer_text, markdown_export, models
+from notebooklm_st.core import answer_text, models
 from notebooklm_st.services import run_history
 
 _SELECTED_KEY = "history_selected"
@@ -28,8 +27,7 @@ def render() -> None:
     """최근 실행을 고르고 그 답변들을 보여 준다.
 
     인용 숨기기 체크박스를 켜면 ``answer_text.for_display`` 가 만든
-    사본을 그린다. 내려받기는 화면에 그리는 목록을 그대로 받으므로
-    이 상태를 따라간다.
+    사본을 그린다.
     삭제는 실수로 한 번에 지워지지 않도록 확인 버튼을 한 번 더
     거치는 2단계로 되어 있다(``_render_delete`` 참고).
     """
@@ -58,32 +56,7 @@ def render() -> None:
     items = run_history.load_run_items(connection, selected.id)
     if hidden:
         items = [answer_text.for_display(item) for item in items]
-    metadata = run_history.load_metadata(connection, selected.id)
-    _render_download(selected, items, metadata)
     answer_view.render_items(items)
-
-
-def _render_download(
-    selected: models.RunSummary,
-    items: Sequence[models.AnswerItem],
-    metadata: models.VideoMetadata | None,
-) -> None:
-    """지금 화면에 그리는 목록을 마크다운 파일로 내준다.
-
-    답변 목록을 렌더와 나눠 쓴다. 인용을 숨긴 상태면 걸러진 사본이
-    그대로 넘어오므로 화면과 내려받은 파일이 어긋날 수 없다.
-    """
-    st.download_button(
-        "마크다운 내려받기",
-        data=markdown_export.to_markdown(selected, items, metadata),
-        file_name=markdown_export.to_filename(
-            selected.title, selected.video_id
-        ),
-        mime="text/markdown",
-        key=f"history_download_{selected.id}",
-        help="지금 보이는 그대로 내려받습니다."
-        " 인용을 숨긴 동안에는 숨긴 상태로 담깁니다.",
-    )
 
 
 def _format_run(run: models.RunSummary) -> str:

@@ -1,7 +1,7 @@
-"""이력 한 건을 마크다운 문서와 파일명으로 옮기는 순수 함수들.
+"""이력 한 건을 Outline 문서 본문으로 옮기는 순수 함수들.
 
-화면이 다운로드 버튼에 넘길 문자열을 만든다. 저장된 답변은 손대지
-않으며, 인용을 걸러 내려받는 경우에도 걸러진 사본이 여기로 들어올
+화면이 저장 버튼에 넘길 마크다운을 만든다. 저장된 답변은 손대지
+않으며, 인용을 뺀 채로 올리는 경우에도 걸러진 사본이 여기로 들어올
 뿐이다(→ ``core.answer_text``).
 """
 
@@ -9,23 +9,6 @@ import re
 from collections.abc import Sequence
 
 from notebooklm_st.core import models
-
-MAX_STEM_CHARS = 100
-"""파일명에서 확장자를 뺀 부분의 최대 글자 수.
-
-파일 시스템 한계는 보통 255 바이트인데 한글은 한 자가 UTF-8 로 3
-바이트다. 100 자면 300 바이트에 확장자까지 얹혀 한계에 닿으므로 실제
-한계보다 넉넉히 낮춰 잡는다.
-"""
-
-_FORBIDDEN = re.compile(r'[<>:"/\|?*\x00-\x1f]')
-"""윈도우가 파일명에 허용하지 않는 문자와 제어 문자.
-
-유튜브 제목에는 ``:`` 와 ``?`` 가 흔해서 거르지 않으면 저장이
-실패한다.
-"""
-
-_REPEATED_SPACE = re.compile(r"\s+")
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 """YAML 문자열에서 지울 제어문자.
@@ -42,14 +25,22 @@ frontmatter 를 쓰는 목적인 파싱 자체에 실패한다. 탭·개행·캐
 def to_markdown(
     summary: models.RunSummary,
     items: Sequence[models.AnswerItem],
-    metadata: models.VideoMetadata | None = None,
+    title: str,
+    metadata: models.VideoMetadata | None,
 ) -> str:
-    """실행 하나를 마크다운 문서 한 장으로 만든다.
+    """실행 하나를 Outline 문서 본문으로 만든다.
+
+    ``# 제목`` 머리글을 넣지 않는다. Outline 이 문서 제목을 따로
+    가지므로 넣으면 제목이 두 번 보인다. 대신 출처 블록은 남긴다 —
+    frontmatter 의 URL 은 구분선 사이 맨 텍스트로 렌더되어 클릭되지
+    않는다.
 
     Args:
-        summary: 머리글과 출처에 쓸 실행 요약.
+        summary: 출처와 실행 시각에 쓸 실행 요약.
         items: 문서에 담을 답변 목록. 화면이 그리는 것과 같은 목록을
-            받으므로 인용을 숨긴 상태면 인용이 비어 들어온다.
+            받으므로 인용을 뺀 상태면 인용이 비어 들어온다.
+        title: 사람이 저장 직전에 확인한 문서 제목. 같은 값이 Outline
+            문서 제목이 되므로 여기서 다시 계산하지 않는다.
         metadata: 영상에서 뽑아 온 메타데이터. 없으면 frontmatter 에
             ``title`` 과 ``url`` 만 남는다.
 
@@ -57,28 +48,12 @@ def to_markdown(
         YAML frontmatter 로 시작하고 줄바꿈 하나로 끝나는 마크다운
         문서.
     """
-    title = summary.title or summary.video_id
     blocks = [
         _frontmatter(summary, title, metadata),
-        f"# {title}",
         f"- 출처: {summary.url}\n- 실행: {summary.created_at}",
     ]
     blocks.extend(_item_block(item) for item in items)
     return "\n\n".join(blocks) + "\n"
-
-
-def to_filename(title: str | None, video_id: str) -> str:
-    """영상 제목을 내려받을 파일 이름으로 바꾼다.
-
-    Args:
-        title: 저장된 영상 제목. 없을 수 있다.
-        video_id: 제목이 없거나 못 쓸 문자뿐일 때 대신 쓸 영상 ID.
-
-    Returns:
-        ``.md`` 로 끝나는 파일 이름.
-    """
-    stem = _sanitize(title or "") or _sanitize(video_id) or "run"
-    return f"{stem}.md"
 
 
 def _frontmatter(
@@ -168,15 +143,3 @@ def _quote(text: str) -> str:
     두면 답변 본문과 눈으로 갈린다.
     """
     return "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
-
-
-def _sanitize(text: str) -> str:
-    """파일명으로 쓸 수 있게 다듬는다.
-
-    못 쓰는 문자를 지우지 않고 공백으로 바꾼다. 지우면 ``어떻게?
-    AI는`` 이 ``어떻게AI는`` 으로 붙어 읽기 어려워진다. 자르기는 겹친
-    공백을 접은 뒤에 하고, 윈도우가 싫어하는 끝의 마침표와 공백은
-    마지막에 뗀다.
-    """
-    cleaned = _REPEATED_SPACE.sub(" ", _FORBIDDEN.sub(" ", text)).strip()
-    return cleaned[:MAX_STEM_CHARS].strip(" .")
