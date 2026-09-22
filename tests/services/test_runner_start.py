@@ -294,6 +294,54 @@ def test_start_run_saves_the_fetched_metadata(db_path, monkeypatch) -> None:
     assert metadata.channel == "안될공학"
 
 
+def test_start_run_survives_a_metadata_fetch_raising(
+    db_path, monkeypatch
+) -> None:
+    """메타데이터 조회가 예외를 던져도 실행은 끝까지 간다.
+
+    ``fetch`` 는 실패를 값으로 돌려주는 계약이지만, 그 계약이
+    깨져 예외가 새는 경우까지 ``_fetch_metadata`` 가 막아 주는지
+    이 테스트로 못박는다.
+    """
+
+    def raise_error(url, **kwargs):
+        """예외를 던지는 가짜 조회 함수."""
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner.video_metadata, "fetch", raise_error)
+    registry = runs.RunRegistry()
+
+    async def pipeline(url, questions, on_progress, **kwargs):
+        """답변 하나를 돌려주는 가짜 파이프라인."""
+        return models.RunResult(
+            url=url,
+            video_id="dQw4w9WgXcQ",
+            title="어떤 영상",
+            items=(
+                models.AnswerItem(
+                    question_title="제목1",
+                    question_text="질문1",
+                    answer="답",
+                    citations=(),
+                    error=None,
+                ),
+            ),
+        )
+
+    handle = runner.start_run(
+        registry, URL, make_questions("질문1"), db_path, pipeline
+    )
+    finished = wait_for(registry, handle.run_id)
+
+    assert finished.status == "done"
+    connection = store.connect(db_path)
+    try:
+        saved = run_history.list_runs(connection)
+    finally:
+        connection.close()
+    assert len(saved) == 1
+
+
 def test_start_run_survives_a_metadata_failure(db_path, monkeypatch) -> None:
     """메타데이터 조회가 실패해도 요약은 끝까지 간다."""
     monkeypatch.setattr(
