@@ -69,7 +69,8 @@ def _frontmatter(
 
     Args:
         summary: URL 과 영상 ID 에 쓸 실행 요약.
-        title: H1 머리글과 같은 값으로 호출자가 미리 정한 제목.
+        title: 호출자가 미리 정한 문서 제목. 본문에는 이 값이 다시
+            나오지 않고 frontmatter 의 ``title`` 로만 들어간다.
             ``summary.title`` 이 비었을 때의 대체값 계산을 여기서
             다시 하지 않는다 — 두 곳에서 따로 계산하면 어긋날 수
             있다.
