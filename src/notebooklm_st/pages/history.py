@@ -193,13 +193,28 @@ def _export(
         except outline.OutlineError as error:
             st.error(str(error))
             return
-        run_history.mark_exported(
-            connection,
-            selected.id,
-            document_id=document.id,
-            document_title=document.title,
-            document_url=document.url,
-        )
+        try:
+            run_history.mark_exported(
+                connection,
+                selected.id,
+                document_id=document.id,
+                document_title=document.title,
+                document_url=document.url,
+            )
+        except Exception as error:
+            # 화면 경계의 최후 방어선이다: mark_exported 가 무엇을
+            # 던지든(잠긴 DB 등) 문서는 이미 Outline 에 만들어져
+            # 있으므로 구체적 예외로 좁히지 않고 넓게 잡는다.
+            # 되돌리지 않는다. 방금 만든 문서를 지우려면 그 삭제도
+            # 실패할 수 있어 틈이 한 겹 더 생길 뿐이다. 사실대로
+            # 보여 주고 사람이 링크를 들고 판단하게 한다.
+            st.error(
+                f"문서는 만들어졌습니다: {document.url} —"
+                " 로컬 기록에 실패했습니다"
+                f"({type(error).__name__})."
+                " 다시 저장하면 문서가 둘이 됩니다."
+            )
+            return
     st.rerun()
 
 

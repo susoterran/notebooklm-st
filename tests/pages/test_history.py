@@ -1,5 +1,7 @@
 """이력 화면 테스트."""
 
+import sqlite3
+
 from streamlit.testing import v1
 
 from notebooklm_st.core import models, youtube
@@ -402,3 +404,91 @@ def test_include_citations_defaults_on_for_each_run(app_db) -> None:
 
     assert not app.exception
     assert app.checkbox[0].value is True
+
+
+def test_export_button_is_disabled_with_a_blank_title(
+    app_db, monkeypatch
+) -> None:
+    """제목이 공백뿐이면 저장 버튼을 누를 수 없다."""
+    set_outline_env(monkeypatch)
+    run_history.save_run(app_db, make_result(title="밸류에이션 강의"))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_input[0].set_value("   ").run()
+
+    assert not app.exception
+    assert app.button(key="history_export_1").disabled
+
+
+def failing_create(message: str):
+    """create_document 대신 OutlineError 를 던진다."""
+
+    def create(config, title, markdown, **kwargs):
+        """항상 실패한다."""
+        raise outline.OutlineError(message)
+
+    return create
+
+
+def test_export_failure_shows_the_message(app_db, monkeypatch) -> None:
+    """실패 사유를 사람이 읽을 수 있게 보여 준다."""
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(
+        outline,
+        "create_document",
+        failing_create("Outline 에 연결하지 못했습니다(ConnectError)."),
+    )
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_export_1").click().run()
+
+    assert not app.exception
+    assert "연결하지 못했습니다" in app.error[0].value
+
+
+def test_export_failure_keeps_the_local_copy(app_db, monkeypatch) -> None:
+    """실패하면 로컬을 손대지 않는다. 고친 뒤 다시 누르면 된다."""
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(
+        outline, "create_document", failing_create("토큰이 거부되었습니다.")
+    )
+    run_id = run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_export_1").click().run()
+
+    assert not app.exception
+    assert len(run_history.load_run_items(app_db, run_id)) == 1
+    assert run_history.list_runs(app_db)[0].exported_at is None
+
+
+def test_export_reports_a_created_document_it_could_not_record(
+    app_db, monkeypatch
+) -> None:
+    """문서는 만들어졌는데 기록이 실패하면 URL 을 그대로 보여 준다.
+
+    되돌리려면 방금 만든 문서를 지워야 하는데 그 삭제도 실패할 수
+    있어 틈이 한 겹 더 생길 뿐이다. 사람이 링크를 들고 판단한다.
+    """
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(outline, "create_document", fake_create([]))
+
+    def boom(*args, **kwargs):
+        """mark_exported 가 실패하는 상황을 만든다."""
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(run_history, "mark_exported", boom)
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_export_1").click().run()
+
+    assert not app.exception
+    message = app.error[0].value
+    assert "http://192.168.0.10:3000/doc/x" in message
+    assert "둘이 됩니다" in message
