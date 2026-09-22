@@ -220,7 +220,13 @@ def test_exported_run_shows_the_document_link(app_db) -> None:
 
 
 def test_exported_run_draws_no_answer_cards(app_db) -> None:
-    """본문이 로컬에 없으므로 그릴 것도 없다."""
+    """저장된 실행은 답변 갈래로 넘어가지 않고 일찍 돌아간다.
+
+    ``app.subheader`` 만으로는 이른 반환과 "빈 목록을 그렸을 뿐"을
+    구분하지 못한다(``mark_exported`` 가 답변을 지우므로 둘 다 0건).
+    "인용 숨기기" 체크박스는 이른 반환 다음에만 그려지므로, 그것이
+    없다는 사실이 반환이 실제로 일어났다는 증거가 된다.
+    """
     run_id = run_history.save_run(app_db, make_result())
     export(app_db, run_id)
 
@@ -228,6 +234,7 @@ def test_exported_run_draws_no_answer_cards(app_db) -> None:
 
     assert not app.exception
     assert len(app.subheader) == 0
+    assert len(app.checkbox) == 0
 
 
 def test_exported_run_label_uses_the_document_title(app_db) -> None:

@@ -125,7 +125,11 @@ def _render_saved(selected: models.RunSummary) -> None:
     st.success(f"Outline 에 저장됨 · {selected.exported_at}")
     st.markdown(f"**{selected.outline_title}**")
     if selected.outline_url:
-        st.link_button("Outline 에서 열기", selected.outline_url)
+        st.link_button(
+            "Outline 에서 열기",
+            selected.outline_url,
+            key=f"history_open_{selected.id}",
+        )
 
 
 def _delete(connection: sqlite3.Connection, run_id: int) -> None:
