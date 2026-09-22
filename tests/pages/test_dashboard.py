@@ -2,6 +2,9 @@
 
 from streamlit.testing import v1
 
+from notebooklm_st.core import models
+from notebooklm_st.services import video_metadata
+
 
 def test_dashboard_shows_notice_when_no_runs(app_db) -> None:
     """실행이 하나도 없으면 안내를 보여준다."""
@@ -95,8 +98,15 @@ def test_dashboard_polls_without_error_on_repeated_runs(app_db) -> None:
     assert not app.exception
 
 
-def test_real_background_run_reaches_the_dashboard(app_db) -> None:
+def test_real_background_run_reaches_the_dashboard(app_db, monkeypatch) -> None:
     """진짜 스레드로 실행한 결과가 대시보드에 답변으로 나타난다."""
+    monkeypatch.setattr(
+        video_metadata,
+        "fetch",
+        lambda url, **kwargs: video_metadata.MetadataResult(
+            models.VideoMetadata(channel=None, upload_date=None), None
+        ),
+    )
 
     def script():
         """AppTest 진입점 — 실제 실행을 띄우고 끝난 뒤 현황을 그린다."""

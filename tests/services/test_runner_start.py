@@ -57,7 +57,9 @@ def _stub_metadata_fetch(monkeypatch) -> None:
     monkeypatch.setattr(
         runner.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(None, None),
+        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+            models.VideoMetadata(channel=None, upload_date=None), None
+        ),
     )
 
 
