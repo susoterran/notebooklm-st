@@ -53,8 +53,7 @@ def render() -> None:
     hidden = st.checkbox(
         "인용 숨기기",
         key=_HIDE_CITATIONS_KEY,
-        help="인용 번호와 인용 본문, 맨 아래 후속 제안을 감춥니다."
-        " 숨기는 동안에는 답변을 수정할 수 없습니다.",
+        help="인용 번호와 인용 본문, 맨 아래 후속 제안을 감춥니다.",
     )
     items = run_history.load_run_items(connection, selected.id)
     if hidden:
