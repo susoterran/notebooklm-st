@@ -345,3 +345,41 @@ def test_mark_exported_keeps_the_answers_of_an_unknown_run(
         export(connection, 999)
 
     assert len(run_history.load_run_items(connection, run_id)) == 2
+
+
+class FailingAnswerDelete:
+    """답변 삭제 문장에서만 터지는 커넥션 대역.
+
+    나머지 호출은 진짜 커넥션이 그대로 처리한다. 잠긴 DB·디스크
+    오류처럼 세 문장 중 가운데에서 죽는 상황을 재현한다.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """감쌀 진짜 커넥션을 받는다."""
+        self._connection = connection
+
+    def execute(self, sql, *args):
+        """답변을 지우는 문장만 실패시킨다."""
+        if "DELETE FROM answers" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self._connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        """나머지 속성은 진짜 커넥션에 맡긴다."""
+        return getattr(self._connection, name)
+
+
+def test_mark_exported_rolls_back_a_failed_delete(connection) -> None:
+    """중간에 실패하면 링크도 남기지 않는다.
+
+    커넥션은 앱 전체가 함께 쓴다. UPDATE 만 걸린 채로 예외가 나가면
+    다음 조회가 그 실행을 저장된 것으로 그리고, 다른 곳의 commit 이
+    반쪽짜리 내보내기를 확정해 버린다.
+    """
+    run_id = run_history.save_run(connection, make_result())
+
+    with pytest.raises(sqlite3.OperationalError):
+        export(FailingAnswerDelete(connection), run_id)
+
+    assert run_history.list_runs(connection)[0].exported_at is None
+    assert len(run_history.load_run_items(connection, run_id)) == 2

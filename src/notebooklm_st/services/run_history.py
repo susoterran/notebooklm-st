@@ -187,23 +187,32 @@ def mark_exported(
         ValueError: 그 ID 의 실행이 없는 경우. 이때는 아무것도 지우지
             않는다.
     """
-    cursor = connection.execute(
-        "UPDATE runs SET outline_id = ?, outline_url = ?,"
-        " outline_title = ?, exported_at = ? WHERE id = ?",
-        (
-            document_id,
-            document_url,
-            document_title,
-            store.now(),
-            run_id,
-        ),
-    )
-    if cursor.rowcount == 0:
+    # 커넥션은 앱 전체가 함께 쓴다. UPDATE 만 걸린 채로 예외가 빠져
+    # 나가면 다음 조회가 그 실행을 저장된 것으로 그리고, 다른 곳의
+    # commit 이 반쪽짜리 내보내기를 확정해 버린다. 그래서 어떤 실패든
+    # 여기서 되돌리고 다시 던진다.
+    try:
+        cursor = connection.execute(
+            "UPDATE runs SET outline_id = ?, outline_url = ?,"
+            " outline_title = ?, exported_at = ? WHERE id = ?",
+            (
+                document_id,
+                document_url,
+                document_title,
+                store.now(),
+                run_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"실행 {run_id} 을 찾을 수 없습니다.")
+        connection.execute("DELETE FROM answers WHERE run_id = ?", (run_id,))
+        connection.execute(
+            "DELETE FROM run_metadata WHERE run_id = ?", (run_id,)
+        )
+        connection.commit()
+    except BaseException:
         connection.rollback()
-        raise ValueError(f"실행 {run_id} 을 찾을 수 없습니다.")
-    connection.execute("DELETE FROM answers WHERE run_id = ?", (run_id,))
-    connection.execute("DELETE FROM run_metadata WHERE run_id = ?", (run_id,))
-    connection.commit()
+        raise
 
 
 def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
