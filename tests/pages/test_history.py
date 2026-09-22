@@ -345,7 +345,7 @@ def test_export_sends_the_confirmed_title_and_body(app_db, monkeypatch) -> None:
     assert len(calls) == 1
     _, title, markdown = calls[0]
     assert title == "사람이 고친 제목"
-    assert 'title: "사람이 고친 제목"' in markdown
+    assert "- 제목: 사람이 고친 제목" in markdown
     assert "세 가지다." in markdown
 
 
