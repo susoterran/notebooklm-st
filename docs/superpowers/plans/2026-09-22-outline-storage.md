@@ -28,9 +28,16 @@ Outline 을 모른 채 문자열 셋(문서 ID·제목·URL)을 받아 기록하
 - **커밋 메시지**: `<emoji> <type>(<scope>): <한국어 제목>`. 제목은
   명령형·마침표 없음·50자 이내. 마지막 줄에 `Assisted-by: <자기 모델 ID>`
   를 붙인다. `Co-Authored-By:` 는 쓰지 않는다.
-- **명령은 `uv` 로 돈다.** `uv run pytest`, `uv run ruff check .`,
-  `uv run ruff format .`, `uv run mypy src`. `uv` 가 PATH 에 없으면
-  `~/.local/bin/uv` 를 전체 경로로 부른다.
+- **명령은 `uv` 로 돈다.** `uv` 가 PATH 에 없으면 `~/.local/bin/uv` 를
+  전체 경로로 부른다. **검증은 CI 가 돌리는 네 명령과 같아야 한다**
+  (`.github/workflows/`):
+
+  ```bash
+  uv run ruff format --check .
+  uv run ruff check .
+  uv run mypy src tests      # src 만이 아니다 — 테스트도 타입 검사한다
+  uv run pytest
+  ```
 - **ruff**: `line-length = 80`, `select = ["E","W","F","I","N","D","UP","B","SIM","ANN","RUF"]`,
   docstring 은 **google convention**. `src/` 의 `core.*`·`services.*` 는
   mypy `disallow_untyped_defs = true` — **모든 함수에 타입 힌트와
