@@ -61,7 +61,8 @@ def render() -> None:
     items = run_history.load_run_items(connection, selected.id)
     if hidden:
         items = [answer_text.for_display(item) for item in items]
-    _render_download(selected, items)
+    metadata = run_history.load_metadata(connection, selected.id)
+    _render_download(selected, items, metadata)
     if hidden:
         answer_view.render_items(items)
         return
@@ -72,7 +73,9 @@ def render() -> None:
 
 
 def _render_download(
-    selected: models.RunSummary, items: Sequence[models.AnswerItem]
+    selected: models.RunSummary,
+    items: Sequence[models.AnswerItem],
+    metadata: models.VideoMetadata | None,
 ) -> None:
     """지금 화면에 그리는 목록을 마크다운 파일로 내준다.
 
@@ -81,7 +84,7 @@ def _render_download(
     """
     st.download_button(
         "마크다운 내려받기",
-        data=markdown_export.to_markdown(selected, items),
+        data=markdown_export.to_markdown(selected, items, metadata),
         file_name=markdown_export.to_filename(
             selected.title, selected.video_id
         ),

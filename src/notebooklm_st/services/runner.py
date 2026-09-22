@@ -8,7 +8,13 @@ from collections.abc import Callable, Coroutine, Sequence
 from typing import Any
 
 from notebooklm_st.core import errors, models, youtube
-from notebooklm_st.services import nlm, run_history, runs, store
+from notebooklm_st.services import (
+    nlm,
+    run_history,
+    runs,
+    store,
+    video_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,13 @@ def _work(
         """진행 문구를 레지스트리에 기록한다."""
         registry.append_progress(run_id, message)
 
+    on_progress("영상 정보 확인 중")
+    meta = video_metadata.fetch(url)
+    if meta.error is not None:
+        # 메타데이터는 부가물이다. 못 가져와도 요약은 끝까지 간다.
+        logger.info("실행 %s 메타데이터 실패: %s", run_id, meta.error)
+        on_progress(f"영상 정보를 가져오지 못했습니다: {meta.error}")
+
     try:
         result = asyncio.run(pipeline(url, questions, on_progress))
     except errors.MAPPED_ERRORS as error:
@@ -122,7 +135,7 @@ def _work(
     try:
         connection = store.connect(db_path)
         try:
-            run_history.save_run(connection, result)
+            run_history.save_run(connection, result, meta.metadata)
         finally:
             connection.close()
     except Exception as error:

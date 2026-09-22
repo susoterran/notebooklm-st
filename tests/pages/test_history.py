@@ -261,3 +261,17 @@ def test_download_stays_available_while_citations_are_hidden(app_db) -> None:
     app.checkbox[0].check().run()
     assert not app.exception
     assert len(app.get("download_button")) == 1
+
+
+def test_download_works_for_a_run_with_metadata(app_db) -> None:
+    """메타데이터가 있는 실행도 내려받기 버튼이 그대로 나온다."""
+    run_history.save_run(
+        app_db,
+        make_result(title="밸류에이션 강의"),
+        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
+    )
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
