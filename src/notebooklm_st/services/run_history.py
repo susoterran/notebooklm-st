@@ -75,10 +75,12 @@ def list_runs(
         limit: 가져올 최대 개수.
 
     Returns:
-        실행 요약 목록.
+        실행 요약 목록. Outline 으로 넘어간 실행은 문서 링크를 싣고
+        오며 ``answer_count`` 가 0 이다.
     """
     rows = connection.execute(
         "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
+        " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
         " COUNT(a.id) AS answer_count"
         " FROM runs AS r"
         " LEFT JOIN answers AS a ON a.run_id = r.id"
@@ -95,6 +97,10 @@ def list_runs(
             title=row["title"],
             created_at=row["created_at"],
             answer_count=int(row["answer_count"]),
+            outline_id=row["outline_id"],
+            outline_url=row["outline_url"],
+            outline_title=row["outline_title"],
+            exported_at=row["exported_at"],
         )
         for row in rows
     ]

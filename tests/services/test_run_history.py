@@ -275,3 +275,39 @@ def test_delete_run_removes_its_metadata_too(connection) -> None:
     run_history.delete_run(connection, run_id)
 
     assert run_history.load_metadata(connection, run_id) is None
+
+
+def test_list_runs_reports_a_fresh_run_as_unexported(connection) -> None:
+    """갓 저장한 실행에는 Outline 자리가 비어 있다."""
+    run_history.save_run(connection, make_result())
+
+    run = run_history.list_runs(connection)[0]
+
+    assert run.exported_at is None
+    assert run.outline_id is None
+    assert run.outline_url is None
+    assert run.outline_title is None
+
+
+def test_list_runs_carries_the_document_link(connection) -> None:
+    """DB 에 적힌 문서 링크가 요약에 실려 온다."""
+    run_id = run_history.save_run(connection, make_result())
+    connection.execute(
+        "UPDATE runs SET outline_id = ?, outline_url = ?,"
+        " outline_title = ?, exported_at = ? WHERE id = ?",
+        (
+            "doc-1",
+            "http://192.168.0.10:3000/doc/x",
+            "정리한 제목",
+            "2026-09-22T15:00:00",
+            run_id,
+        ),
+    )
+    connection.commit()
+
+    run = run_history.list_runs(connection)[0]
+
+    assert run.outline_id == "doc-1"
+    assert run.outline_url == "http://192.168.0.10:3000/doc/x"
+    assert run.outline_title == "정리한 제목"
+    assert run.exported_at == "2026-09-22T15:00:00"
