@@ -10,7 +10,11 @@ from notebooklm_st.core import models
 from notebooklm_st.services import store
 
 
-def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
+def save_run(
+    connection: sqlite3.Connection,
+    result: models.RunResult,
+    metadata: models.VideoMetadata | None = None,
+) -> int:
     """실행 결과를 이력으로 저장한다.
 
     질문 제목과 본문을 ``questions`` 테이블 외래키가 아니라 문자열로
@@ -20,6 +24,9 @@ def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
     Args:
         connection: 열린 커넥션.
         result: 저장할 실행 결과.
+        metadata: 영상에서 뽑아 온 메타데이터. 없으면 행을 만들지
+            않는다 — 빈 행과 없는 행이 같은 뜻이 되면 나중에
+            구분하지 못한다.
 
     Returns:
         저장된 실행의 ID.
@@ -48,6 +55,12 @@ def save_run(connection: sqlite3.Connection, result: models.RunResult) -> int:
             for item in result.items
         ],
     )
+    if metadata is not None:
+        connection.execute(
+            "INSERT INTO run_metadata (run_id, channel, upload_date)"
+            " VALUES (?, ?, ?)",
+            (run_id, metadata.channel, metadata.upload_date),
+        )
     connection.commit()
     return run_id
 
@@ -116,6 +129,29 @@ def load_run_items(
         )
         for row in rows
     ]
+
+
+def load_metadata(
+    connection: sqlite3.Connection, run_id: int
+) -> models.VideoMetadata | None:
+    """실행 하나의 영상 메타데이터를 읽는다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_id: 찾을 실행 ID.
+
+    Returns:
+        저장된 메타데이터. 없으면 ``None``.
+    """
+    row = connection.execute(
+        "SELECT channel, upload_date FROM run_metadata WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return models.VideoMetadata(
+        channel=row["channel"], upload_date=row["upload_date"]
+    )
 
 
 def update_answer(

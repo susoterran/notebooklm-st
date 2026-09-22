@@ -236,3 +236,42 @@ def test_delete_run_keeps_other_runs(connection) -> None:
 def test_delete_run_is_silent_for_an_unknown_id(connection) -> None:
     """이미 없는 실행을 지워도 조용히 넘어간다."""
     run_history.delete_run(connection, 999)
+
+
+def test_save_run_stores_the_metadata(connection) -> None:
+    """넘긴 메타데이터가 그대로 돌아온다."""
+    metadata = models.VideoMetadata(
+        channel="안될공학", upload_date="2026-09-15"
+    )
+
+    run_id = run_history.save_run(connection, make_result(), metadata)
+
+    assert run_history.load_metadata(connection, run_id) == metadata
+
+
+def test_save_run_without_metadata_stores_no_row(connection) -> None:
+    """메타데이터를 안 넘기면 행을 만들지 않는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    assert run_history.load_metadata(connection, run_id) is None
+    count = connection.execute(
+        "SELECT COUNT(*) AS n FROM run_metadata"
+    ).fetchone()
+    assert count["n"] == 0
+
+
+def test_load_metadata_is_silent_for_an_unknown_run(connection) -> None:
+    """없는 실행 ID 로 물으면 None 이다."""
+    assert run_history.load_metadata(connection, 9999) is None
+
+
+def test_delete_run_removes_its_metadata_too(connection) -> None:
+    """실행을 지우면 메타데이터도 함께 사라진다."""
+    metadata = models.VideoMetadata(
+        channel="안될공학", upload_date="2026-09-15"
+    )
+    run_id = run_history.save_run(connection, make_result(), metadata)
+
+    run_history.delete_run(connection, run_id)
+
+    assert run_history.load_metadata(connection, run_id) is None
