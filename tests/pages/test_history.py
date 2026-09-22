@@ -226,7 +226,7 @@ def test_exported_run_draws_no_answer_cards(app_db) -> None:
 
     ``app.subheader`` 만으로는 이른 반환과 "빈 목록을 그렸을 뿐"을
     구분하지 못한다(``mark_exported`` 가 답변을 지우므로 둘 다 0건).
-    "인용 숨기기" 체크박스는 이른 반환 다음에만 그려지므로, 그것이
+    "인용 포함" 체크박스는 이른 반환 다음에만 그려지므로, 그것이
     없다는 사실이 반환이 실제로 일어났다는 증거가 된다.
     """
     run_id = run_history.save_run(app_db, make_result())
@@ -316,6 +316,7 @@ def test_export_button_appears_with_configuration(app_db, monkeypatch) -> None:
 
     assert not app.exception
     assert app.text_input[0].value == "밸류에이션 강의"
+    assert not app.button(key="history_export_1").disabled
 
 
 def test_export_title_falls_back_to_the_video_id(app_db, monkeypatch) -> None:
