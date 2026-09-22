@@ -74,9 +74,15 @@ R4 가 요약본을 outline 으로 옮기면 이 결손이 그대로 따라간�
 에 박아 두었다). 한국 시각 이른 아침에 올라온 영상은 전날 날짜로 찍힌다.
 `timestamp` 가 함께 오므로 그것을 로컬 시각으로 바꿔 쓴다.
 
+**실제 응답으로도 확인했다.** 영상 하나를 조회해 `channel` 과 `timestamp` 가
+둘 다 담겨 오는 것을 보았다. 어느 하나가 없으면 키가 생략될 뿐이고, 설계가
+기대하는 동작(`None` → 키 생략)과 같다.
+
 ### 2.2 `-J` 와 `--print`
 
-- `-J`/`--dump-single-json` — URL 하나마다 JSON 한 덩어리를 찍는다.
+- `-J`/`--dump-single-json` — URL 하나마다 JSON 한 덩어리를 찍는다. 도움말이
+  **"Quiet, but print JSON information"** 이라고 적는다. 진행 출력이 stdout 에
+  섞이지 않으므로 받은 바이트를 그대로 `json.loads` 에 넘길 수 있다.
 - `-O`/`--print "{a,b}"` — 지정한 키만 담은 compact JSON 을 찍는다. 출력이
   훨씬 작다.
 
@@ -175,12 +181,26 @@ class MetadataResult:
     error: str | None
 
 
-def fetch(url: str, timeout: float = 20.0) -> MetadataResult: ...
+def fetch(
+    url: str,
+    runner: RunnerLike = subprocess.run,
+    timeout: float = FETCH_TIMEOUT,
+    tz: datetime.tzinfo | None = None,
+) -> MetadataResult: ...
 ```
 
 **이 함수는 예외를 던지지 않는다.** 호출자는 `runner._work` 의 백그라운드
 스레드이고, 거기서 예외가 새면 요약 실행 전체가 죽는다. 모든 실패는
 `error` 로 수렴한다.
+
+**`runner` 와 `tz` 는 테스트가 넣는 이음매다.** 운영 코드는 `fetch(url)` 로만
+부른다.
+
+- `runner` — 자식을 돌리는 함수. `services/auth.py` 의 `import_credentials`
+  가 같은 방식을 쓴다.
+- `tz` — 업로드 시각을 옮길 타임존. `None` 이면 시스템 로컬이다. 테스트가
+  타임존을 고정할 표준 수단인 `time.tzset` 이 **윈도우에 없어서** 환경
+  변수로는 고정할 수 없다(→ 10).
 
 ### 5.2 호출
 
@@ -194,6 +214,7 @@ command = [
     "--no-playlist", "-J",
     f"https://www.youtube.com/watch?v={video_id}",
 ]
+# capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL
 ```
 
 - **`sys.executable -m` 으로 부른다.** `yt-dlp` 실행파일은 윈도우
@@ -204,6 +225,8 @@ command = [
   `--no-playlist` 를 함께 준다.
 - **`shell=False`** 로 실행한다(`subprocess.run` 의 기본값). 인자가 셸을
   거치지 않으므로 주입 여지가 없다.
+- **`stdin=subprocess.DEVNULL`.** 주지 않으면 자식이 서버의 표준입력을
+  물려받는다. yt-dlp 가 그것을 읽지는 않지만 물려줄 이유도 없다.
 - **`timeout=20.0`.** 초과하면 `subprocess.run` 이 자식을 죽이고
   `TimeoutExpired` 를 던진다. 이것을 잡아 `error` 로 바꾼다. 파이썬 API 대신
   서브프로세스를 고른 이유가 이 한 줄이다 — `YoutubeDL` 에는 전체 시간을
@@ -236,6 +259,7 @@ upload_date = _to_local_date(info.get("timestamp"), info.get("upload_date"))
 | 종료 코드 ≠ 0 | stderr 의 **뒤에서 500자**. 실제 원인은 마지막 줄에 있고, 앞쪽은 경고로 채워지는 일이 많다 |
 | stdout 이 JSON 이 아님 | `출력을 해석하지 못했습니다` |
 | 20초 초과 | `영상 정보 조회가 20초를 넘겨 중단했습니다` |
+| 자식을 띄우지 못함 | `yt-dlp 를 실행하지 못했습니다: {예외}` — `OSError` 를 잡는다 |
 | `yt_dlp` 미설치 | 종료 코드 ≠ 0 경로로 들어온다(`No module named yt_dlp`) |
 | URL 이 영상이 아님 | `영상 URL 이 아닙니다` (프로세스를 띄우지 않는다) |
 
@@ -370,11 +394,15 @@ def to_markdown(
 1. `\` → `\\`
 2. `"` → `\"`
 3. 개행·탭·캐리지리턴 → `\n`·`\t`·`\r`
-4. 남은 C0 제어문자(`\x00`–`\x1f`)는 **지운다**
+4. 남은 제어문자는 **지운다** — C0(`\x00`–`\x1f`)에 더해 DEL 과
+   C1(`\x7f`–`\x9f`)까지다
 
-4번은 YAML 이중따옴표 스칼라가 `\x41` 형태의 표기를 요구하는 자리인데, 이
-값들이 문서에 남아야 할 이유가 없다. 파일명을 만들 때 이미 같은 범위를
-거르고 있다(`_FORBIDDEN`).
+4번의 범위가 C0 보다 넓은 이유가 있다. 영상 제목은 제3자 문자열이고, YAML
+파서는 `\x7f` 와 C1 대부분을 출력 불가 문자로 보아 읽기를 거부한다.
+`\x85` 는 줄바꿈으로 해석한다. 그런 글자가 하나 섞이면 **이 frontmatter 가
+봉사하려는 바로 그 도구들이 문서를 파싱하지 못한다.** 이중따옴표 스칼라에서
+`\x41` 형태로 표기할 수도 있지만 그 값들이 문서에 남아야 할 이유가 없다.
+파일명을 만들 때도 비슷한 범위를 거르고 있다(`_FORBIDDEN`).
 
 ---
 
@@ -382,22 +410,34 @@ def to_markdown(
 
 ### 8.1 `services/runner.py`
 
-`_work` 가 파이프라인을 돌리기 **전에** 세 줄을 더한다.
+`_work` 가 파이프라인을 돌리기 **전에** 헬퍼 하나를 부른다.
 
 ```python
-on_progress("영상 정보 확인 중")
-meta = video_metadata.fetch(url)
-if meta.error is not None:
-    on_progress(f"영상 정보를 가져오지 못했습니다: {meta.error}")
+def _fetch_metadata(
+    registry: runs.RunRegistry, run_id: str, url: str
+) -> models.VideoMetadata | None: ...
 ```
 
 - 이미 백그라운드 스레드 안이라 **화면이 멈추지 않는다.**
-- 진행 문구는 `components/run_progress.py` 가 그리던 경로를 그대로 탄다.
-  Streamlit API 를 부르지 않는다는 `_work` 의 규칙을 지킨다.
-- **실패해도 `return` 하지 않는다.** 파이프라인이 끝나면
-  `run_history.save_run(connection, result, meta.metadata)` 로 넘어간다.
-  조회에 실패했으면 `meta.metadata` 가 `None` 이고, 6.3 대로 행이 생기지
-  않는다.
+- 진행 문구는 레지스트리에 쌓여 `components/run_progress.py` 가 그리던
+  경로를 그대로 탄다. Streamlit API 를 부르지 않는다는 `_work` 의 규칙을
+  지킨다.
+- **실패해도 `return` 하지 않는다.** `None` 을 돌려주고 파이프라인이
+  이어진다. 끝나면 `run_history.save_run(connection, result, metadata)` 로
+  넘어가고, `metadata` 가 `None` 이면 6.3 대로 행이 생기지 않는다.
+- **이 헬퍼 안에 넓은 `except Exception` 을 하나 둔다.** 프로젝트 규칙이
+  금지하는 것이지만 여기가 예외다. `fetch` 는 실패를 값으로 돌려주는
+  계약이고 그 계약은 지켜지지만, 어디선가 깨져 예외가 이 함수 밖으로 새면
+  **요약이 시작도 못 한 채 실행이 "실행 중" 에 영원히 머문다** — 이 앱
+  최악의 실패 모드다. `fetch` 자신의 계약 뒤에 두는 마지막 방어선이며,
+  같은 파일의 기존 두 곳과 같은 성격이다. 주석에 근거를 적는다.
+
+**실패 안내는 오래 남지 않는다.** `run_progress` 는 마지막 진행 문구 한
+줄만 보여 주므로 "영상 정보를 가져오지 못했습니다" 는 다음 문구에 곧
+덮이고, 실행이 끝나면 진행 문구 자체가 그려지지 않는다. 사용자에게 남는
+신호는 **내려받은 문서에 채널명·업로드일자가 없다는 것**뿐이다. 운영자는
+`logger.info` 로 확인한다. 메타데이터가 부가물이라는 결정(→ 3)이 받아들이는
+비용이며, 알고 남겨 둔다.
 
 ### 8.2 `pages/history.py`
 
@@ -435,9 +475,10 @@ uv add yt-dlp
 쓰는 방식대로 실행 함수를 가짜로 바꾼다. 네트워크에 기대는 테스트를 만들지
 않는다.
 
-**KST 변환 테스트는 타임존을 고정한다.** 개발 기계가 어느 타임존이든 같은
-결과가 나와야 한다. 변환 함수가 쓸 타임존을 주입받게 두거나 테스트가 환경을
-고정한다 — 구현 계획에서 둘 중 하나를 고른다.
+**KST 변환 테스트는 타임존을 주입한다.** 개발 기계가 어느 타임존이든 같은
+결과가 나와야 하는데, 환경 변수로 고정하는 표준 수단인 `time.tzset` 이
+**윈도우에 없다.** 그래서 `fetch` 가 타임존을 인자로 받고(→ 5.1) 테스트만
+명시적으로 넘긴다. 운영 코드는 넘기지 않아 시스템 로컬을 쓴다.
 
 ---
 
@@ -464,13 +505,9 @@ uv add yt-dlp
 
 ## 12. 미검증 가정
 
-1. **`-J` 응답에 `channel` 과 `timestamp` 가 실제로 담기는지.** 2.1 은 공식
-   문서가 그 필드를 정의한다는 것까지 확인했다. 특정 영상의 실제 응답으로는
-   확인하지 않았다. 담기지 않으면 키가 생략될 뿐이고, 설계가 기대하는
-   동작(`None` → 키 생략)과 같다.
-2. **컨테이너에서 유튜브로 나가는 요청이 막히지 않는지.** 홈서버의 아웃바운드
+1. **컨테이너에서 유튜브로 나가는 요청이 막히지 않는지.** 홈서버의 아웃바운드
    정책은 확인하지 않았다. 막히면 `error` 로 수렴하고 요약은 계속된다.
-3. **조회에 실제로 얼마나 걸리는지.** 20초는 넉넉히 잡은 값이고 실측이
+2. **조회에 실제로 얼마나 걸리는지.** 20초는 넉넉히 잡은 값이고 실측이
    아니다. 요약 한 건이 분 단위로 걸리므로 20초가 체감을 크게 바꾸지는
    않는다.
 
