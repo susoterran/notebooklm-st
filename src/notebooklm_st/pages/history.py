@@ -8,15 +8,13 @@ import streamlit as st
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
 from notebooklm_st.core import answer_text, markdown_export, models
-from notebooklm_st.services import run_history
+from notebooklm_st.services import outline, run_history
 
 _SELECTED_KEY = "history_selected"
 
 # 목록은 한 줄로 읽혀야 값을 한다. 질문 관리 화면과 같은 상한을
 # 쓴다.
 _TITLE_MAX_CHARS = 60
-
-_HIDE_CITATIONS_KEY = "history_hide_citations"
 
 # 위젯 키가 아니라 우리가 소유한 세션 키다. 위젯이 만들어진 뒤 그
 # 위젯의 키를 건드리면 Streamlit 이 예외를 던지므로, 삭제 후 상태를
@@ -27,11 +25,8 @@ _DELETE_ARMED_KEY = "history_delete_armed"
 def render() -> None:
     """최근 실행을 고르고 그 답변들을 보여 준다.
 
-    인용 숨기기 체크박스를 켜면 ``answer_text.for_display`` 가 만든
-    사본을 그리는데, 그 사본은 ``id`` 가 없어 편집 상자를 열 수 없는
-    모양이다. 그래서 체크박스가 켜진 동안에는 편집도 함께 잠긴다.
-    내려받기는 화면에 그리는 목록을 그대로 받으므로 이 상태를 따라
-    간다.
+    인용 포함 체크박스를 끄면 ``answer_text.for_display`` 가 만든
+    사본을 그린다.
     삭제는 실수로 한 번에 지워지지 않도록 확인 버튼을 한 번 더
     거치는 2단계로 되어 있다(``_render_delete`` 참고).
     """
@@ -42,57 +37,45 @@ def render() -> None:
         st.info("아직 저장된 실행이 없습니다.")
         return
 
-    selected = st.selectbox(
+    # 고른 값으로 요약 객체 자체를 담으면 저장 직후 선택이 풀린다.
+    # mark_exported 가 그 실행의 exported_at 과 answer_count 를 바꾸므로
+    # 다시 그릴 때 list_runs 가 같지 않은 새 dataclass 를 돌려주고,
+    # Streamlit 은 목록에 없는 값을 조용히 버리고 0번으로 되돌린다.
+    # ID 는 저장해도 그대로이므로 선택이 살아남는다.
+    by_id = {run.id: run for run in runs}
+    selected_id = st.selectbox(
         "실행 선택",
-        options=runs,
-        format_func=_format_run,
+        options=list(by_id),
+        format_func=lambda run_id: _format_run(by_id[run_id]),
         key=_SELECTED_KEY,
     )
-    if selected is None:
+    if selected_id is None:
         return
+    selected = by_id[selected_id]
     st.caption(selected.url)
     _render_delete(connection, selected)
-    hidden = st.checkbox(
-        "인용 숨기기",
-        key=_HIDE_CITATIONS_KEY,
-        help="인용 번호와 인용 본문, 맨 아래 후속 제안을 감춥니다."
-        " 숨기는 동안에는 답변을 수정할 수 없습니다.",
+    if selected.exported_at is not None:
+        _render_saved(selected)
+        return
+    title = st.text_input(
+        "문서 제목",
+        value=selected.title or selected.video_id,
+        key=f"history_title_{selected.id}",
+        help="Outline 문서의 제목이 됩니다.",
+    )
+    included = st.checkbox(
+        "인용 포함",
+        value=True,
+        key=f"history_include_{selected.id}",
+        help="끄면 인용 번호와 인용 본문, 맨 아래 후속 제안을 뺀 채로"
+        " 올립니다. 화면도 같은 상태로 보입니다.",
     )
     items = run_history.load_run_items(connection, selected.id)
-    if hidden:
+    if not included:
         items = [answer_text.for_display(item) for item in items]
     metadata = run_history.load_metadata(connection, selected.id)
-    _render_download(selected, items, metadata)
-    if hidden:
-        answer_view.render_items(items)
-        return
-    answer_view.render_items(
-        items,
-        on_save=lambda answer_id, text: _save(connection, answer_id, text),
-    )
-
-
-def _render_download(
-    selected: models.RunSummary,
-    items: Sequence[models.AnswerItem],
-    metadata: models.VideoMetadata | None,
-) -> None:
-    """지금 화면에 그리는 목록을 마크다운 파일로 내준다.
-
-    답변 목록을 렌더와 나눠 쓴다. 인용을 숨긴 상태면 걸러진 사본이
-    그대로 넘어오므로 화면과 내려받은 파일이 어긋날 수 없다.
-    """
-    st.download_button(
-        "마크다운 내려받기",
-        data=markdown_export.to_markdown(selected, items, metadata),
-        file_name=markdown_export.to_filename(
-            selected.title, selected.video_id
-        ),
-        mime="text/markdown",
-        key=f"history_download_{selected.id}",
-        help="지금 보이는 그대로 내려받습니다."
-        " 인용을 숨긴 동안에는 숨긴 상태로 담깁니다.",
-    )
+    _render_export(connection, selected, title, items, metadata)
+    answer_view.render_items(items)
 
 
 def _format_run(run: models.RunSummary) -> str:
@@ -101,9 +84,15 @@ def _format_run(run: models.RunSummary) -> str:
     제목을 앞에 둔다. 목록에서 고르는 사람이 먼저 알고 싶은 것은
     시각이 아니라 어떤 영상이었는지다. 목록은 최신순으로 고정되어
     있으므로 시각은 뒤에 있어도 읽는 데 지장이 없다.
+
+    저장된 실행은 위키에 붙은 이름으로 찾게 된다. 그래서 영상 제목이
+    아니라 문서 제목을 쓴다.
     """
+    if run.exported_at is not None:
+        label = _shorten(run.outline_title or run.video_id)
+        return f"{label} · {run.created_at} · 문서"
     label = _shorten(run.title) if run.title else run.video_id
-    return f"{label} · {run.created_at} · 답변 {run.answer_count}건"
+    return f"{label} · {run.created_at} · 미저장 · 답변 {run.answer_count}건"
 
 
 def _shorten(title: str) -> str:
@@ -132,13 +121,108 @@ def _render_delete(
                 st.session_state[_DELETE_ARMED_KEY] = selected.id
                 st.rerun()
             return
-        st.warning("딸린 답변도 함께 사라집니다. 되돌릴 수 없습니다.")
+        if selected.exported_at is not None:
+            st.warning("로컬 링크만 지웁니다. Outline 문서는 그대로 남습니다.")
+        else:
+            st.warning("딸린 답변도 함께 사라집니다. 되돌릴 수 없습니다.")
         left, right = st.columns(2)
         if left.button("정말 삭제", key="history_delete_confirm"):
             _delete(connection, selected.id)
         if right.button("취소", key="history_delete_cancel"):
             _disarm()
             st.rerun()
+
+
+def _render_saved(selected: models.RunSummary) -> None:
+    """저장된 실행을 문서명과 링크로 그린다.
+
+    본문은 로컬에 없다. 수정·삭제·검색은 Outline 이 맡는다.
+    """
+    st.success(f"Outline 에 저장됨 · {selected.exported_at}")
+    st.markdown(f"**{selected.outline_title}**")
+    if selected.outline_url:
+        st.link_button(
+            "Outline 에서 열기",
+            selected.outline_url,
+            key=f"history_open_{selected.id}",
+        )
+
+
+def _render_export(
+    connection: sqlite3.Connection,
+    selected: models.RunSummary,
+    title: str,
+    items: Sequence[models.AnswerItem],
+    metadata: models.VideoMetadata | None,
+) -> None:
+    """저장 버튼을 그린다. 설정이 없으면 안내로 대신한다.
+
+    이력 열람 자체는 막지 않는다. Outline 을 아직 붙이지 않았어도
+    지난 실행을 읽는 데에는 아무 문제가 없다.
+    """
+    config = outline.config_from_env()
+    if config is None:
+        st.info(
+            "Outline 연결이 설정되지 않았습니다."
+            f" {outline.URL_ENV_VAR}·{outline.TOKEN_ENV_VAR}"
+            f"·{outline.COLLECTION_ENV_VAR} 를 설정하세요."
+        )
+        return
+    if st.button(
+        "Outline 에 저장",
+        key=f"history_export_{selected.id}",
+        disabled=not title.strip(),
+        help="지금 보이는 그대로 올립니다. 올린 뒤에는 로컬에 링크만 남습니다.",
+    ):
+        _export(connection, config, selected, title.strip(), items, metadata)
+
+
+def _export(
+    connection: sqlite3.Connection,
+    config: outline.OutlineConfig,
+    selected: models.RunSummary,
+    title: str,
+    items: Sequence[models.AnswerItem],
+    metadata: models.VideoMetadata | None,
+) -> None:
+    """문서를 만들고 링크를 기록한다.
+
+    실패하면 로컬을 손대지 않는다. 원인을 고친 뒤 같은 버튼을 다시
+    누르면 된다.
+    """
+    with st.spinner("Outline 에 저장 중"):
+        try:
+            document = outline.create_document(
+                config,
+                title,
+                markdown_export.to_markdown(selected, items, title, metadata),
+            )
+        except outline.OutlineError as error:
+            st.error(str(error))
+            return
+        try:
+            run_history.mark_exported(
+                connection,
+                selected.id,
+                document_id=document.id,
+                document_title=document.title,
+                document_url=document.url,
+            )
+        except (ValueError, sqlite3.Error) as error:
+            # mark_exported 가 실제로 내는 둘만 잡는다. 더 넓게 잡으면
+            # 나중에 생길 프로그래밍 오류까지 "문서가 둘이 됩니다" 로
+            # 둔갑해 진짜 버그가 드러나지 않는다.
+            # 되돌리지 않는다. 방금 만든 문서를 지우려면 그 삭제도
+            # 실패할 수 있어 틈이 한 겹 더 생길 뿐이다. 사실대로
+            # 보여 주고 사람이 링크를 들고 판단하게 한다.
+            st.error(
+                f"문서는 만들어졌습니다: {document.url} —"
+                " 로컬 기록에 실패했습니다"
+                f"({type(error).__name__})."
+                " 다시 저장하면 문서가 둘이 됩니다."
+            )
+            return
+    st.rerun()
 
 
 def _delete(connection: sqlite3.Connection, run_id: int) -> None:
@@ -155,18 +239,3 @@ def _delete(connection: sqlite3.Connection, run_id: int) -> None:
 def _disarm() -> None:
     """적어 둔 삭제 대상을 지운다."""
     st.session_state.pop(_DELETE_ARMED_KEY, None)
-
-
-def _save(connection: sqlite3.Connection, answer_id: int, answer: str) -> None:
-    """고친 답변을 저장하고 화면을 다시 그린다.
-
-    저장 경로에는 필터를 거치지 않은 원문만 흐른다. 인용을 숨긴
-    동안에는 편집 상자 자체를 그리지 않으므로, 걸러진 본문이 여기까지
-    올 길이 없다.
-    """
-    try:
-        run_history.update_answer(connection, answer_id, answer)
-    except ValueError as error:
-        st.error(str(error))
-        return
-    st.rerun()

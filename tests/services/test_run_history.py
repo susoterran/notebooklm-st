@@ -164,48 +164,6 @@ def test_a_fresh_answer_item_has_no_id() -> None:
     assert item.id is None
 
 
-def test_update_answer_replaces_the_body(connection) -> None:
-    """저장된 답변 본문을 바꾼다."""
-    run_id = run_history.save_run(connection, make_result())
-    first = run_history.load_run_items(connection, run_id)[0]
-    assert first.id is not None
-
-    run_history.update_answer(connection, first.id, "고친 답변")
-
-    items = run_history.load_run_items(connection, run_id)
-    assert items[0].answer == "고친 답변"
-    assert items[0].citations == first.citations
-
-
-def test_update_answer_trims_whitespace(connection) -> None:
-    """앞뒤 공백은 지우고 저장한다."""
-    run_id = run_history.save_run(connection, make_result())
-    first = run_history.load_run_items(connection, run_id)[0]
-    assert first.id is not None
-
-    run_history.update_answer(connection, first.id, "  고친 답변  ")
-
-    assert run_history.load_run_items(connection, run_id)[0].answer == (
-        "고친 답변"
-    )
-
-
-def test_update_answer_rejects_an_empty_body(connection) -> None:
-    """답변을 비우는 것은 고치기가 아니므로 거부한다."""
-    run_id = run_history.save_run(connection, make_result())
-    first = run_history.load_run_items(connection, run_id)[0]
-    assert first.id is not None
-
-    with pytest.raises(ValueError):
-        run_history.update_answer(connection, first.id, "   ")
-
-
-def test_update_answer_rejects_an_unknown_id(connection) -> None:
-    """없는 답변을 고치려 하면 알린다."""
-    with pytest.raises(ValueError):
-        run_history.update_answer(connection, 999, "고친 답변")
-
-
 def test_delete_run_removes_its_answers_too(connection) -> None:
     """실행을 지우면 딸린 답변도 함께 사라진다."""
     run_id = run_history.save_run(connection, make_result())
@@ -275,3 +233,153 @@ def test_delete_run_removes_its_metadata_too(connection) -> None:
     run_history.delete_run(connection, run_id)
 
     assert run_history.load_metadata(connection, run_id) is None
+
+
+def test_list_runs_reports_a_fresh_run_as_unexported(connection) -> None:
+    """갓 저장한 실행에는 Outline 자리가 비어 있다."""
+    run_history.save_run(connection, make_result())
+
+    run = run_history.list_runs(connection)[0]
+
+    assert run.exported_at is None
+    assert run.outline_id is None
+    assert run.outline_url is None
+    assert run.outline_title is None
+
+
+def test_list_runs_carries_the_document_link(connection) -> None:
+    """DB 에 적힌 문서 링크가 요약에 실려 온다."""
+    run_id = run_history.save_run(connection, make_result())
+    connection.execute(
+        "UPDATE runs SET outline_id = ?, outline_url = ?,"
+        " outline_title = ?, exported_at = ? WHERE id = ?",
+        (
+            "doc-1",
+            "http://192.168.0.10:3000/doc/x",
+            "정리한 제목",
+            "2026-09-22T15:00:00",
+            run_id,
+        ),
+    )
+    connection.commit()
+
+    run = run_history.list_runs(connection)[0]
+
+    assert run.outline_id == "doc-1"
+    assert run.outline_url == "http://192.168.0.10:3000/doc/x"
+    assert run.outline_title == "정리한 제목"
+    assert run.exported_at == "2026-09-22T15:00:00"
+
+
+def export(connection, run_id: int) -> None:
+    """테스트용 저장 기록 한 번."""
+    run_history.mark_exported(
+        connection,
+        run_id,
+        document_id="doc-1",
+        document_title="정리한 제목",
+        document_url="http://192.168.0.10:3000/doc/x",
+    )
+
+
+def test_mark_exported_writes_the_document_link(connection) -> None:
+    """문서 ID·제목·URL 과 저장 시각이 남는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    export(connection, run_id)
+
+    run = run_history.list_runs(connection)[0]
+    assert run.outline_id == "doc-1"
+    assert run.outline_title == "정리한 제목"
+    assert run.outline_url == "http://192.168.0.10:3000/doc/x"
+    assert run.exported_at is not None
+
+
+def test_mark_exported_deletes_the_local_answers(connection) -> None:
+    """진실의 원천을 하나로 둔다 — 본문은 Outline 에만 남는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    export(connection, run_id)
+
+    assert run_history.load_run_items(connection, run_id) == []
+
+
+def test_mark_exported_deletes_the_local_metadata(connection) -> None:
+    """메타데이터도 문서 frontmatter 로 옮겨 갔으므로 지운다."""
+    run_id = run_history.save_run(
+        connection,
+        make_result(),
+        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
+    )
+
+    export(connection, run_id)
+
+    assert run_history.load_metadata(connection, run_id) is None
+
+
+def test_mark_exported_keeps_the_run_itself(connection) -> None:
+    """실행 행은 남는다. 링크를 걸어 둘 자리가 필요하다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    export(connection, run_id)
+
+    runs = run_history.list_runs(connection)
+    assert len(runs) == 1
+    assert runs[0].id == run_id
+    assert runs[0].answer_count == 0
+
+
+def test_mark_exported_rejects_an_unknown_run(connection) -> None:
+    """없는 실행에 링크를 걸지 않는다."""
+    with pytest.raises(ValueError):
+        export(connection, 999)
+
+
+def test_mark_exported_keeps_the_answers_of_an_unknown_run(
+    connection,
+) -> None:
+    """실패하면 아무것도 지우지 않는다."""
+    run_id = run_history.save_run(connection, make_result())
+
+    with pytest.raises(ValueError):
+        export(connection, 999)
+
+    assert len(run_history.load_run_items(connection, run_id)) == 2
+
+
+class FailingAnswerDelete:
+    """답변 삭제 문장에서만 터지는 커넥션 대역.
+
+    나머지 호출은 진짜 커넥션이 그대로 처리한다. 잠긴 DB·디스크
+    오류처럼 세 문장 중 가운데에서 죽는 상황을 재현한다.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """감쌀 진짜 커넥션을 받는다."""
+        self._connection = connection
+
+    def execute(self, sql, *args):
+        """답변을 지우는 문장만 실패시킨다."""
+        if "DELETE FROM answers" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self._connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        """나머지 속성은 진짜 커넥션에 맡긴다."""
+        return getattr(self._connection, name)
+
+
+def test_mark_exported_rolls_back_a_failed_delete(connection) -> None:
+    """중간에 실패하면 링크도 남기지 않는다.
+
+    커넥션은 앱 전체가 함께 쓴다. UPDATE 만 걸린 채로 예외가 나가면
+    다음 조회가 그 실행을 저장된 것으로 그리고, 다른 곳의 commit 이
+    반쪽짜리 내보내기를 확정해 버린다.
+    """
+    run_id = run_history.save_run(connection, make_result())
+
+    with pytest.raises(sqlite3.OperationalError):
+        export(FailingAnswerDelete(connection), run_id)
+
+    assert run_history.list_runs(connection)[0].exported_at is None
+    assert len(run_history.load_run_items(connection, run_id)) == 2

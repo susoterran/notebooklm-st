@@ -33,24 +33,51 @@ def make_item(
     )
 
 
-def test_to_markdown_opens_with_the_title_and_source() -> None:
-    """Frontmatter 다음에 제목을 두고 출처와 실행 시각을 잇는다."""
-    text = markdown_export.to_markdown(make_summary(), [make_item()])
-    body = text.split("---\n", 2)[2]
+DEFAULT_TITLE = "어떻게 AI는 생각하는가"
+
+
+def export(
+    summary=None,
+    items=None,
+    title=DEFAULT_TITLE,
+    metadata=None,
+) -> str:
+    """새 시그니처로 문서를 만든다."""
+    return markdown_export.to_markdown(
+        summary if summary is not None else make_summary(),
+        items if items is not None else [make_item()],
+        title,
+        metadata,
+    )
+
+
+def test_to_markdown_opens_with_the_source_block() -> None:
+    """Frontmatter 다음 첫 블록은 출처와 실행 시각이다.
+
+    H1 을 넣지 않는다. Outline 이 문서 제목을 따로 가지므로 넣으면
+    제목이 두 번 보인다.
+    """
+    body = export().split("---\n", 2)[2]
     lines = body.splitlines()
-    assert lines[1] == "# 어떻게 AI는 생각하는가"
+
+    assert lines[1] == "- 출처: https://youtu.be/dQw4w9WgXcQ"
+    assert lines[2] == "- 실행: 2026-08-31T14:02:11"
+    assert "# 어떻게 AI는 생각하는가" not in body
 
 
-def test_to_markdown_falls_back_to_video_id_without_a_title() -> None:
-    """제목이 없으면 영상 ID 를 머리글로 쓴다."""
-    text = markdown_export.to_markdown(make_summary(title=None), [make_item()])
-    body = text.split("---\n", 2)[2]
-    assert body.splitlines()[1] == "# dQw4w9WgXcQ"
+def test_to_markdown_writes_the_given_title_into_frontmatter() -> None:
+    """확인한 제목이 frontmatter 의 title 이 된다."""
+    text = export(
+        summary=make_summary(title="저장된 옛 제목"), title="사람이 고친 제목"
+    )
+
+    assert 'title: "사람이 고친 제목"' in text
+    assert "저장된 옛 제목" not in text
 
 
 def test_to_markdown_writes_question_and_answer() -> None:
     """질문 제목은 머리글로, 원문은 인용 블록으로, 본문은 그대로 쓴다."""
-    text = markdown_export.to_markdown(make_summary(), [make_item()])
+    text = export()
     assert "## 핵심 주장" in text
     assert "> 핵심 주장은?" in text
     assert "세 가지다." in text
@@ -65,7 +92,7 @@ def test_to_markdown_quotes_every_line_of_a_multiline_question() -> None:
         citations=(),
         error=None,
     )
-    text = markdown_export.to_markdown(make_summary(), [item])
+    text = export(items=[item])
     assert "> 첫 줄" in text
     assert "> 둘째 줄" in text
 
@@ -75,34 +102,34 @@ def test_to_markdown_lists_citations() -> None:
     item = make_item(
         citations=(models.Citation(number=1, text="근거 구절", score=0.9),)
     )
-    text = markdown_export.to_markdown(make_summary(), [item])
+    text = export(items=[item])
     assert "### 인용 1건" in text
     assert "- **[1]** 근거 구절" in text
 
 
 def test_to_markdown_omits_the_citation_section_when_empty() -> None:
     """인용이 없으면 인용 절 자체를 쓰지 않는다."""
-    text = markdown_export.to_markdown(make_summary(), [make_item()])
+    text = export()
     assert "인용" not in text
 
 
 def test_to_markdown_marks_a_failed_item() -> None:
     """답변을 못 받은 항목은 사유를 적는다."""
     item = make_item(answer=None, error="응답이 비어 있습니다.")
-    text = markdown_export.to_markdown(make_summary(), [item])
+    text = export(items=[item])
     assert "**답변을 받지 못했습니다:** 응답이 비어 있습니다." in text
 
 
 def test_to_markdown_ends_with_a_single_newline() -> None:
     """파일 끝은 줄바꿈 하나로 정리한다."""
-    text = markdown_export.to_markdown(make_summary(), [make_item()])
+    text = export()
     assert text.endswith("\n")
     assert not text.endswith("\n\n")
 
 
 def test_to_markdown_writes_frontmatter_without_metadata() -> None:
     """메타데이터가 없어도 title 과 url 은 나온다."""
-    text = markdown_export.to_markdown(make_summary(), [make_item()])
+    text = export()
     lines = text.splitlines()
     assert lines[0] == "---"
     assert lines[1] == 'title: "어떻게 AI는 생각하는가"'
@@ -116,7 +143,7 @@ def test_to_markdown_writes_all_metadata_keys() -> None:
         channel="안될공학", upload_date="2026-09-15"
     )
 
-    text = markdown_export.to_markdown(make_summary(), [make_item()], metadata)
+    text = export(metadata=metadata)
 
     assert text.splitlines()[:6] == [
         "---",
@@ -132,7 +159,7 @@ def test_to_markdown_omits_keys_without_values() -> None:
     """값이 없는 키는 null 이 아니라 아예 빠진다."""
     metadata = models.VideoMetadata(channel=None, upload_date="2026-09-15")
 
-    text = markdown_export.to_markdown(make_summary(), [make_item()], metadata)
+    text = export(metadata=metadata)
 
     assert "channel" not in text
     assert "upload_date: 2026-09-15" in text
@@ -140,9 +167,7 @@ def test_to_markdown_omits_keys_without_values() -> None:
 
 def test_to_markdown_escapes_quotes_and_backslashes_in_the_title() -> None:
     """제목의 따옴표와 역슬래시가 YAML 을 깨뜨리지 않는다."""
-    summary = make_summary(title='그는 "생각"한다 \\ 아마도')
-
-    text = markdown_export.to_markdown(summary, [make_item()])
+    text = export(title='그는 "생각"한다 \\ 아마도')
 
     assert text.splitlines()[1] == ('title: "그는 \\"생각\\"한다 \\\\ 아마도"')
 
@@ -154,9 +179,7 @@ def test_to_markdown_strips_del_and_c1_controls_from_the_title() -> None:
     ReaderError 를 던지고 0x85 는 줄바꿈으로 해석한다. 영상 제목은
     제3자 문자열이라 이 범위가 섞여 들어올 수 있다.
     """
-    summary = make_summary(title="제목\x7f안\x85녕")
-
-    text = markdown_export.to_markdown(summary, [make_item()])
+    text = export(title="제목\x7f안\x85녕")
 
     title_line = text.splitlines()[1]
     assert title_line == 'title: "제목안녕"'
@@ -168,7 +191,7 @@ def test_to_markdown_escapes_newlines_in_the_channel() -> None:
     """개행이 든 값도 한 줄로 접힌다."""
     metadata = models.VideoMetadata(channel="안될\n공학", upload_date=None)
 
-    text = markdown_export.to_markdown(make_summary(), [make_item()], metadata)
+    text = export(metadata=metadata)
 
     assert 'channel: "안될\\n공학"' in text
 
@@ -177,53 +200,15 @@ def test_to_markdown_quotes_the_url_without_a_video_id() -> None:
     """영상 ID 가 없는 옛 이력은 저장된 URL 을 따옴표로 감싼다."""
     summary = make_summary(video_id="")
 
-    text = markdown_export.to_markdown(summary, [make_item()])
+    text = export(summary=summary)
 
     assert 'url: "https://youtu.be/dQw4w9WgXcQ"' in text
 
 
 def test_to_markdown_keeps_the_body_unchanged() -> None:
     """Frontmatter 아래 본문은 출처 줄부터 그대로다."""
-    text = markdown_export.to_markdown(make_summary(), [make_item()])
+    text = export()
 
     assert "- 출처: https://youtu.be/dQw4w9WgXcQ" in text
     assert "- 실행: 2026-08-31T14:02:11" in text
     assert "## 핵심 주장" in text
-
-
-def test_to_filename_uses_the_title() -> None:
-    """제목에 확장자를 붙여 파일명으로 쓴다."""
-    name = markdown_export.to_filename("밸류에이션 강의", "dQw4w9WgXcQ")
-    assert name == "밸류에이션 강의.md"
-
-
-def test_to_filename_replaces_forbidden_characters() -> None:
-    """파일명에 못 쓰는 문자는 공백으로 바꾸고 겹친 공백을 접는다."""
-    name = markdown_export.to_filename('어떻게? AI는: "생각"/판단', "vid")
-    assert name == "어떻게 AI는 생각 판단.md"
-
-
-def test_to_filename_strips_trailing_dots_and_spaces() -> None:
-    """윈도우가 싫어하는 끝 마침표와 공백을 떼어 낸다."""
-    name = markdown_export.to_filename("제목입니다... ", "vid")
-    assert name == "제목입니다.md"
-
-
-def test_to_filename_truncates_a_long_title() -> None:
-    """제목이 아주 길면 잘라서 파일 시스템 한계를 넘지 않는다."""
-    name = markdown_export.to_filename("가" * 300, "vid")
-    assert len(name) == markdown_export.MAX_STEM_CHARS + len(".md")
-
-
-def test_to_filename_falls_back_to_video_id_without_a_title() -> None:
-    """제목이 없으면 영상 ID 를 쓴다."""
-    assert markdown_export.to_filename(None, "dQw4w9WgXcQ") == (
-        "dQw4w9WgXcQ.md"
-    )
-
-
-def test_to_filename_falls_back_when_nothing_survives() -> None:
-    """금지 문자만 있던 제목은 남는 게 없으므로 영상 ID 로 돌아간다."""
-    assert markdown_export.to_filename("///???", "dQw4w9WgXcQ") == (
-        "dQw4w9WgXcQ.md"
-    )

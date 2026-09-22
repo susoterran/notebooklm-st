@@ -76,15 +76,38 @@ jobs:
           load: true
           push: false
           tags: notebooklm-st:scan
+      # 스캐너를 나눠 돌린다. 막는 것과 보여 주는 것은 다른 일이다.
+      # version은 이 액션 SHA의 기본값과 같은 값을 명시한 것이다. 적어 두면
+      # 나중에 액션 SHA를 올릴 때 스캐너 버전이 함께 바뀌는 일이 diff에
+      # 드러난다. 규칙 세트가 바뀌면 코드를 안 고쳐도 게이트 색이 달라진다.
       - name: 취약점 스캔 게이트 (HIGH·CRITICAL)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: notebooklm-st:scan
+          version: v0.70.0
+          scanners: vuln
           exit-code: '1'
           severity: 'HIGH,CRITICAL'
           # 패치가 아직 없는 CVE는 제외한다. 고칠 수 없는 항목으로 게이트가 상시
           # 빨간 상태가 되면 아무도 결과를 보지 않게 된다.
           ignore-unfixed: true
+          format: table
+
+      # 시크릿은 막지 않고 보고만 한다. 이미지의 대부분은 venv 안의 제3자
+      # 코드이고, 거기서 나오는 발견은 우리가 고칠 수 없다. 예컨대 yt-dlp의
+      # extractor/shahid.py는 공개 API를 부르려고 자격증명을 코드에 박아 두는데,
+      # 우리 시크릿이 아니라 회전도 삭제도 할 수 없다. 위 ignore-unfixed와 같은
+      # 이유다 — 고칠 수 없는 항목으로 게이트를 세우면 아무도 결과를 보지 않는다.
+      # 우리 코드에 시크릿이 들어가는 것은 커밋 전 점검이 막는다
+      # (→ .claude/rules/commit-strategy.md).
+      - name: 시크릿 스캔 (보고만, 게이트 아님)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: notebooklm-st:scan
+          version: v0.70.0
+          scanners: secret
+          exit-code: '0'
+          severity: 'HIGH,CRITICAL'
           format: table
 
       # ── 동작 게이트 ───────────────────────────────────────────────────────

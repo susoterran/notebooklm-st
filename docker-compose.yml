@@ -1,5 +1,6 @@
 # 이미지를 이 호스트에 붙인다. 앱 환경변수는 이미지에 있으므로
-# 여기서 다시 적지 않는다 — 두 곳에 적으면 어긋난다.
+# 여기서 다시 적지 않는다 — 두 곳에 적으면 어긋난다. 예외는
+# Outline 연결값이다. 토큰이 시크릿이라 이미지에 구울 수 없다.
 services:
   app:
     build: .
@@ -7,6 +8,13 @@ services:
     container_name: notebooklm-st
     # 홈서버 사용자의 UID 가 1000 이 아니면 PUID/PGID 로 덮는다.
     user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      # 이미지에 굽지 않는다 — 토큰은 시크릿이다. 값은 배포
+      # 디렉터리의 compose 환경 파일에서 온다. 비어 있으면 앱은
+      # 뜨되 저장 버튼 자리에 안내가 나온다.
+      NOTEBOOKLM_ST_OUTLINE_URL: "${NOTEBOOKLM_ST_OUTLINE_URL:-}"
+      NOTEBOOKLM_ST_OUTLINE_TOKEN: "${NOTEBOOKLM_ST_OUTLINE_TOKEN:-}"
+      NOTEBOOKLM_ST_OUTLINE_COLLECTION: "${NOTEBOOKLM_ST_OUTLINE_COLLECTION:-}"
     ports:
       # 호스트 9004 → 컨테이너 8611. 홈 LAN 에만 연다.
       # 인터넷에 포워딩하지 않는다(스펙 6절).

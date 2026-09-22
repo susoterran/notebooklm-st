@@ -70,7 +70,12 @@ class RunResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class RunSummary:
-    """이력 목록에 한 줄로 보여 줄 실행 요약."""
+    """이력 목록에 한 줄로 보여 줄 실행 요약.
+
+    ``exported_at`` 이 채워져 있으면 이 실행은 Outline 으로 넘어갔고
+    로컬에는 링크만 남아 있다. 넷은 항상 함께 채워지거나 함께 비어
+    있다.
+    """
 
     id: int
     url: str
@@ -78,6 +83,10 @@ class RunSummary:
     title: str | None
     created_at: str
     answer_count: int
+    outline_id: str | None = None
+    outline_url: str | None = None
+    outline_title: str | None = None
+    exported_at: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
