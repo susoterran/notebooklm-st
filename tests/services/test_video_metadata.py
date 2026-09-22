@@ -139,6 +139,17 @@ def test_fetch_reports_a_timeout() -> None:
     assert "20초" in result.error
 
 
+def test_fetch_reports_a_launch_failure() -> None:
+    """자식 프로세스를 띄우지 못해도 예외가 새지 않는다."""
+    runner = fake_runner(FileNotFoundError("no such file"), [])
+
+    result = video_metadata.fetch(URL, runner=runner)
+
+    assert result.metadata is None
+    assert result.error is not None
+    assert "실행하지 못했습니다" in result.error
+
+
 def test_fetch_rejects_a_non_video_url() -> None:
     """영상 URL 이 아니면 프로세스를 띄우지 않는다."""
     calls: list[tuple[list[str], dict[str, object]]] = []
