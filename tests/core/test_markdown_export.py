@@ -34,18 +34,18 @@ def make_item(
 
 
 def test_to_markdown_opens_with_the_title_and_source() -> None:
-    """제목을 머리글로 두고 출처와 실행 시각을 잇는다."""
+    """Frontmatter 다음에 제목을 두고 출처와 실행 시각을 잇는다."""
     text = markdown_export.to_markdown(make_summary(), [make_item()])
-    lines = text.splitlines()
-    assert lines[0] == "# 어떻게 AI는 생각하는가"
-    assert "- 출처: https://youtu.be/dQw4w9WgXcQ" in lines
-    assert "- 실행: 2026-08-31T14:02:11" in lines
+    body = text.split("---\n", 2)[2]
+    lines = body.splitlines()
+    assert lines[1] == "# 어떻게 AI는 생각하는가"
 
 
 def test_to_markdown_falls_back_to_video_id_without_a_title() -> None:
     """제목이 없으면 영상 ID 를 머리글로 쓴다."""
     text = markdown_export.to_markdown(make_summary(title=None), [make_item()])
-    assert text.splitlines()[0] == "# dQw4w9WgXcQ"
+    body = text.split("---\n", 2)[2]
+    assert body.splitlines()[1] == "# dQw4w9WgXcQ"
 
 
 def test_to_markdown_writes_question_and_answer() -> None:
@@ -98,6 +98,97 @@ def test_to_markdown_ends_with_a_single_newline() -> None:
     text = markdown_export.to_markdown(make_summary(), [make_item()])
     assert text.endswith("\n")
     assert not text.endswith("\n\n")
+
+
+def test_to_markdown_writes_frontmatter_without_metadata() -> None:
+    """메타데이터가 없어도 title 과 url 은 나온다."""
+    text = markdown_export.to_markdown(make_summary(), [make_item()])
+    lines = text.splitlines()
+    assert lines[0] == "---"
+    assert lines[1] == 'title: "어떻게 AI는 생각하는가"'
+    assert lines[2] == "url: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert lines[3] == "---"
+
+
+def test_to_markdown_writes_all_metadata_keys() -> None:
+    """채널명과 업로드일자가 있으면 네 줄이 된다."""
+    metadata = models.VideoMetadata(
+        channel="안될공학", upload_date="2026-09-15"
+    )
+
+    text = markdown_export.to_markdown(make_summary(), [make_item()], metadata)
+
+    assert text.splitlines()[:6] == [
+        "---",
+        'title: "어떻게 AI는 생각하는가"',
+        'channel: "안될공학"',
+        "upload_date: 2026-09-15",
+        "url: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "---",
+    ]
+
+
+def test_to_markdown_omits_keys_without_values() -> None:
+    """값이 없는 키는 null 이 아니라 아예 빠진다."""
+    metadata = models.VideoMetadata(channel=None, upload_date="2026-09-15")
+
+    text = markdown_export.to_markdown(make_summary(), [make_item()], metadata)
+
+    assert "channel" not in text
+    assert "upload_date: 2026-09-15" in text
+
+
+def test_to_markdown_escapes_quotes_and_backslashes_in_the_title() -> None:
+    """제목의 따옴표와 역슬래시가 YAML 을 깨뜨리지 않는다."""
+    summary = make_summary(title='그는 "생각"한다 \\ 아마도')
+
+    text = markdown_export.to_markdown(summary, [make_item()])
+
+    assert text.splitlines()[1] == ('title: "그는 \\"생각\\"한다 \\\\ 아마도"')
+
+
+def test_to_markdown_strips_del_and_c1_controls_from_the_title() -> None:
+    """DEL 과 C1 제어문자도 YAML 스칼라에서 지워진다.
+
+    PyYAML 은 DEL(0x7f)과 C1(0x80-0x9f) 대부분을 인쇄 불가로 보아
+    ReaderError 를 던지고 0x85 는 줄바꿈으로 해석한다. 영상 제목은
+    제3자 문자열이라 이 범위가 섞여 들어올 수 있다.
+    """
+    summary = make_summary(title="제목\x7f안\x85녕")
+
+    text = markdown_export.to_markdown(summary, [make_item()])
+
+    title_line = text.splitlines()[1]
+    assert title_line == 'title: "제목안녕"'
+    assert "\x7f" not in title_line
+    assert "\x85" not in title_line
+
+
+def test_to_markdown_escapes_newlines_in_the_channel() -> None:
+    """개행이 든 값도 한 줄로 접힌다."""
+    metadata = models.VideoMetadata(channel="안될\n공학", upload_date=None)
+
+    text = markdown_export.to_markdown(make_summary(), [make_item()], metadata)
+
+    assert 'channel: "안될\\n공학"' in text
+
+
+def test_to_markdown_quotes_the_url_without_a_video_id() -> None:
+    """영상 ID 가 없는 옛 이력은 저장된 URL 을 따옴표로 감싼다."""
+    summary = make_summary(video_id="")
+
+    text = markdown_export.to_markdown(summary, [make_item()])
+
+    assert 'url: "https://youtu.be/dQw4w9WgXcQ"' in text
+
+
+def test_to_markdown_keeps_the_body_unchanged() -> None:
+    """Frontmatter 아래 본문은 출처 줄부터 그대로다."""
+    text = markdown_export.to_markdown(make_summary(), [make_item()])
+
+    assert "- 출처: https://youtu.be/dQw4w9WgXcQ" in text
+    assert "- 실행: 2026-08-31T14:02:11" in text
+    assert "## 핵심 주장" in text
 
 
 def test_to_filename_uses_the_title() -> None:

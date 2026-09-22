@@ -109,3 +109,61 @@ def test_connect_rejects_a_database_without_the_run_title(tmp_path) -> None:
     assert "runs" in str(excinfo.value)
     assert "title" in str(excinfo.value)
     assert "질문 템플릿" in str(excinfo.value)
+
+
+def test_connect_adds_run_metadata_to_an_older_database(tmp_path) -> None:
+    """run_metadata 가 없는 DB 는 거부되지 않고 테이블만 생긴다."""
+    db_path = tmp_path / "before_metadata.db"
+    raw = sqlite3.connect(db_path)
+    raw.executescript(
+        """
+        CREATE TABLE questions (
+            id         INTEGER PRIMARY KEY,
+            title      TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE runs (
+            id         INTEGER PRIMARY KEY,
+            url        TEXT NOT NULL,
+            video_id   TEXT NOT NULL,
+            title      TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE answers (
+            id             INTEGER PRIMARY KEY,
+            run_id         INTEGER NOT NULL REFERENCES runs(id)
+                           ON DELETE CASCADE,
+            question_title TEXT NOT NULL,
+            question_text  TEXT NOT NULL,
+            answer         TEXT,
+            citations      TEXT,
+            error          TEXT
+        );
+        """
+    )
+    raw.execute(
+        "INSERT INTO runs (id, url, video_id, title, created_at)"
+        " VALUES (1, 'https://youtu.be/dQw4w9WgXcQ', 'dQw4w9WgXcQ',"
+        " '옛 실행', '2026-09-01T10:00:00')"
+    )
+    raw.commit()
+    raw.close()
+
+    connection = store.connect(db_path)
+    try:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(run_metadata)")
+        }
+        survivor = connection.execute(
+            "SELECT title FROM runs WHERE id = 1"
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert columns == {"run_id", "channel", "upload_date"}
+    assert survivor["title"] == "옛 실행"

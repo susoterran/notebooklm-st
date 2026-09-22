@@ -16,9 +16,22 @@ RUN uv sync --frozen --no-dev --no-install-project
 # 인터프리터 경로를 절대 경로로 참조한다.
 FROM python:3.13-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
+# apt-get upgrade 로 베이스 태그가 다시 구워지기 전에 나온 보안 패치를
+# 받는다. 파이썬은 /usr/local 에 소스 빌드로 들어 있어 apt 가 건드리지
+# 않는다.
+#
+# pip·setuptools 는 지운다. 런타임은 아무것도 설치하지 않고, /app/.venv
+# 는 시스템 site-packages 를 보지 않으므로(venv 기본값) 앱에서 임포트
+# 되지도 않는다. 남겨 두면 쓰이지도 않는 코드가 취약점 스캔에만 걸린다.
+# pip 은 msgpack 을 vendoring 하므로 그것도 함께 사라진다.
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+           /usr/local/lib/python3.*/site-packages/setuptools* \
+           /usr/local/lib/python3.*/site-packages/pkg_resources \
+           /usr/local/bin/pip* \
  && groupadd -g 1000 app \
  && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin app
 COPY --from=builder /app/.venv /app/.venv

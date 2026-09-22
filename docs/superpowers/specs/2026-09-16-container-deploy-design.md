@@ -16,9 +16,10 @@ R1 이 앱에서 브라우저 로그인을 걷어내 컨테이너에서 뜰 수 
 R2 는 **실제로 띄운다.** 이미지를 굽고, 볼륨을 붙이고, 홈서버에서
 돌린다.
 
-왜 지금인가. 기획 `request_spec_2.md` 의 요구 5 — 즐겨찾기 채널을
-주기적으로 확인해 요약본을 자동 생성한다 — 는 **사람이 데스크톱을 켜
-두지 않아도 도는 서버** 없이는 성립하지 않는다. R3~R6 이 얹힐 바닥을
+왜 지금인가. 기획 문서
+`docs/requests/2026-09-16-summary-pipeline-v2.md` 의 요구 5 — 즐겨찾기
+채널을 주기적으로 확인해 요약본을 자동 생성한다 — 는 **사람이 데스크톱을
+켜 두지 않아도 도는 서버** 없이는 성립하지 않는다. R3~R6 이 얹힐 바닥을
 먼저 놓는 릴리스다.
 
 **소스 코드의 동작은 바꾸지 않는다.** `src/` 아래에서 손대는 것은
@@ -82,8 +83,13 @@ RUN uv sync --frozen --no-dev --no-install-project
 # ── runtime ────────────────────────────────────────────────
 FROM python:3.13-slim-bookworm
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+           /usr/local/lib/python3.*/site-packages/setuptools* \
+           /usr/local/lib/python3.*/site-packages/pkg_resources \
+           /usr/local/bin/pip* \
  && groupadd -g 1000 app \
  && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin app
 COPY --from=builder /app/.venv /app/.venv
@@ -149,6 +155,16 @@ uv 를 얹은 것이라 경로와 ABI 가 일치한다. 베이스를 갈아탈 �
 **비root `app`(UID/GID 1000).** 이 컨테이너는 계정 동등 자격증명을
 들고 있다. 홈서버 사용자의 UID 가 1000 이 아니면 5절의 `user:` 로
 덮는다(재빌드 불필요).
+
+**런타임에서 `pip`·`setuptools` 를 지우고 `apt-get upgrade` 를 돈다.**
+이 이미지는 아무것도 설치하지 않는다 — 의존성은 빌더가 만든
+`/app/.venv` 가 전부이고, 그 venv 는 시스템 site-packages 를 보지
+않으므로(venv 기본값) 베이스가 들고 온 `pip`·`setuptools` 는 앱에서
+임포트되지도 않는다. 쓰이지 않는 코드가 취약점 스캔에만 걸리므로
+지운다(`pip` 이 vendoring 하는 `msgpack` 도 함께 사라진다). OS 쪽은
+베이스 태그가 다시 구워지기 전에 나온 Debian 보안 패치를 받기 위해
+`apt-get upgrade` 를 돈다. 파이썬은 `/usr/local` 에 소스 빌드로 들어
+있어 apt 가 건드리지 않는다.
 
 **`PYTHONDONTWRITEBYTECODE=1`.** 루트 파일시스템을 읽기 전용으로
 걸기 때문에(5절) `/app/src` 옆에 `.pyc` 를 쓰려는 시도가 매 기동마다
@@ -435,6 +451,11 @@ amd64 라 홈서버가 ARM 이면 **아키텍처 고유 문제는 잡지 못한�
 
 5~8 번은 배포 절차서(9.1)에 체크리스트로 싣고 홈서버에서 한 번 돈다.
 
+이 표는 실제로 돌았다. 1~4 번은 빌드 워크플로가 통과하며 확인됐다 — dev
+그룹 설치도 CI 러너에서 문제없이 끝난다. 사람 몫은 홈서버에서 이미지를 직접
+빌드하고 컨테이너를 띄워 자격증명 반입까지 확인했다. 설계 시점에 모르던
+홈서버의 아키텍처·도커 버전·사용자 UID 는 이 실행으로 해소됐다.
+
 ---
 
 ## 11. 건드리는 파일
@@ -462,14 +483,6 @@ amd64 라 홈서버가 ARM 이면 **아키텍처 고유 문제는 잡지 못한�
 - **Streamlit 이 `HOME=/data` 아래 정확히 무엇을 쓰는지 확인하지
   않았다.** headless 라 이메일 프롬프트는 뜨지 않는다. 파일이 생기면
   볼륨에 남을 뿐 무해하다.
-- **홈서버의 아키텍처·도커 버전·사용자 UID 를 모른다.** 이미지를
-  홈서버에서 직접 빌드하므로 아키텍처는 문제되지 않고, UID 는
-  `PUID`/`PGID` 로 덮는다. 도커 버전이 아주 낮으면 `tmpfs:` 의 리스트
-  표기나 `compose` 서브커맨드가 안 먹을 수 있다.
-- **CI 러너에서 dev 그룹 설치가 성공하는지 확인하지 않았다.** dev
-  그룹의 `notebooklm-py[browser]` 는 playwright 파이썬 패키지를 끌어
-  오지만 브라우저 바이너리는 받지 않는다. R1 이 브라우저 로그인
-  테스트를 전부 지웠으므로 테스트가 브라우저를 띄우지 않는다.
 
 ---
 

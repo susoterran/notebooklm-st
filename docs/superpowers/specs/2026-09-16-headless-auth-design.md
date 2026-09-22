@@ -13,7 +13,8 @@
 
 ## 1. 왜 바꾸는가
 
-앱을 홈서버의 도커 컨테이너로 옮기기로 했다(기획 `request_spec_2.md`).
+앱을 홈서버의 도커 컨테이너로 옮기기로 했다
+(기획 `docs/requests/2026-09-16-summary-pipeline-v2.md`).
 그런데 지금 앱은 **인증이 만료되면 브라우저 창을 띄워 사람의 로그인을
 기다린다.**
 
@@ -207,6 +208,44 @@ import_cookie_payload   → notebooklm._app.login_cookie        (private)
 함수를 직접 부르면 private 의존이 2~3개 늘어난다. 7.2 가 **이미 있는 private
 의존 하나**(`_LoginRedirectError`)를 위험으로 다루고 방어 코드를 넣는 중이므로,
 여기에 더 얹지 않는다. **자식 프로세스로 공개 CLI 를 부른다.**
+
+### 2.9 반입 실패 출력에는 쿠키 값이 섞이지 않는다
+
+`import-cookies` 가 실패하면 그 stderr 가 `ImportResult.detail` 에 담겨(5.4)
+화면에 그대로 보인다(7.1). 설치된 `notebooklm-py` 소스를 읽어 그 문자열에
+자격증명이 들어가지 않음을 확인했다.
+
+- `notebooklm/_app/login_cookie.py:90` — 실패를 나르는
+  `BrowserCookieProbeFailure` 의 독스트링이 계약을 명시한다.
+  *"Cookie-probe failure without raw credential-bearing values"*
+- 같은 파일 `:311-320`(`EMPTY_REQUIRED`)과 `:366-372`(`REQUIRED_DROPPED`)의
+  실패 메시지는 쿠키 **이름**만 문자열에 넣는다(`empty_required`,
+  `outcome.missing_required`, `outcome.present_names`). `cookie["value"]` 는
+  존재 여부를 부울로만 검사하고 메시지에 이어 붙이지 않는다.
+- `notebooklm/cli/_cookie_import.py:44-45` — JSON 파싱 실패는
+  `f"Invalid JSON: {exc}"` 이고, `json.JSONDecodeError` 의 문자열 표현은
+  줄·열 위치만 담고 원문 내용은 담지 않는다.
+
+실패 경로 전체에서 화면에 닿는 문자열은 쿠키 이름과 파싱 위치뿐이다.
+`detail` 을 종료 코드로 다시 가공할 필요는 없다.
+
+### 2.10 컨테이너에서 실제로 동작한다
+
+설계대로 만든 이미지를 빌드하고 컨테이너를 띄워 확인했다.
+
+- **인증 판정이 실제 자격증명으로 개통된다.** 2.4 는 컨텍스트 객체가
+  만들어지는 것까지였다. 반입한 `storage_state.json` 으로 실제로 열리고
+  `is_authenticated()` 가 통과하는 것을 컨테이너에서 확인했다. 절차는
+  `docs/how-to/2026-09-16-auth-reseed.md` 다.
+- **런타임 이미지에 playwright 가 없다.** `uv sync --no-dev` 가 dev 그룹의
+  `[browser]` extras 를 빼고, 런타임 단계에 `uv` 자체를 넣지 않아 되살아날
+  경로도 없다. 다음이 `ModuleNotFoundError` 로 실패한다.
+
+  ```bash
+  docker compose run --rm app python -c "import playwright"
+  ```
+
+  `.github/workflows/build.yml` 이 게시 전 같은 것을 단언한다.
 
 ---
 
@@ -704,35 +743,15 @@ uv run pytest
 
 ## 12. 미검증 가정
 
+남은 둘은 **시간이 지나야 드러나는 종류**다. 코드 조사나 한 번의 실행으로
+확정할 수 없다.
+
 1. **쿠키 수명.** L1/L2 로 갱신되는 세션이 실제로 얼마나 버티는지는 코드로
    확정할 수 없다. 브라우저 로그인 세션과 같은 성질이라 몇 달일 수도, 구글이
    보안 이벤트(비밀번호 변경·비정상 접속)를 감지하면 며칠일 수도 있다.
    홈서버라 공인 IP 가 고정인 점은 유리하다. **재시드 절차와 명확한 만료
    안내가 이 불확실성에 대한 답이다.**
-2. **`is_authenticated()` 의 실제 개통.** 2.4 는 컨텍스트 객체가 만들어지는
-   것까지 확인했다. 실제 자격증명으로 여는 것은 확인하지 않았다. 다만 열기가
-   실패하면 매핑된 예외로 `False` 가 되므로 설계가 기대하는 동작과 같다.
-3. **`uv sync --no-dev` 가 playwright 를 확실히 뺀다는 것.** 구현 5단계에서
-   실제로 확인한다.
-4. ~~**`auth import-cookies` 의 실패 출력에 쿠키 값이 섞이지 않는다는
-   것.**~~ **검증 완료 (최종 리뷰, 2026-09-16).** 5.4 가 stderr 를
-   `ImportResult.detail` 에 담고 7.1 이 그것을 화면에 보여 준다. 설치된
-   `notebooklm-py` 소스를 직접 읽어 확인했다.
-   - `notebooklm/_app/login_cookie.py:90` — 실패를 나르는
-     `BrowserCookieProbeFailure` 의 독스트링이 이미
-     *"Cookie-probe failure without raw credential-bearing values"*
-     라고 계약을 명시한다.
-   - 같은 파일 `:311-320`(`EMPTY_REQUIRED`)과 `:366-372`
-     (`REQUIRED_DROPPED`)의 실패 메시지는 쿠키 **이름**
-     (`empty_required`, `outcome.missing_required`,
-     `outcome.present_names`)만 문자열에 넣는다. `cookie["value"]`
-     는 존재 여부를 부울로만 검사하고 메시지에 이어 붙이지 않는다.
-   - `notebooklm/cli/_cookie_import.py:44-45` — JSON 파싱 실패는
-     `f"Invalid JSON: {exc}"` 로, `json.JSONDecodeError` 의 문자열
-     표현은 줄·열 위치만 담고 원문 내용은 담지 않는다.
-   - 결론: 실패 경로 전체에서 화면에 닿는 문자열은 쿠키 이름과 파싱
-     위치뿐이다. `detail` 을 종료 코드로 다시 가공할 필요는 없다.
-5. **데스크톱 앱과 컨테이너 앱이 같은 프로필을 동시에 쓸 때.** 개발용으로
+2. **데스크톱 앱과 컨테이너 앱이 같은 프로필을 동시에 쓸 때.** 개발용으로
    데스크톱에서 앱을 띄우면 그 앱도 `~/.notebooklm/profiles/default/` 를 읽고
    **각자 쿠키를 회전시킨다.** 라이브러리가 락 파일 4개를 두지만 그것은 한
    파일 시스템 안의 이야기이고, 데스크톱과 홈서버는 별개다. 서로의 갱신을

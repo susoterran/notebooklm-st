@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS answers (
     citations      TEXT,
     error          TEXT
 );
+
+CREATE TABLE IF NOT EXISTS run_metadata (
+    run_id      INTEGER PRIMARY KEY REFERENCES runs(id)
+                ON DELETE CASCADE,
+    channel     TEXT,
+    upload_date TEXT
+);
 """
 
 # 이 프로젝트는 마이그레이션을 지원하지 않는다(의도된 결정). 예전
@@ -64,6 +71,7 @@ _EXPECTED_COLUMNS: dict[str, frozenset[str]] = {
             "error",
         }
     ),
+    "run_metadata": frozenset({"run_id", "channel", "upload_date"}),
 }
 
 
