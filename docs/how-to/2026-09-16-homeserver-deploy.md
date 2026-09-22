@@ -118,7 +118,48 @@ docker compose up -d
 셋 중 하나라도 비면 앱은 그대로 뜨고 이력 화면의 저장 버튼 자리에
 안내만 나온다.
 
-### 4.4 옛 DB 지우기
+**주소는 컨테이너 안에서 닿는 것이어야 한다.** `localhost` 는 쓸 수
+없다 — 컨테이너 안의 `localhost` 는 호스트가 아니라 그 컨테이너
+자신이다. Outline 이 같은 호스트에 있어도 마찬가지다. 호스트 주소나
+Outline 컨테이너 이름을 쓴다.
+
+의심스러우면 컨테이너 안에서 직접 확인한다. 이미지에 `curl` 이 없으므로
+앱이 쓰는 것과 같은 httpx 로 본다.
+
+```bash
+docker exec notebooklm-st python -c "
+import os, httpx
+u = os.environ['NOTEBOOKLM_ST_OUTLINE_URL']
+print(httpx.get(u, timeout=10).status_code)"
+```
+
+### 4.4 링크가 열리지 않으면 (선택)
+
+저장은 되는데 이력의 링크를 눌러 Outline 로그인 화면만 나온다면,
+**앱이 붙은 주소와 사용자의 세션이 있는 주소가 다르기 때문이다.**
+
+Outline 은 문서 URL 을 `/doc/…` 같은 상대 경로로 돌려주므로, 앱이 붙은
+주소가 그대로 링크 앞에 붙는다. 세션 쿠키는 Outline 의 정식 도메인에
+묶여 있어 다른 주소로 열면 인증이 안 된 상태가 된다.
+
+이때 링크에 적을 주소를 따로 준다.
+
+```bash
+cat >> .env <<'EOF'
+NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL=https://outline.example.com
+EOF
+docker compose up -d
+```
+
+이 변수는 **링크를 만들 때만** 쓰인다. API 호출은 계속
+`NOTEBOOKLM_ST_OUTLINE_URL` 로 나간다. 두 주소가 같아도 되고, 비워 두면
+연결 주소를 그대로 쓴다.
+
+**이미 저장된 문서의 링크는 소급되지 않는다.** DB 에 문자열로 박혀 있다.
+그 이력을 지우고 다시 저장하면 새 주소로 남는다(Outline 쪽 문서는 남으니
+거기서 따로 지운다).
+
+### 4.5 옛 DB 지우기
 
 R4 는 `runs` 테이블에 컬럼을 넷 더한다. 이 프로젝트는 마이그레이션을
 두지 않으므로 **R4 이전 `questions.db` 는 열리지 않는다.** 앱이 연결

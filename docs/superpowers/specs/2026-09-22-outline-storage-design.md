@@ -176,28 +176,50 @@ pages/history.py       제목 확인 · 인용 포함 결정 · 저장 · 결과
 URL_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_URL"
 TOKEN_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_TOKEN"
 COLLECTION_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_COLLECTION"
+PUBLIC_URL_ENV_VAR = "NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL"   # 선택
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class OutlineConfig:
-    """Outline 에 붙는 데 필요한 값 셋."""
+    """Outline 에 붙는 데 필요한 값들."""
 
-    base_url: str
+    base_url: str      # 앱이 API 를 부를 주소
+    public_url: str    # 사람이 브라우저로 열 주소
     token: str
     collection_id: str
 
 
 def config_from_env() -> OutlineConfig | None:
-    """환경변수에서 설정을 읽는다. 셋 다 있을 때만 설정으로 친다."""
+    """환경변수에서 설정을 읽는다. 필수 셋이 다 있을 때만 설정으로 친다."""
 ```
 
 이름은 `NOTEBOOKLM_ST_DB` 의 전례를 따른다.
 
-**부분 설정은 설정이 아니다.** 하나라도 비면 `None` 을 돌려주고, 화면은
-저장 버튼 대신 안내를 그린다. 토큰만 빠진 채로 호출해 401 을 맞는 것보다
-처음부터 못 한다고 말하는 편이 진단하기 쉽다.
+**부분 설정은 설정이 아니다.** 필수 셋 중 하나라도 비면 `None` 을
+돌려주고, 화면은 저장 버튼 대신 안내를 그린다. 토큰만 빠진 채로 호출해
+401 을 맞는 것보다 처음부터 못 한다고 말하는 편이 진단하기 쉽다.
 
-`base_url` 의 끝 슬래시는 여기서 한 번 떼어 둔다. 붙이고 떼는 일이 호출
+**공개 주소는 선택이다.** 비어 있으면 `base_url` 을 그대로 쓴다. 주소가
+하나뿐인 흔한 구성에서는 설정이 늘지 않고, 화면의 안내 문구도 필수 셋만
+나열한다.
+
+#### 왜 주소가 둘인가
+
+앱은 저장할 때 API 를 한 번 부르고, 문서 링크를 **문자열로 적어 둔다.**
+나중에 그 링크를 여는 것은 브라우저이지 앱이 아니다. 둘이 같은 주소로
+닿을 수 있으면 값 하나로 충분하다.
+
+실제 배포에서 그렇지 않은 구성을 만났다. Outline 이 공인 도메인으로
+서비스되는데 같은 호스트의 컨테이너가 그 도메인으로 되돌아 나가지
+못했다(NAT 헤어핀, `ConnectionRefusedError`). 앱을 호스트 주소로
+붙였더니 저장은 됐지만, 그 주소에는 사용자의 Outline 세션 쿠키가 없어
+링크를 누르면 `auth.info` 가 401 을 냈다. **한 주소로는 두 조건을 동시에
+만족할 수 없다.**
+
+붙는 곳과 사람이 여는 곳은 원래 다른 개념이다. 도커 레지스트리나 S3
+호환 스토리지가 내부 엔드포인트와 공개 엔드포인트를 따로 두는 것과 같다.
+
+끝 슬래시는 **양쪽 다** 여기서 한 번 떼어 둔다. 붙이고 떼는 일이 호출
 지점마다 흩어지면 `//api/…` 같은 URL 이 언젠가 나온다.
 
 ### 5.2 인터페이스
@@ -263,9 +285,11 @@ def create_document(
 
 `publish` 를 켠다. 끄면 초안으로 남아 컬렉션에서 보이지 않는다.
 
-응답에서 `data.id`·`data.title`·`data.url` 을 꺼낸다. `data.url` 이
-`/doc/…` 로 시작하는 상대 경로면 앞에 `base_url` 을 붙이고, `http` 로
-시작하면 그대로 쓴다(→ 13.1).
+응답에서 `data.id`·`data.title`·`data.url` 을 꺼낸다. `data.url` 은
+`/doc/…` 로 시작하는 **상대 경로다**(실측). 앞에 **`public_url`** 을
+붙인다 — 이 값이 곧 사람이 나중에 누를 주소가 되므로 연결 주소가 아니라
+공개 주소를 써야 한다(→ 5.1). `http` 로 시작하는 절대 URL 로 오는
+배포판이 있을 수 있어 그때는 그대로 쓴다.
 
 ### 5.4 실패
 
@@ -554,6 +578,8 @@ R1 스펙 §7.3 은 "R4 에서 이력이 Outline 을 읽게 되면 이 전제가
       NOTEBOOKLM_ST_OUTLINE_URL: "${NOTEBOOKLM_ST_OUTLINE_URL:-}"
       NOTEBOOKLM_ST_OUTLINE_TOKEN: "${NOTEBOOKLM_ST_OUTLINE_TOKEN:-}"
       NOTEBOOKLM_ST_OUTLINE_COLLECTION: "${NOTEBOOKLM_ST_OUTLINE_COLLECTION:-}"
+      # 선택. 링크에 적을 주소가 붙는 주소와 다를 때만 채운다(→ 5.1).
+      NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL: "${NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL:-}"
 ```
 
 빈 값이면 앱은 뜨되 저장 버튼 자리에 안내가 나온다. **기동을 막지
@@ -635,20 +661,21 @@ dependencies = [
 
 ## 13. 미검증 가정
 
-1. **`documents.create` 응답의 `data.url` 이 상대 경로다.** `/doc/제목-
-   슬러그` 형태로 본다. 절대 URL 로 오는 배포판이 있을 수 있어 `http` 로
-   시작하면 그대로 쓰도록 양쪽을 받는다. 첫 문서를 올린 뒤 이력에 남은
-   링크를 눌러 확인한다.
+남아 있는 것이 없다. 셋 다 실물로 확인했다.
 
 **해소된 가정.**
 
+- **`documents.create` 응답의 `data.url`** — **상대 경로가 맞다.**
+  `/doc/제목-슬러그` 형태로 온다. 그래서 앞에 붙이는 주소가 곧 사람이
+  누를 주소가 되고, 그 사실이 공개 주소를 따로 두게 만들었다(→ 5.1).
+  절대 URL 로 오는 배포판을 위한 분기는 대비로 남겨 둔다.
 - **Outline 의 frontmatter 렌더** — 틀렸다. "구분선과 맨 텍스트" 로
   볼 것이라 예측했으나 실물은 **H2 머리글 하나**였다. setext 헤딩
   규칙 때문이다. 메타데이터를 리스트로 바꿔 해소했다(→ 2.5, 7.2).
 - **홈서버 컨테이너에서 Outline 으로 나가는 요청** — 막히지 않는다.
   다만 컨테이너에서 **공인 도메인으로 되돌아 나가는 경로**(NAT
-  헤어핀)는 막혔다. 호스트 주소로 가리켜 해소했다. 배포 문서가 이
-  함정을 다룬다.
+  헤어핀)는 막혔다. 호스트 주소로 붙고 링크에는 공개 주소를 적어
+  해소했다. 배포 문서가 이 함정을 다룬다.
 
 ---
 
