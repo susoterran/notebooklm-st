@@ -205,6 +205,7 @@ def create_document(
     title: str,
     markdown: str,
     timeout: float = 20.0,
+    poster: PostLike = httpx.post,
 ) -> SavedDocument:
     """컬렉션에 문서를 하나 만든다.
 
@@ -213,6 +214,9 @@ def create_document(
             기대한 모양이 아닌 경우.
     """
 ```
+
+`poster` 는 `video_metadata.fetch(runner=subprocess.run)` 와 같은 주입
+구멍이다. 테스트가 가짜를 넣어 네트워크를 타지 않는다.
 
 **실패를 예외로 던진다.** `video_metadata.fetch` 는 실패를 값으로
 돌려주는데, 그것은 백그라운드 스레드에서 요약을 멈출 수 없기 때문이었다.
@@ -555,7 +559,7 @@ dependencies = [
 
 | 파일 | 무엇을 |
 |---|---|
-| `tests/services/test_outline.py` (신규) | `httpx.MockTransport` 로 가짜 응답. 성공 파싱, 상대·절대 URL 조립, 401·404·5xx·타임아웃이 각각 제 메시지의 `OutlineError` 가 되는지, 토큰이 예외 메시지에 안 새는지, `config_from_env` 의 부분 설정이 `None` 인지, 끝 슬래시가 붙은 주소로도 URL 이 바르게 만들어지는지 |
+| `tests/services/test_outline.py` (신규) | 주입한 `poster` 가 진짜 `httpx.Response` 를 돌려준다. 성공 파싱, 상대·절대 URL 조립, 401·404·5xx·타임아웃이 각각 제 메시지의 `OutlineError` 가 되는지, 토큰이 예외 메시지에 안 새는지, `config_from_env` 의 부분 설정이 `None` 인지, 끝 슬래시가 붙은 주소로도 URL 이 바르게 만들어지는지 |
 | `tests/services/test_run_history.py` | `mark_exported` 가 링크를 적고 `answers`·`run_metadata` 를 지우는지, 없는 ID 면 `ValueError` 인지, `list_runs` 가 저장 상태를 싣는지. `update_answer` 테스트 넷은 삭제 |
 | `tests/pages/test_history.py` | 미저장·저장됨 두 상태의 렌더, 저장 버튼이 `create_document` 와 `mark_exported` 를 순서대로 부르는지, `OutlineError` 면 로컬이 그대로인지, `mark_exported` 가 실패하면 문서 URL 이 메시지에 실리는지, 설정이 없으면 버튼이 없는지, 제목이 공백이면 막히는지 |
 | `tests/core/test_markdown_export.py` | 확인한 제목이 frontmatter 에 들어가는지, 본문에 `# 제목` 이 없는지, 출처 블록이 남는지. `to_filename` 테스트는 삭제 |
