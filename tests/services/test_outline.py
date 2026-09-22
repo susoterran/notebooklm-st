@@ -1,5 +1,8 @@
 """Outline 클라이언트 테스트."""
 
+import httpx
+import pytest
+
 from notebooklm_st.services import outline
 
 BASE_URL = "http://192.168.0.10:3000"
@@ -61,3 +64,99 @@ def test_config_drops_the_trailing_slash(monkeypatch) -> None:
 
     assert config is not None
     assert config.base_url == "http://192.168.0.10:3000"
+
+
+def make_config() -> outline.OutlineConfig:
+    """테스트용 설정."""
+    return outline.OutlineConfig(
+        base_url=BASE_URL, token=TOKEN, collection_id=COLLECTION
+    )
+
+
+def fake_poster(response, calls):
+    """호출 인자를 기록하고 준비된 응답을 돌려주는 poster 를 만든다."""
+
+    def post(url, **kwargs):
+        """httpx.post 를 대신한다."""
+        calls.append((url, kwargs))
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    return post
+
+
+def made(
+    url="/doc/ai-agents-abc123", doc_id="doc-1", title="AI 에이전트의 미래"
+):
+    """documents.create 가 돌려주는 200 응답을 만든다."""
+    return httpx.Response(
+        200,
+        json={"data": {"id": doc_id, "title": title, "url": url}},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+
+def test_create_document_posts_to_the_create_endpoint() -> None:
+    """주소·헤더·본문이 API 계약대로 나간다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    outline.create_document(
+        make_config(),
+        "AI 에이전트의 미래",
+        "# 본문",
+        poster=fake_poster(made(), calls),
+    )
+
+    url, kwargs = calls[0]
+    assert url == f"{BASE_URL}/api/documents.create"
+    assert kwargs["headers"]["Authorization"] == f"Bearer {TOKEN}"
+    assert kwargs["json"] == {
+        "title": "AI 에이전트의 미래",
+        "text": "# 본문",
+        "collectionId": COLLECTION,
+        "publish": True,
+    }
+    assert kwargs["timeout"] == outline.CREATE_TIMEOUT
+
+
+def test_create_document_returns_the_saved_document() -> None:
+    """응답에서 ID·제목·URL 을 꺼낸다."""
+    document = outline.create_document(
+        make_config(),
+        "AI 에이전트의 미래",
+        "# 본문",
+        poster=fake_poster(made(), []),
+    )
+
+    assert document.id == "doc-1"
+    assert document.title == "AI 에이전트의 미래"
+    assert document.url == f"{BASE_URL}/doc/ai-agents-abc123"
+
+
+def test_create_document_keeps_an_absolute_url_as_is() -> None:
+    """절대 URL 로 오는 배포판도 받는다(스펙 13.1)."""
+    document = outline.create_document(
+        make_config(),
+        "제목",
+        "# 본문",
+        poster=fake_poster(made(url="https://wiki.example.com/doc/x"), []),
+    )
+
+    assert document.url == "https://wiki.example.com/doc/x"
+
+
+def test_create_document_rejects_a_response_without_data() -> None:
+    """기대한 모양이 아니면 OutlineError 다."""
+    response = httpx.Response(
+        200,
+        json={"ok": True},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.create"),
+    )
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.create_document(
+            make_config(), "제목", "# 본문", poster=fake_poster(response, [])
+        )
+
+    assert "이해하지 못했습니다" in str(excinfo.value)
