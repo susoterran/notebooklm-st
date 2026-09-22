@@ -379,3 +379,26 @@ def test_export_can_leave_the_citations_out(app_db, monkeypatch) -> None:
     markdown = calls[0][2]
     assert "[1]" not in markdown
     assert "제안 문단" not in markdown
+
+
+def test_include_citations_defaults_on_for_each_run(app_db) -> None:
+    """체크박스 키가 실행별이라 다른 실행에서는 기본값(켬)으로 돌아온다.
+
+    한 키를 모든 실행이 같이 쓰면, 한 실행에서 꺼 둔 상태가 다른
+    실행을 고를 때도 그대로 남는다. 목록 순서는 최신순이라 두 번째로
+    저장한 실행이 먼저 선택된다.
+    """
+    run_history.save_run(
+        app_db, make_result(url="https://youtu.be/aaaaaaaaaaa")
+    )
+    run_history.save_run(
+        app_db, make_result(url="https://youtu.be/bbbbbbbbbbb")
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.checkbox[0].uncheck().run()
+    app.selectbox[0].select_index(1).run()
+
+    assert not app.exception
+    assert app.checkbox[0].value is True

@@ -16,8 +16,6 @@ _SELECTED_KEY = "history_selected"
 # 쓴다.
 _TITLE_MAX_CHARS = 60
 
-_INCLUDE_CITATIONS_KEY = "history_include_citations"
-
 # 위젯 키가 아니라 우리가 소유한 세션 키다. 위젯이 만들어진 뒤 그
 # 위젯의 키를 건드리면 Streamlit 이 예외를 던지므로, 삭제 후 상태를
 # 되돌리려면 우리 것이어야 한다.
@@ -61,7 +59,7 @@ def render() -> None:
     included = st.checkbox(
         "인용 포함",
         value=True,
-        key=_INCLUDE_CITATIONS_KEY,
+        key=f"history_include_{selected.id}",
         help="끄면 인용 번호와 인용 본문, 맨 아래 후속 제안을 뺀 채로"
         " 올립니다. 화면도 같은 상태로 보입니다.",
     )
