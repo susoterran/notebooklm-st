@@ -492,3 +492,33 @@ def test_export_reports_a_created_document_it_could_not_record(
     message = app.error[0].value
     assert "http://192.168.0.10:3000/doc/x" in message
     assert "둘이 됩니다" in message
+
+
+def test_exporting_an_older_run_redraws_that_same_run(
+    app_db, monkeypatch
+) -> None:
+    """저장한 실행이 링크 한 줄로 그 자리에 다시 그려진다.
+
+    선택이 최신 실행으로 튀면 저장이 실패한 것처럼 보인다. 사람이
+    같은 버튼을 다시 누르면 위키에 다른 요약이 하나 더 생기고 그
+    본문까지 로컬에서 사라진다.
+    """
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(outline, "create_document", fake_create([]))
+    older = run_history.save_run(
+        app_db, make_result(url="https://youtu.be/aaaaaaaaaaa")
+    )
+    run_history.save_run(
+        app_db, make_result(url="https://youtu.be/bbbbbbbbbbb")
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.selectbox[0].select_index(1).run()
+    app.button(key=f"history_export_{older}").click().run()
+
+    assert not app.exception
+    assert "Outline 에 저장됨" in app.success[0].value
+    links = app.get("link_button")
+    assert len(links) == 1
+    assert links[0].proto.id.endswith(f"history_open_{older}")

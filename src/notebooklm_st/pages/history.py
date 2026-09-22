@@ -37,14 +37,21 @@ def render() -> None:
         st.info("아직 저장된 실행이 없습니다.")
         return
 
-    selected = st.selectbox(
+    # 고른 값으로 요약 객체 자체를 담으면 저장 직후 선택이 풀린다.
+    # mark_exported 가 그 실행의 exported_at 과 answer_count 를 바꾸므로
+    # 다시 그릴 때 list_runs 가 같지 않은 새 dataclass 를 돌려주고,
+    # Streamlit 은 목록에 없는 값을 조용히 버리고 0번으로 되돌린다.
+    # ID 는 저장해도 그대로이므로 선택이 살아남는다.
+    by_id = {run.id: run for run in runs}
+    selected_id = st.selectbox(
         "실행 선택",
-        options=runs,
-        format_func=_format_run,
+        options=list(by_id),
+        format_func=lambda run_id: _format_run(by_id[run_id]),
         key=_SELECTED_KEY,
     )
-    if selected is None:
+    if selected_id is None:
         return
+    selected = by_id[selected_id]
     st.caption(selected.url)
     _render_delete(connection, selected)
     if selected.exported_at is not None:
