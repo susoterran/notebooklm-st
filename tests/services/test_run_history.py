@@ -164,48 +164,6 @@ def test_a_fresh_answer_item_has_no_id() -> None:
     assert item.id is None
 
 
-def test_update_answer_replaces_the_body(connection) -> None:
-    """저장된 답변 본문을 바꾼다."""
-    run_id = run_history.save_run(connection, make_result())
-    first = run_history.load_run_items(connection, run_id)[0]
-    assert first.id is not None
-
-    run_history.update_answer(connection, first.id, "고친 답변")
-
-    items = run_history.load_run_items(connection, run_id)
-    assert items[0].answer == "고친 답변"
-    assert items[0].citations == first.citations
-
-
-def test_update_answer_trims_whitespace(connection) -> None:
-    """앞뒤 공백은 지우고 저장한다."""
-    run_id = run_history.save_run(connection, make_result())
-    first = run_history.load_run_items(connection, run_id)[0]
-    assert first.id is not None
-
-    run_history.update_answer(connection, first.id, "  고친 답변  ")
-
-    assert run_history.load_run_items(connection, run_id)[0].answer == (
-        "고친 답변"
-    )
-
-
-def test_update_answer_rejects_an_empty_body(connection) -> None:
-    """답변을 비우는 것은 고치기가 아니므로 거부한다."""
-    run_id = run_history.save_run(connection, make_result())
-    first = run_history.load_run_items(connection, run_id)[0]
-    assert first.id is not None
-
-    with pytest.raises(ValueError):
-        run_history.update_answer(connection, first.id, "   ")
-
-
-def test_update_answer_rejects_an_unknown_id(connection) -> None:
-    """없는 답변을 고치려 하면 알린다."""
-    with pytest.raises(ValueError):
-        run_history.update_answer(connection, 999, "고친 답변")
-
-
 def test_delete_run_removes_its_answers_too(connection) -> None:
     """실행을 지우면 딸린 답변도 함께 사라진다."""
     run_id = run_history.save_run(connection, make_result())

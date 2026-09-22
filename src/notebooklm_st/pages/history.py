@@ -28,10 +28,8 @@ def render() -> None:
     """최근 실행을 고르고 그 답변들을 보여 준다.
 
     인용 숨기기 체크박스를 켜면 ``answer_text.for_display`` 가 만든
-    사본을 그리는데, 그 사본은 ``id`` 가 없어 편집 상자를 열 수 없는
-    모양이다. 그래서 체크박스가 켜진 동안에는 편집도 함께 잠긴다.
-    내려받기는 화면에 그리는 목록을 그대로 받으므로 이 상태를 따라
-    간다.
+    사본을 그린다. 내려받기는 화면에 그리는 목록을 그대로 받으므로
+    이 상태를 따라간다.
     삭제는 실수로 한 번에 지워지지 않도록 확인 버튼을 한 번 더
     거치는 2단계로 되어 있다(``_render_delete`` 참고).
     """
@@ -63,13 +61,7 @@ def render() -> None:
         items = [answer_text.for_display(item) for item in items]
     metadata = run_history.load_metadata(connection, selected.id)
     _render_download(selected, items, metadata)
-    if hidden:
-        answer_view.render_items(items)
-        return
-    answer_view.render_items(
-        items,
-        on_save=lambda answer_id, text: _save(connection, answer_id, text),
-    )
+    answer_view.render_items(items)
 
 
 def _render_download(
@@ -155,18 +147,3 @@ def _delete(connection: sqlite3.Connection, run_id: int) -> None:
 def _disarm() -> None:
     """적어 둔 삭제 대상을 지운다."""
     st.session_state.pop(_DELETE_ARMED_KEY, None)
-
-
-def _save(connection: sqlite3.Connection, answer_id: int, answer: str) -> None:
-    """고친 답변을 저장하고 화면을 다시 그린다.
-
-    저장 경로에는 필터를 거치지 않은 원문만 흐른다. 인용을 숨긴
-    동안에는 편집 상자 자체를 그리지 않으므로, 걸러진 본문이 여기까지
-    올 길이 없다.
-    """
-    try:
-        run_history.update_answer(connection, answer_id, answer)
-    except ValueError as error:
-        st.error(str(error))
-        return
-    st.rerun()

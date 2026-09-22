@@ -206,34 +206,6 @@ def mark_exported(
     connection.commit()
 
 
-def update_answer(
-    connection: sqlite3.Connection, answer_id: int, answer: str
-) -> None:
-    """저장된 답변 본문을 바꾼다.
-
-    본문만 바꾼다. 질문 제목·원문과 인용은 "무엇을 물어서 이 답이
-    나왔는가" 의 기록이므로 손대지 않는다.
-
-    Args:
-        connection: 열린 커넥션.
-        answer_id: 바꿀 답변의 ID.
-        answer: 새 본문. 앞뒤 공백은 지운다.
-
-    Raises:
-        ValueError: 본문이 비었거나 그 ID 의 답변이 없는 경우.
-    """
-    stripped = answer.strip()
-    if not stripped:
-        raise ValueError("답변을 비울 수 없습니다.")
-    cursor = connection.execute(
-        "UPDATE answers SET answer = ? WHERE id = ?",
-        (stripped, answer_id),
-    )
-    if cursor.rowcount == 0:
-        raise ValueError(f"답변 {answer_id} 을 찾을 수 없습니다.")
-    connection.commit()
-
-
 def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
     """실행 하나를 이력에서 지운다. 이미 없으면 조용히 넘어간다.
 
