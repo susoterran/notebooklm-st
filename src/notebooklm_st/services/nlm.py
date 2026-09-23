@@ -8,10 +8,23 @@ from typing import Protocol, cast
 import notebooklm
 from notebooklm import exceptions
 
-from notebooklm_st.core import errors, models, youtube
+from notebooklm_st.core import (
+    answer_text,
+    digest_title,
+    errors,
+    models,
+    youtube,
+)
 
 SOURCE_WAIT_TIMEOUT = 120.0
 TEMP_TITLE_PREFIX = "tmp-"
+DIGEST_SOURCE_LIMIT = 10
+"""정리본 하나에 넣을 수 있는 최대 재료 수.
+
+소스 하나에 최대 ``SOURCE_WAIT_TIMEOUT`` 초를 기다리므로 이 수가 곧
+최악의 대기 시간이다(10건이면 약 20분). 화면이 이 상한으로 선택을
+막는다.
+"""
 
 
 class ReferenceLike(Protocol):
@@ -92,6 +105,18 @@ class SourcesLike(Protocol):
         wait_timeout: float,
     ) -> SourceLike:
         """URL 소스를 노트북에 추가하고 그 소스를 돌려준다."""
+        ...
+
+    async def add_text(
+        self,
+        notebook_id: str,
+        title: str,
+        content: str,
+        *,
+        wait: bool,
+        wait_timeout: float,
+    ) -> SourceLike:
+        """텍스트 소스를 노트북에 추가하고 그 소스를 돌려준다."""
         ...
 
 
@@ -197,6 +222,81 @@ async def run_pipeline(
         items=tuple(items),
         title=title,
     )
+
+
+async def run_digest_pipeline(
+    sources: Sequence[models.DigestSource],
+    instruction: str,
+    on_progress: Callable[[str], None],
+    client_factory: ClientFactory = default_client_factory,
+) -> tuple[str | None, str]:
+    """재료 여러 편을 넣고 정리 지시를 한 번 던진다.
+
+    ``run_pipeline`` 과 대칭이다 — 임시 노트북을 만들어 쓰고 반드시
+    지운다. 다른 점은 소스가 여럿이고 질문이 하나라는 것뿐이다.
+
+    지시에는 제목 요구가 함께 실려 나가고(→ ``core.digest_title``)
+    돌아온 답변에서 그 줄을 떼어 주제로 돌려준다. 질의를 두 번
+    던지지 않는다.
+
+    Args:
+        sources: 노트북에 넣을 글들. 상한은 호출자가 지킨다
+            (``DIGEST_SOURCE_LIMIT``).
+        instruction: 던질 정리 지시.
+        on_progress: 진행 문구를 받는 콜백.
+        client_factory: 클라이언트 컨텍스트를 여는 팩토리. 테스트가
+            가짜 클라이언트를 넣을 수 있게 뚫어 둔다.
+
+    Returns:
+        ``(주제, 본문)``. 둘 다 인용 흔적을 걷어낸 값이며, 답변이
+        제목 줄을 주지 않았으면 주제가 ``None`` 이다.
+
+    Raises:
+        exceptions.NotebookLMError: 노트북 생성·소스 등록·질의 중
+            어느 단계든 실패한 경우. 정리는 질문이 하나뿐이라 부분
+            성공이 없다.
+    """
+    async with client_factory() as client:
+        on_progress("임시 노트북 생성 중")
+        notebook = await client.notebooks.create(
+            f"{TEMP_TITLE_PREFIX}{uuid.uuid4().hex[:8]}"
+        )
+        try:
+            total = len(sources)
+            for index, source in enumerate(sources, start=1):
+                on_progress(
+                    f"소스 {index}/{total} 등록 중"
+                    f" (최대 {int(SOURCE_WAIT_TIMEOUT)}초)"
+                )
+                await client.sources.add_text(
+                    notebook.id,
+                    source.title,
+                    source.text,
+                    wait=True,
+                    wait_timeout=SOURCE_WAIT_TIMEOUT,
+                )
+            on_progress("정리 중")
+            result = await client.chat.ask(
+                notebook.id, digest_title.wrap(instruction)
+            )
+        finally:
+            # run_pipeline 과 같은 이유로 여기서 on_progress 를 부르지
+            # 않는다. 콜백이 Streamlit 을 건드리는데, 사용자가 페이지를
+            # 옮긴 순간 스크립트가 중단되어 삭제에 닿지 못한다.
+            await client.notebooks.delete(notebook.id)
+
+    # 제목 줄을 **먼저** 떼어낸다. 후속 제안 블록을 자르는 규칙은
+    # 마지막 수평선을 기준으로 하므로, 답변이 제목 줄 뒤에 수평선을
+    # 두면 그 규칙이 본문 전체를 잘라낸다.
+    topic, body = digest_title.split(result.answer)
+    # 인용 번호는 임시 노트북 안에서만 뜻이 있다. 노트북이 지워진
+    # 뒤에도 위키에 남으면 아무 데도 가리키지 않는 숫자가 된다.
+    cleaned = answer_text.strip_citation_markers(
+        answer_text.strip_trailing_block(body)
+    )
+    if topic is not None:
+        topic = answer_text.strip_citation_markers(topic).strip() or None
+    return topic, cleaned
 
 
 async def list_temp_notebooks(

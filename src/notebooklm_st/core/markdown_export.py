@@ -8,7 +8,7 @@
 import re
 from collections.abc import Sequence
 
-from notebooklm_st.core import models
+from notebooklm_st.core import models, youtube
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 """메타데이터 값에서 지울 제어문자.
@@ -17,7 +17,7 @@ C0(``\\x00-\\x1f``)뿐 아니라 DEL(``\\x7f``)과 C1(``\\x80-\\x9f``)
 범위도 포함한다. 영상 제목은 제3자 문자열이라 이 범위가 섞여 들어올
 수 있는데, ``\\x85``(NEL) 같은 것은 읽는 쪽에 따라 줄바꿈으로
 해석되어 리스트 항목을 두 동강 낸다. 탭·개행·캐리지리턴은 공백으로
-접어 살리므로 여기서 뺀다(→ ``_one_line``).
+접어 살리므로 여기서 뺀다(→ ``one_line``).
 """
 
 _WHITESPACE = re.compile(r"\s+")
@@ -79,9 +79,9 @@ def _metadata_block(
     Returns:
         ``- 라벨: 값`` 꼴의 마크다운 리스트.
     """
-    lines = [f"- 제목: {_one_line(title)}"]
+    lines = [f"- 제목: {one_line(title)}"]
     if metadata is not None and metadata.channel:
-        lines.append(f"- 채널: {_one_line(metadata.channel)}")
+        lines.append(f"- 채널: {one_line(metadata.channel)}")
     if metadata is not None and metadata.upload_date:
         lines.append(f"- 업로드 일자: {metadata.upload_date}")
     lines.append(f"- 영상 URL: {_source_url(summary)}")
@@ -96,16 +96,25 @@ def _source_url(summary: models.RunSummary) -> str:
     이력만 원문을 쓴다.
     """
     if summary.video_id:
-        return f"https://www.youtube.com/watch?v={summary.video_id}"
-    return _one_line(summary.url)
+        return youtube.watch_url(summary.video_id)
+    return one_line(summary.url)
 
 
-def _one_line(value: str) -> str:
+def one_line(value: str) -> str:
     """리스트 항목 하나에 안전하게 들어갈 한 줄로 만든다.
 
     제어문자를 지우고 남은 공백류를 공백 하나로 접는다. 개행이 그대로
     남으면 리스트 항목이 두 동강 나고, 뒤쪽 줄은 리스트 밖의 문단이
     되어 버린다.
+
+    정리본도 같은 규칙을 써야 하므로 공개한다. 두 벌로 갈라지면
+    한쪽만 고쳐진다.
+
+    Args:
+        value: 다듬을 값.
+
+    Returns:
+        한 줄로 접은 값.
     """
     return _WHITESPACE.sub(" ", _CONTROL.sub("", value)).strip()
 

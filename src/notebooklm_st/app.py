@@ -20,7 +20,9 @@ import streamlit as st
 from notebooklm_st.components import auth_gate, schema_gate
 from notebooklm_st.pages import (
     ask,
+    channels,
     dashboard,
+    digest,
     history,
     maintenance,
     question_admin,
@@ -41,6 +43,7 @@ def main() -> None:
     navigation = st.navigation(
         [
             st.Page(ask.render, title="질의", url_path="ask", default=True),
+            st.Page(channels.render, title="채널", url_path="channels"),
             st.Page(dashboard.render, title="실행 현황", url_path="dashboard"),
             st.Page(
                 question_admin.render,
@@ -48,6 +51,7 @@ def main() -> None:
                 url_path="questions",
             ),
             st.Page(history.render, title="이력", url_path="history"),
+            st.Page(digest.render, title="정리본", url_path="digest"),
             st.Page(maintenance.render, title="정리", url_path="maintenance"),
         ]
     )

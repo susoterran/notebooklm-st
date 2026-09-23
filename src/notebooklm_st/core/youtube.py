@@ -68,6 +68,22 @@ def is_valid(url: str) -> bool:
     return extract_video_id(url) is not None
 
 
+def watch_url(video_id: str) -> str:
+    """영상 ID 로 정규 시청 URL 을 짓는다.
+
+    저장된 원문 URL 에는 재생목록·추적 파라미터가 붙어 있을 수 있다.
+    문서에 적을 링크와 화면에 보여 줄 링크가 같은 모양이어야 하므로
+    ID 로 다시 짓는다.
+
+    Args:
+        video_id: 11자리 영상 ID.
+
+    Returns:
+        ``https://www.youtube.com/watch?v=<ID>`` 형식의 URL.
+    """
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def _validated(candidate: str) -> str | None:
     """11자리 영상 ID 형식이면 그대로, 아니면 ``None`` 을 돌려준다."""
     return candidate if _VIDEO_ID_PATTERN.match(candidate) else None

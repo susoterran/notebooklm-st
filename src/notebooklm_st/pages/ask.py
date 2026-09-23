@@ -47,11 +47,18 @@ def render() -> None:
         st.info(
             "이미 실행 중인 작업이 있습니다. 실행 현황 화면에서 확인하세요."
         )
+    digesting = session.get_digest_registry().is_running()
+    if digesting:
+        st.info(
+            "정리본을 작성 중입니다. 둘이 같은 자격증명으로 NotebookLM"
+            " 을 동시에 쓰지 않도록 막았습니다. 정리본 화면에서 완료를"
+            " 확인하세요."
+        )
 
     if st.button(
         "실행",
         key="ask_run",
-        disabled=busy or not (url_ok and selected),
+        disabled=busy or digesting or not (url_ok and selected),
     ):
         runner.start_run(registry, url, selected, store.default_db_path())
         st.success("실행을 시작했습니다. 실행 현황 화면에서 확인하세요.")

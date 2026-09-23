@@ -1,6 +1,7 @@
 """화면과 저장소가 함께 쓰는 값 객체."""
 
 import dataclasses
+import datetime
 import json
 from collections.abc import Sequence
 
@@ -14,6 +15,34 @@ class Question:
     text: str
     created_at: str
     updated_at: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Channel:
+    """구독 중인 채널 하나."""
+
+    id: int
+    channel_id: str
+    """``UC`` 로 시작하는 YouTube 채널 ID."""
+    title: str
+    url: str
+    baseline: str
+    """``YYYY-MM-DD``. 이 날짜 이후 업로드만 신규로 본다."""
+    created_at: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FeedEntry:
+    """채널 피드의 항목 하나.
+
+    채널이 어느 것인지는 담지 않는다. 호출자가 채널마다 따로 읽어
+    쓰므로 중복이 된다.
+    """
+
+    video_id: str
+    title: str
+    published: datetime.datetime
+    """타임존이 붙은 시각. 피드가 UTC 로 준다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -99,6 +128,41 @@ class VideoMetadata:
 
     channel: str | None
     upload_date: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DigestSource:
+    """정리 파이프라인에 넣을 글 한 편.
+
+    이 글이 위키에서 왔다는 사실은 담지 않는다. ``services.nlm`` 은
+    재료의 출처를 몰라도 되고, 몰라야 Outline 과 엮이지 않는다.
+    """
+
+    title: str
+    text: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DigestDraft:
+    """아직 저장하지 않은 정리본.
+
+    로컬 DB 에 남지 않는다. 화면이 세션에 들고 있다가 저장하면
+    Outline 이 정본이 되고, 버리면 그대로 사라진다.
+
+    ``sources`` 는 재료가 된 실행들이다. 저장할 문서에 출처 링크를
+    적는 데 쓴다.
+    """
+
+    body: str
+    sources: tuple[RunSummary, ...]
+    instruction: str
+    created_on: str
+    """``2026-09-23`` 형식의 날짜. 문서에 적고, 주제를
+    받지 못했을 때 제목 기본값에도 쓴다."""
+    topic: str | None = None
+    """NotebookLM 이 정리와 함께 지은 주제. 제목
+    기본값이 된다. 답변이 제목 줄을 주지 않으면
+    ``None`` 이다(→ ``core.digest_title``)."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

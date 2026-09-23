@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from notebooklm_st.services import store
+from notebooklm_st.services import channels, store
 
 
 def test_default_db_path_honors_env_override(monkeypatch, tmp_path) -> None:
@@ -221,3 +221,27 @@ def test_connect_rejects_a_database_without_the_outline_columns(
         store.connect(db_path)
     assert "runs" in str(excinfo.value)
     assert "exported_at" in str(excinfo.value)
+
+
+def test_a_database_without_channels_still_opens(tmp_path) -> None:
+    """Channels 가 없는 옛 DB 도 그대로 열린다.
+
+    새 테이블은 CREATE TABLE IF NOT EXISTS 가 만들어 주므로 사용자가
+    questions.db 를 지울 필요가 없다. 기존 테이블에 컬럼을 더할 때만
+    삭제가 강제된다.
+    """
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE questions ("
+        " id INTEGER PRIMARY KEY, title TEXT NOT NULL, text TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+    )
+    old.commit()
+    old.close()
+
+    connection = store.connect(path)
+    try:
+        assert channels.list_channels(connection) == []
+    finally:
+        connection.close()

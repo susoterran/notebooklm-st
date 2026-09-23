@@ -4,6 +4,7 @@ from notebooklm import exceptions
 from notebooklm._auth import extraction as auth_extraction
 from streamlit.testing import v1
 
+from notebooklm_st import session
 from notebooklm_st.core import models
 from notebooklm_st.services import nlm
 
@@ -155,3 +156,33 @@ def test_delete_maps_login_redirect_to_message(app_db, monkeypatch) -> None:
 
     assert not app.exception
     assert len(app.error) == 1
+
+
+def test_delete_is_blocked_while_digesting(app_db) -> None:
+    """정리본 작성 중에는 임시 노트북을 지우지 못한다.
+
+    정리도 tmp- 노트북을 쓰므로, 여기서 지우면 진행 중인 작성이
+    깨진다.
+    """
+    session.get_digest_registry().start()
+
+    def script():
+        import streamlit as st
+
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import maintenance
+
+        st.session_state["maintenance_notebooks"] = [
+            models.TempNotebook(id="nb-1", title="tmp-abc12345"),
+        ]
+        st.session_state["maintenance_confirm"] = True
+        maintenance.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert any("정리본" in element.value for element in app.warning)
+    delete = [
+        button for button in app.button if button.label.endswith("모두 삭제")
+    ]
+    assert delete[0].disabled is True

@@ -75,7 +75,7 @@ def fetch(
                 "yt_dlp",
                 "--no-playlist",
                 "-J",
-                f"https://www.youtube.com/watch?v={video_id}",
+                youtube.watch_url(video_id),
             ],
             capture_output=True,
             timeout=timeout,

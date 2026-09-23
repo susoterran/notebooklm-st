@@ -383,3 +383,37 @@ def test_mark_exported_rolls_back_a_failed_delete(connection) -> None:
 
     assert run_history.list_runs(connection)[0].exported_at is None
     assert len(run_history.load_run_items(connection, run_id)) == 2
+
+
+def test_list_video_ids_returns_saved_ids(connection) -> None:
+    """저장된 영상 ID 를 모두 돌려준다."""
+    run_history.save_run(connection, make_result(title="하나"))
+
+    assert run_history.list_video_ids(connection) == {"dQw4w9WgXcQ"}
+
+
+def test_list_video_ids_drops_empty_ids(connection) -> None:
+    """ID 를 못 뽑은 옛 실행의 빈 문자열은 빠진다.
+
+    빈 문자열이 집합에 섞이면 ID 가 빈 피드 항목과 엉뚱하게
+    맞부딪힌다.
+    """
+    run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://example.com/not-youtube",
+            video_id="",
+            title="옛 실행",
+            items=(),
+        ),
+    )
+
+    assert run_history.list_video_ids(connection) == set()
+
+
+def test_list_video_ids_deduplicates(connection) -> None:
+    """같은 영상을 두 번 요약해도 하나로 온다."""
+    for _ in range(2):
+        run_history.save_run(connection, make_result(title="둘"))
+
+    assert run_history.list_video_ids(connection) == {"dQw4w9WgXcQ"}

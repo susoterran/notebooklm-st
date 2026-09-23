@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS run_metadata (
     channel     TEXT,
     upload_date TEXT
 );
+
+CREATE TABLE IF NOT EXISTS channels (
+    id         INTEGER PRIMARY KEY,
+    channel_id TEXT NOT NULL UNIQUE,
+    title      TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    baseline   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 # 이 프로젝트는 마이그레이션을 지원하지 않는다(의도된 결정). 예전
@@ -88,6 +97,9 @@ _EXPECTED_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "run_metadata": frozenset({"run_id", "channel", "upload_date"}),
+    "channels": frozenset(
+        {"id", "channel_id", "title", "url", "baseline", "created_at"}
+    ),
 }
 
 
