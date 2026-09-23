@@ -109,6 +109,34 @@ def update_baseline(
         raise ValueError(f"채널 {channel_pk} 을 찾을 수 없습니다.")
 
 
+def update_title(
+    connection: sqlite3.Connection, channel_pk: int, title: str
+) -> None:
+    """채널명을 바꾼다.
+
+    등록할 때 yt-dlp 가 준 이름이 길거나 사람이 부르는 이름과 다를 수
+    있다. 화면 목록은 이 이름으로 정렬되므로 고칠 수 있어야 한다.
+
+    Args:
+        connection: 열린 커넥션.
+        channel_pk: 바꿀 채널의 행 ID.
+        title: 새 채널명.
+
+    Raises:
+        ValueError: 이름이 공백뿐이거나 그 채널이 없는 경우.
+    """
+    stripped = title.strip()
+    if not stripped:
+        raise ValueError("채널명 값이 비어 있습니다.")
+    cursor = connection.execute(
+        "UPDATE channels SET title = ? WHERE id = ?",
+        (stripped, channel_pk),
+    )
+    connection.commit()
+    if cursor.rowcount == 0:
+        raise ValueError(f"채널 {channel_pk} 을 찾을 수 없습니다.")
+
+
 def delete_channel(connection: sqlite3.Connection, channel_pk: int) -> None:
     """채널을 지운다. 이미 없으면 조용히 넘어간다.
 

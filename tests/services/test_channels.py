@@ -115,3 +115,37 @@ def test_delete_channel_removes_it(connection) -> None:
 def test_deleting_a_missing_channel_is_quiet(connection) -> None:
     """이미 없는 채널을 지워도 예외가 아니다."""
     channels.delete_channel(connection, 999)
+
+
+def test_update_title_changes_the_name(connection) -> None:
+    """채널명을 고칠 수 있다."""
+    saved = add(connection)
+
+    channels.update_title(connection, saved.id, "새 이름")
+
+    assert channels.list_channels(connection)[0].title == "새 이름"
+
+
+def test_update_title_trims_surrounding_space(connection) -> None:
+    """앞뒤 공백은 지우고 저장한다."""
+    saved = add(connection)
+
+    channels.update_title(connection, saved.id, "  새 이름  ")
+
+    assert channels.list_channels(connection)[0].title == "새 이름"
+
+
+def test_update_title_rejects_a_blank_name(connection) -> None:
+    """공백뿐인 채널명은 저장하지 않는다."""
+    saved = add(connection)
+
+    with pytest.raises(ValueError):
+        channels.update_title(connection, saved.id, "   ")
+
+    assert channels.list_channels(connection)[0].title == "어떤 채널"
+
+
+def test_update_title_rejects_an_unknown_channel(connection) -> None:
+    """없는 채널의 이름은 고칠 수 없다."""
+    with pytest.raises(ValueError):
+        channels.update_title(connection, 999, "새 이름")
