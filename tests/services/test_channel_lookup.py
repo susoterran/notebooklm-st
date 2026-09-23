@@ -63,6 +63,26 @@ def test_lookup_asks_for_only_one_entry():
     assert seen["argv"][-1] == HANDLE_URL
 
 
+def test_a_dash_leading_url_is_not_read_as_an_option():
+    """`-` 로 시작하는 입력이 yt-dlp 옵션으로 해석되지 않는다.
+
+    `--` 구분자가 없으면 `--batch-file=...` 같은 입력이 옵션으로 먹혀
+    로컬 파일 내용이 실패 사유에 섞여 화면으로 새어 나온다.
+    """
+    seen = {}
+
+    def runner(argv, **kwargs):
+        """넘어온 명령줄을 기록한다."""
+        seen["argv"] = argv
+        return completed()
+
+    channel_lookup.lookup("--batch-file=/etc/hostname", runner=runner)
+
+    argv = seen["argv"]
+    assert argv[-1] == "--batch-file=/etc/hostname"
+    assert argv[-2] == "--"
+
+
 def test_a_url_without_a_channel_is_refused():
     """채널 ID 가 없으면 채널 URL 이 아니라고 말한다."""
     payload = json.dumps({"_type": "video", "id": "abc"}).encode("utf-8")

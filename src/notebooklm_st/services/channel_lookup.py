@@ -73,6 +73,10 @@ def lookup(
                 "-J",
                 "--playlist-end",
                 "1",
+                # 사용자가 넣은 문자열이 여기로 온다. `--` 뒤는 optparse
+                # 가 전부 위치 인자로 읽으므로, `-` 로 시작하는 입력이
+                # yt-dlp 옵션으로 해석되는 길을 막는다.
+                "--",
                 cleaned,
             ],
             capture_output=True,
