@@ -6,7 +6,7 @@ import pytest
 from streamlit.testing import v1
 
 from notebooklm_st.core import models, youtube
-from notebooklm_st.services import outline, run_history
+from notebooklm_st.services import nlm, outline, run_history
 
 BASE_URL = "http://192.168.0.10:3000"
 TOKEN = "ol_api_secret_value"
@@ -172,3 +172,30 @@ def test_start_hands_the_selection_to_the_runner(
     assert len(summaries) == 1
     assert summaries[0].outline_id == "doc-1"
     assert received["instruction"] == digest_page.DEFAULT_INSTRUCTION
+
+
+def test_too_many_materials_blocks_the_start(app_db, outline_env) -> None:
+    """재료가 상한을 넘으면 경고가 뜨고 시작할 수 없다."""
+    for index in range(nlm.DIGEST_SOURCE_LIMIT + 1):
+        save_exported(
+            app_db,
+            document_title=f"강의 {index}",
+            document_id=f"doc-{index}",
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect[0].set_value(app.multiselect[0].options).run()
+
+    assert app.button[0].disabled is True
+    assert len(app.warning) == 1
+
+
+def test_blank_instruction_blocks_the_start(app_db, outline_env) -> None:
+    """정리 지시가 공백뿐이면 시작할 수 없다."""
+    save_exported(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect[0].select(app.multiselect[0].options[0]).run()
+    app.text_area[0].set_value("   ").run()
+
+    assert app.button[0].disabled is True
