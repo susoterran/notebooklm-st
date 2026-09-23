@@ -7,14 +7,10 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
-from notebooklm_st.core import answer_text, markdown_export, models
+from notebooklm_st.core import answer_text, labels, markdown_export, models
 from notebooklm_st.services import outline, run_history
 
 _SELECTED_KEY = "history_selected"
-
-# 목록은 한 줄로 읽혀야 값을 한다. 질문 관리 화면과 같은 상한을
-# 쓴다.
-_TITLE_MAX_CHARS = 60
 
 # 위젯 키가 아니라 우리가 소유한 세션 키다. 위젯이 만들어진 뒤 그
 # 위젯의 키를 건드리면 Streamlit 이 예외를 던지므로, 삭제 후 상태를
@@ -89,21 +85,10 @@ def _format_run(run: models.RunSummary) -> str:
     아니라 문서 제목을 쓴다.
     """
     if run.exported_at is not None:
-        label = _shorten(run.outline_title or run.video_id)
+        label = labels.shorten(run.outline_title or run.video_id)
         return f"{label} · {run.created_at} · 문서"
-    label = _shorten(run.title) if run.title else run.video_id
+    label = labels.shorten(run.title) if run.title else run.video_id
     return f"{label} · {run.created_at} · 미저장 · 답변 {run.answer_count}건"
-
-
-def _shorten(title: str) -> str:
-    """목록 한 줄에 들어가도록 제목을 자른다.
-
-    자르기는 라벨을 만드는 이 자리에서만 한다. 저장된 제목은 그대로
-    둔다.
-    """
-    if len(title) <= _TITLE_MAX_CHARS:
-        return title
-    return f"{title[: _TITLE_MAX_CHARS - 1]}…"
 
 
 def _render_delete(

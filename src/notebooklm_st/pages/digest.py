@@ -3,16 +3,13 @@
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.core import models
+from notebooklm_st.core import labels, models
 from notebooklm_st.services import digest_runner, nlm, outline, run_history
 
 _SELECTED_KEY = "digest_selected"
 _INSTRUCTION_KEY = "digest_instruction"
 
 _POLL_INTERVAL = "1s"
-
-# 목록 한 줄의 상한. 이력 화면과 같은 값을 쓴다.
-_TITLE_MAX_CHARS = 60
 
 DEFAULT_INSTRUCTION = (
     "아래 문서들은 각각 다른 영상의 요약본이다. 공통된 주장과"
@@ -138,11 +135,4 @@ def _format_run(run: models.RunSummary) -> str:
     그것이다.
     """
     label = run.outline_title or run.title or run.video_id
-    return f"{_shorten(label)} · {run.created_at}"
-
-
-def _shorten(title: str) -> str:
-    """목록 한 줄에 들어가도록 제목을 자른다."""
-    if len(title) <= _TITLE_MAX_CHARS:
-        return title
-    return f"{title[: _TITLE_MAX_CHARS - 1]}…"
+    return f"{labels.shorten(label)} · {run.created_at}"
