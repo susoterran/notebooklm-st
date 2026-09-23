@@ -263,6 +263,14 @@ def _read_status_message(status: int) -> str:
     먼저 의심하게 하는데, 그것은 ``documents.create`` 의 실측에서 나온
     순서다. 읽기에 그 안내를 내면 멀쩡한 컬렉션을 파게 된다.
 
+    **401 에서 scope 를 먼저 짚는 것도 실측에서 나왔다.** scope 밖
+    엔드포인트를 부르면 권한 오류(403)가 아니라 인증 오류(401)가
+    오고, 본문은 ``Authentication required`` 다. Outline 의 현재
+    소스는 이 경우 403 을 내므로 배포판에 따라 다르며, 그래서 401 과
+    403 양쪽이 scope 를 짚는다. 토큰을 먼저 의심하게 하면 멀쩡한
+    토큰을 파게 된다 — 저장은 되는데 정리본만 안 되는 상황이 정확히
+    이것이다.
+
     Args:
         status: HTTP 상태 코드.
 
@@ -271,8 +279,11 @@ def _read_status_message(status: int) -> str:
     """
     if status == 401:
         return (
-            "Outline 이 API 토큰을 받아들이지 않았습니다."
-            " 토큰이 맞는지, 만료되지 않았는지 확인하세요."
+            "Outline 이 읽기 요청을 인증하지 못했습니다."
+            " API 키 scope 에 documents.info 가 있는지 먼저"
+            " 확인하세요 — 저장만 하던 키에는 없고, 그때 403 이"
+            " 아니라 이 오류로 옵니다."
+            " 그다음 토큰이 맞는지, 만료되지 않았는지 봅니다."
         )
     if status == 403:
         return (

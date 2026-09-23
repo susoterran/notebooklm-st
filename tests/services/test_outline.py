@@ -521,14 +521,21 @@ def test_fetch_document_reports_a_connection_failure() -> None:
     assert "nope" not in str(error.value)
 
 
-def test_fetch_document_401_points_at_the_token() -> None:
-    """401 은 토큰부터 보게 한다."""
+def test_fetch_document_401_points_at_the_scope_before_the_token() -> None:
+    """401 은 scope 를 먼저, 토큰을 나중에 보게 한다.
+
+    실측: scope 밖 엔드포인트를 부르면 403 이 아니라 401 이 온다.
+    토큰부터 의심하게 하면 멀쩡한 토큰을 파게 된다.
+    """
     with pytest.raises(outline.OutlineError) as error:
         outline.fetch_document(
             make_config(), "doc-1", poster=fake_poster(failed(401), [])
         )
 
-    assert "토큰" in str(error.value)
+    message = str(error.value)
+    assert "documents.info" in message
+    assert "토큰" in message
+    assert message.index("scope") < message.index("토큰")
 
 
 def test_fetch_document_403_points_at_the_scope() -> None:
