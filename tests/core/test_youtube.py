@@ -54,3 +54,11 @@ def test_is_valid_mirrors_extract() -> None:
     """is_valid 는 extract_video_id 의 성공 여부를 반영한다."""
     assert youtube.is_valid("https://youtu.be/dQw4w9WgXcQ") is True
     assert youtube.is_valid("https://example.com") is False
+
+
+def test_watch_url_builds_the_canonical_form() -> None:
+    """영상 ID 로 정규 시청 URL 을 짓는다."""
+    assert (
+        youtube.watch_url("dQw4w9WgXcQ")
+        == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )

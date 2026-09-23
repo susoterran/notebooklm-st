@@ -8,7 +8,7 @@
 import re
 from collections.abc import Sequence
 
-from notebooklm_st.core import models
+from notebooklm_st.core import models, youtube
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 """메타데이터 값에서 지울 제어문자.
@@ -96,7 +96,7 @@ def _source_url(summary: models.RunSummary) -> str:
     이력만 원문을 쓴다.
     """
     if summary.video_id:
-        return f"https://www.youtube.com/watch?v={summary.video_id}"
+        return youtube.watch_url(summary.video_id)
     return one_line(summary.url)
 
 
