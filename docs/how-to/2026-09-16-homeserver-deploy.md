@@ -79,9 +79,15 @@ uv run notebooklm login
 
 Outline 웹에서 **프로필 → Settings → API Keys → New API Key**.
 
-- **Scopes** 에 `documents.create` 와 `documents.info` 를 넣는다.
+- **Scopes** 칸에 둘을 **공백으로 구분해 한 줄로** 적는다.
+
+  ```
+  documents.create documents.info
+  ```
+
   앱은 요약본을 올릴 때 앞의 것을, 정리본의 재료를 읽을 때 뒤의 것을
   쓴다. 둘뿐이라 키가 새더라도 삭제·사용자 조회는 막힌다.
+  **비워 두면 전체 권한**이 되니 비우지 않는다.
 - **지금까지 요약본 저장만 하던 키로는 정리본이 돌지 않는다.** 정리를
   시작하면 **401** 이 나고 본문은 `Authentication required` 다(실측).
   권한 오류가 아니라 인증 오류로 오므로 토큰이 죽은 것처럼 보이지만,
