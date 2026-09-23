@@ -22,7 +22,14 @@ CREATE_TIMEOUT = 20.0
 홈 LAN 안의 호출이라 넉넉하다. ``video_metadata`` 와 같은 값을 쓴다.
 """
 
+FETCH_TIMEOUT = 20.0
+"""문서 조회 요청에 주는 최대 초.
+
+생성과 같은 값이다. 같은 서버에 같은 망으로 붙는다.
+"""
+
 _CREATE_PATH = "/api/documents.create"
+_INFO_PATH = "/api/documents.info"
 
 DETAIL_LIMIT = 200
 """Outline 이 보낸 설명에서 화면에 옮길 최대 글자 수.
@@ -35,6 +42,12 @@ PostLike = Callable[..., httpx.Response]
 """``httpx.post`` 자리에 넣을 수 있는 것.
 
 키워드 인자가 많아 Protocol 로 적으면 길기만 하다.
+"""
+
+StatusMessage = Callable[[int], str]
+"""상태 코드를 안내 문장으로 옮기는 함수.
+
+읽기와 쓰기가 서로 다른 것을 쓴다.
 """
 
 
@@ -66,6 +79,16 @@ class SavedDocument:
     title: str
     url: str
     """사람이 브라우저에 붙여 넣을 수 있는 절대 URL."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class OutlineDocument:
+    """위키에서 읽어 온 문서 하나."""
+
+    id: str
+    title: str
+    markdown: str
+    """저장된 본문. Outline 은 CommonMark 로 보관한다."""
 
 
 class OutlineError(RuntimeError):
@@ -152,9 +175,118 @@ def create_document(
         ) from error
     if response.status_code >= 400:
         raise OutlineError(
-            _failure_message(response, config.token, response.status_code)
+            _failure_message(
+                response,
+                config.token,
+                response.status_code,
+                _status_message,
+            )
         )
     return _parse(config, response)
+
+
+def fetch_document(
+    config: OutlineConfig,
+    document_id: str,
+    timeout: float = FETCH_TIMEOUT,
+    poster: PostLike = httpx.post,
+) -> OutlineDocument:
+    """문서 하나를 읽어 온다.
+
+    **연결 주소로 나간다.** 공개 주소는 사람이 누를 링크를 만들 때만
+    쓴다 — 여기서 공개 주소를 쓰면 컨테이너가 공인 도메인으로 되돌아
+    나가지 못하는 망에서 앱이 자기 위키를 읽지 못한다.
+
+    Args:
+        config: 주소·토큰.
+        document_id: 읽을 문서의 ID. ``runs.outline_id`` 에 적혀 있다.
+        timeout: 요청에 주는 최대 초.
+        poster: 요청을 보내는 함수. 테스트가 가짜를 넣을 수 있게
+            뚫어 둔다.
+
+    Returns:
+        문서의 ID·제목·본문.
+
+    Raises:
+        OutlineError: 연결이 안 되거나, 거부당했거나, 응답이 기대한
+            모양이 아닌 경우.
+    """
+    try:
+        response = poster(
+            f"{config.base_url}{_INFO_PATH}",
+            headers={"Authorization": f"Bearer {config.token}"},
+            json={"id": document_id},
+            timeout=timeout,
+        )
+    except (httpx.HTTPError, httpx.InvalidURL) as error:
+        raise OutlineError(
+            f"Outline 에 연결하지 못했습니다({type(error).__name__})."
+        ) from error
+    if response.status_code >= 400:
+        raise OutlineError(
+            _failure_message(
+                response,
+                config.token,
+                response.status_code,
+                _read_status_message,
+            )
+        )
+    return _parse_document(response)
+
+
+def _parse_document(response: httpx.Response) -> OutlineDocument:
+    """응답 본문에서 문서를 꺼낸다.
+
+    Args:
+        response: ``documents.info`` 의 응답.
+
+    Returns:
+        읽어 온 문서.
+
+    Raises:
+        OutlineError: JSON 이 아니거나 기대한 키가 없는 경우.
+    """
+    try:
+        data = response.json()["data"]
+        document_id = str(data["id"])
+        title = str(data["title"])
+        markdown = str(data["text"])
+    except (ValueError, KeyError, TypeError) as error:
+        raise OutlineError("Outline 의 응답을 이해하지 못했습니다.") from error
+    return OutlineDocument(id=document_id, title=title, markdown=markdown)
+
+
+def _read_status_message(status: int) -> str:
+    """읽기 실패를 "무엇부터 확인하라" 는 안내로 옮긴다.
+
+    쓰기와 문구를 나눈다. ``_status_message`` 는 403 에서 컬렉션 ID 를
+    먼저 의심하게 하는데, 그것은 ``documents.create`` 의 실측에서 나온
+    순서다. 읽기에 그 안내를 내면 멀쩡한 컬렉션을 파게 된다.
+
+    Args:
+        status: HTTP 상태 코드.
+
+    Returns:
+        화면에 그대로 나갈 한국어 문장.
+    """
+    if status == 401:
+        return (
+            "Outline 이 API 토큰을 받아들이지 않았습니다."
+            " 토큰이 맞는지, 만료되지 않았는지 확인하세요."
+        )
+    if status == 403:
+        return (
+            "Outline 이 문서 읽기를 거부했습니다."
+            " API 키 scope 에 읽기 권한이 있는지 확인하세요 —"
+            " 저장만 하던 키에는 없습니다."
+        )
+    if status == 404:
+        return (
+            "Outline 에서 문서를 찾지 못했습니다."
+            " 위키에서 지워졌을 수 있습니다."
+            " 그 이력을 선택에서 빼고 다시 시도하세요."
+        )
+    return f"Outline 이 오류를 냈습니다(HTTP {status})."
 
 
 def _parse(config: OutlineConfig, response: httpx.Response) -> SavedDocument:
@@ -196,7 +328,12 @@ def _absolute(public_url: str, url: str) -> str:
     return f"{public_url}/{url.lstrip('/')}"
 
 
-def _failure_message(response: httpx.Response, token: str, status: int) -> str:
+def _failure_message(
+    response: httpx.Response,
+    token: str,
+    status: int,
+    status_message: StatusMessage,
+) -> str:
     """실패 응답을 사람이 읽고 고칠 수 있는 한 문장으로 만든다.
 
     우리가 지은 안내 뒤에 **Outline 이 보낸 설명**을 붙인다. 설명을
@@ -208,14 +345,15 @@ def _failure_message(response: httpx.Response, token: str, status: int) -> str:
         token: 화면에 오르면 안 되는 값. 본문에 섞여 있으면 설명째
             버린다.
         status: HTTP 상태 코드.
+        status_message: 이 호출 경로의 안내를 만드는 함수.
 
     Returns:
         화면에 그대로 나갈 한국어 문장.
     """
     detail = _detail(response, token)
     if not detail:
-        return _status_message(status)
-    return f"{_status_message(status)} Outline 이 말한 것: {detail}"
+        return status_message(status)
+    return f"{status_message(status)} Outline 이 말한 것: {detail}"
 
 
 def _status_message(status: int) -> str:

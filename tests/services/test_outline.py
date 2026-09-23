@@ -177,8 +177,8 @@ def test_create_document_rejects_a_response_without_data() -> None:
     assert "이해하지 못했습니다" in str(excinfo.value)
 
 
-def failed(status: int):
-    """오류 상태 코드의 응답을 만든다."""
+def _failed_create(status: int):
+    """오류 상태 코드의 응답을 만든다. 문서 생성 전용."""
     return httpx.Response(
         status,
         json={"message": "nope"},
@@ -197,7 +197,7 @@ def create_with(response) -> str:
 
 def test_rejected_token_says_so() -> None:
     """401 은 토큰 문제다."""
-    assert "토큰" in create_with(failed(401))
+    assert "토큰" in create_with(_failed_create(401))
 
 
 def test_forbidden_points_at_the_collection_first() -> None:
@@ -208,7 +208,7 @@ def test_forbidden_points_at_the_collection_first() -> None:
     한 응답으로 뭉치기 때문이다. 토큰을 먼저 의심하게 하면 멀쩡한
     토큰을 파게 된다.
     """
-    message = create_with(failed(403))
+    message = create_with(_failed_create(403))
 
     assert "컬렉션" in message
     assert message.index("컬렉션") < message.index("scope")
@@ -219,7 +219,7 @@ def test_validation_error_points_at_the_collection_id() -> None:
 
     실측: 컬렉션 이름을 UUID 자리에 넣으면 400 이 온다.
     """
-    assert "UUID" in create_with(failed(400))
+    assert "UUID" in create_with(_failed_create(400))
 
 
 def test_error_carries_outlines_own_message() -> None:
@@ -291,12 +291,12 @@ def test_not_found_points_at_the_address() -> None:
     컬렉션이 없을 때는 404 가 아니라 403 이 온다(실측). 그래서 404 에서
     컬렉션을 의심하게 하면 엉뚱한 곳을 보게 된다.
     """
-    assert "주소" in create_with(failed(404))
+    assert "주소" in create_with(_failed_create(404))
 
 
 def test_server_error_carries_the_status_code() -> None:
     """5xx 는 상태 코드를 그대로 보여 준다."""
-    assert "503" in create_with(failed(503))
+    assert "503" in create_with(_failed_create(503))
 
 
 def test_timeout_reads_as_a_connection_failure() -> None:
@@ -314,8 +314,8 @@ def test_connection_error_reads_as_a_connection_failure() -> None:
 def test_the_token_never_appears_in_an_error_message() -> None:
     """어떤 실패 경로에서도 토큰이 새지 않는다."""
     for response in (
-        failed(401),
-        failed(500),
+        _failed_create(401),
+        _failed_create(500),
         httpx.TimeoutException("timed out"),
     ):
         assert TOKEN not in create_with(response)
@@ -427,3 +427,153 @@ def test_create_document_keeps_an_absolute_url_over_the_public_url() -> None:
     )
 
     assert document.url == "https://wiki.example.com/doc/x"
+
+
+def fetched(
+    doc_id="doc-1",
+    title="AI 에이전트의 미래",
+    text="- 제목: AI 에이전트의 미래\n\n## 첫 질문\n\n세 가지다.\n",
+):
+    """documents.info 가 돌려주는 200 응답을 만든다."""
+    return httpx.Response(
+        200,
+        json={"data": {"id": doc_id, "title": title, "text": text}},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.info"),
+    )
+
+
+def failed(status, body=None):
+    """오류 응답을 만든다."""
+    return httpx.Response(
+        status,
+        json=body if body is not None else {},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.info"),
+    )
+
+
+def test_fetch_document_posts_to_the_info_endpoint() -> None:
+    """주소·헤더·본문이 API 계약대로 나간다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    outline.fetch_document(
+        make_config(), "doc-1", poster=fake_poster(fetched(), calls)
+    )
+
+    url, kwargs = calls[0]
+    assert url == f"{BASE_URL}/api/documents.info"
+    assert kwargs["headers"] == {"Authorization": f"Bearer {TOKEN}"}
+    assert kwargs["json"] == {"id": "doc-1"}
+    assert kwargs["timeout"] == outline.FETCH_TIMEOUT
+
+
+def test_fetch_document_uses_the_connect_url_not_the_public_one() -> None:
+    """읽기는 연결 주소로 나간다. 공개 주소는 링크에만 쓴다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    outline.fetch_document(
+        make_config(public_url=PUBLIC_URL),
+        "doc-1",
+        poster=fake_poster(fetched(), calls),
+    )
+
+    assert calls[0][0].startswith(BASE_URL)
+
+
+def test_fetch_document_returns_id_title_and_markdown() -> None:
+    """응답에서 셋을 꺼내 온다."""
+    document = outline.fetch_document(
+        make_config(),
+        "doc-1",
+        poster=fake_poster(fetched(text="## 첫 질문\n\n세 가지다."), []),
+    )
+
+    assert document.id == "doc-1"
+    assert document.title == "AI 에이전트의 미래"
+    assert document.markdown == "## 첫 질문\n\n세 가지다."
+
+
+def test_fetch_document_rejects_a_response_without_text() -> None:
+    """본문이 없는 응답은 이해하지 못한 것으로 친다."""
+    response = httpx.Response(
+        200,
+        json={"data": {"id": "doc-1", "title": "제목"}},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.info"),
+    )
+
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(response, [])
+        )
+
+    assert "이해하지 못했습니다" in str(error.value)
+
+
+def test_fetch_document_reports_a_connection_failure() -> None:
+    """연결 실패는 httpx 원문이 아니라 우리 문장으로 나간다."""
+    boom = httpx.ConnectError("nope")
+
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(boom, [])
+        )
+
+    assert "연결하지 못했습니다" in str(error.value)
+    assert "nope" not in str(error.value)
+
+
+def test_fetch_document_401_points_at_the_token() -> None:
+    """401 은 토큰부터 보게 한다."""
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(failed(401), [])
+        )
+
+    assert "토큰" in str(error.value)
+
+
+def test_fetch_document_403_points_at_the_scope() -> None:
+    """403 은 scope 를 짚는다. R4 의 키는 쓰기 전용일 수 있다."""
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(failed(403), [])
+        )
+
+    message = str(error.value)
+    assert "scope" in message
+    assert "읽기" in message
+    # 쓰기 경로의 안내(컬렉션 ID)가 새어 나오면 안 된다.
+    assert "컬렉션" not in message
+
+
+def test_fetch_document_404_says_the_document_may_be_gone() -> None:
+    """404 는 위키에서 지워졌을 가능성을 말한다."""
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(failed(404), [])
+        )
+
+    assert "지워졌을" in str(error.value)
+
+
+def test_fetch_document_keeps_the_outline_detail() -> None:
+    """Outline 이 보낸 설명을 함께 싣는다."""
+    response = failed(403, {"message": "Authorization error"})
+
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(response, [])
+        )
+
+    assert "Authorization error" in str(error.value)
+
+
+def test_fetch_document_drops_a_detail_holding_the_token() -> None:
+    """토큰이 섞인 설명은 통째로 버린다."""
+    response = failed(403, {"message": f"bad key {TOKEN}"})
+
+    with pytest.raises(outline.OutlineError) as error:
+        outline.fetch_document(
+            make_config(), "doc-1", poster=fake_poster(response, [])
+        )
+
+    assert TOKEN not in str(error.value)
