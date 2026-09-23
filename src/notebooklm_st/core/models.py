@@ -102,6 +102,37 @@ class VideoMetadata:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class DigestSource:
+    """정리 파이프라인에 넣을 글 한 편.
+
+    이 글이 위키에서 왔다는 사실은 담지 않는다. ``services.nlm`` 은
+    재료의 출처를 몰라도 되고, 몰라야 Outline 과 엮이지 않는다.
+    """
+
+    title: str
+    text: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DigestDraft:
+    """아직 저장하지 않은 정리본.
+
+    로컬 DB 에 남지 않는다. 화면이 세션에 들고 있다가 저장하면
+    Outline 이 정본이 되고, 버리면 그대로 사라진다.
+
+    ``sources`` 는 재료가 된 실행들이다. 저장할 문서에 출처 링크를
+    적는 데 쓴다.
+    """
+
+    body: str
+    sources: tuple[RunSummary, ...]
+    instruction: str
+    created_on: str
+    """``2026-09-23`` 형식의 날짜. 문서에 적고 제목
+    기본값에도 쓴다."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class TempNotebook:
     """정리 대상인 임시 노트북."""
 
