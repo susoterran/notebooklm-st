@@ -9,7 +9,7 @@ import sqlite3
 
 import streamlit as st
 
-from notebooklm_st.services import auth, runs, store
+from notebooklm_st.services import auth, digest_runner, runs, store
 
 
 @st.cache_resource
@@ -48,3 +48,16 @@ def get_auth_gate() -> auth.AuthGate:
         재실행되어도 같은 게이트 객체.
     """
     return auth.AuthGate()
+
+
+@st.cache_resource
+def get_digest_registry() -> digest_runner.DigestRegistry:
+    """앱 전체가 공유하는 정리본 레지스트리를 돌려준다.
+
+    질의 레지스트리와 같은 이유로 ``@st.cache_resource`` 를 쓴다 —
+    탭이 달라도 같은 것을 봐야 정리 화면과 가드가 어긋나지 않는다.
+
+    Returns:
+        재실행되어도 같은 레지스트리 객체.
+    """
+    return digest_runner.DigestRegistry()
