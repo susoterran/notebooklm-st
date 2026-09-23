@@ -3,11 +3,13 @@
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.core import labels, models
+from notebooklm_st.core import digest_markdown, labels, models
 from notebooklm_st.services import digest_runner, nlm, outline, run_history
 
 _SELECTED_KEY = "digest_selected"
 _INSTRUCTION_KEY = "digest_instruction"
+_TITLE_KEY = "digest_title"
+_SAVED_KEY = "digest_saved"
 
 _POLL_INTERVAL = "1s"
 
@@ -25,11 +27,22 @@ DEFAULT_INSTRUCTION = (
 
 
 def render() -> None:
-    """재료를 고르고 정리를 시작한다. 진행 중이면 진행을 보여 준다."""
+    """정리본 화면을 상태에 맞게 그린다.
+
+    상태는 넷이다 — 방금 저장함 · 진행 중 · 끝남(초안 또는 실패) ·
+    아무것도 없음(재료 선택).
+    """
     st.title("정리본")
     registry = session.get_digest_registry()
+    if _SAVED_KEY in st.session_state:
+        _render_saved()
+        return
     if registry.is_running():
         _render_running()
+        return
+    handle = registry.get()
+    if handle is not None:
+        _render_finished(registry, handle)
         return
     _render_form(registry)
 
@@ -136,3 +149,98 @@ def _format_run(run: models.RunSummary) -> str:
     """
     label = run.outline_title or run.title or run.video_id
     return f"{labels.shorten(label)} · {run.created_at}"
+
+
+def _render_finished(
+    registry: digest_runner.DigestRegistry,
+    handle: digest_runner.DigestHandle,
+) -> None:
+    """끝난 정리를 초안 또는 실패로 그린다."""
+    if handle.status == "failed":
+        text = handle.error_message or "알 수 없는 오류로 실패했습니다."
+        if handle.error_level == "info":
+            st.info(text)
+        else:
+            st.error(text)
+        if st.button("재료 다시 고르기", key="digest_retry"):
+            registry.clear()
+            st.rerun()
+        return
+    if handle.draft is None:
+        st.warning("작성이 끝났지만 결과가 비어 있습니다.")
+        if st.button("재료 다시 고르기", key="digest_retry"):
+            registry.clear()
+            st.rerun()
+        return
+    _render_draft(registry, handle.draft)
+
+
+def _render_draft(
+    registry: digest_runner.DigestRegistry, draft: models.DigestDraft
+) -> None:
+    """초안을 확인하고 저장하는 화면을 그린다."""
+    config = outline.config_from_env()
+    title = st.text_input(
+        "문서 제목",
+        value=f"정리본 {draft.created_on}",
+        key=_TITLE_KEY,
+        help="Outline 문서의 제목이 됩니다.",
+    )
+    left, right = st.columns(2)
+    save_clicked = left.button(
+        "Outline 에 저장",
+        key="digest_save",
+        disabled=config is None or not title.strip(),
+        help="지금 보이는 그대로 올립니다.",
+    )
+    if right.button("버리기", key="digest_discard"):
+        registry.clear()
+        st.rerun()
+    st.caption(
+        f"재료 {len(draft.sources)}건 ·"
+        " 저장하면 Outline 이 정본이 되고 이 정리본은 로컬에 남지"
+        " 않습니다."
+    )
+    st.markdown(draft.body)
+    if save_clicked and config is not None:
+        _save(registry, config, draft, title.strip())
+
+
+def _save(
+    registry: digest_runner.DigestRegistry,
+    config: outline.OutlineConfig,
+    draft: models.DigestDraft,
+    title: str,
+) -> None:
+    """문서를 만들고 슬롯을 비운다.
+
+    실패하면 아무것도 건드리지 않는다. 초안이 화면에 그대로 남아
+    원인을 고친 뒤 같은 버튼을 다시 누르면 된다. 로컬에 쓸 것이
+    없으므로 "문서는 만들어졌는데 기록이 실패" 같은 틈이 없다.
+    """
+    with st.spinner("Outline 에 저장 중"):
+        try:
+            document = outline.create_document(
+                config, title, digest_markdown.to_markdown(draft)
+            )
+        except outline.OutlineError as error:
+            st.error(str(error))
+            return
+    registry.clear()
+    st.session_state[_SAVED_KEY] = (document.title, document.url)
+    st.rerun()
+
+
+def _render_saved() -> None:
+    """방금 저장한 정리본의 링크를 보여 준다."""
+    title, url = st.session_state[_SAVED_KEY]
+    st.success("Outline 에 저장했습니다.")
+    st.markdown(f"**{title}**")
+    st.link_button("Outline 에서 열기", url, key="digest_open")
+    st.caption(
+        "이 정리본은 로컬에 남지 않습니다. 수정·삭제·검색은 Outline"
+        " 에서 하세요."
+    )
+    if st.button("새 정리본 만들기", key="digest_new"):
+        st.session_state.pop(_SAVED_KEY, None)
+        st.rerun()

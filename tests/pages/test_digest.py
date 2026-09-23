@@ -199,3 +199,164 @@ def test_blank_instruction_blocks_the_start(app_db, outline_env) -> None:
     app.text_area[0].set_value("   ").run()
 
     assert app.button[0].disabled is True
+
+
+def make_draft(instruction="정리해 줘"):
+    """세션에 얹을 초안을 만든다."""
+    return models.DigestDraft(
+        body="## 공통 주장\n\n셋 다 같은 말을 한다.",
+        sources=(
+            models.RunSummary(
+                id=1,
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                title="영상 제목",
+                created_at="2026-09-20T14:02:11",
+                answer_count=0,
+                outline_id="doc-1",
+                outline_url=f"{BASE_URL}/doc/doc-1",
+                outline_title="밸류에이션 강의",
+                exported_at="2026-09-20T15:00:00",
+            ),
+        ),
+        instruction=instruction,
+        created_on="2026-09-23",
+    )
+
+
+def finished_registry(draft=None):
+    """완료 상태의 레지스트리를 만들어 앱에 얹는다."""
+    from notebooklm_st import session
+    from notebooklm_st.services import digest_runner
+
+    registry = session.get_digest_registry()
+    registry.clear()
+    registry.start()
+    registry.finish(draft if draft is not None else make_draft())
+    assert isinstance(registry, digest_runner.DigestRegistry)
+    return registry
+
+
+def failed_registry(message="'밸류에이션 강의' 을 읽지 못했습니다."):
+    """실패 상태의 레지스트리를 만들어 앱에 얹는다."""
+    from notebooklm_st import session
+
+    registry = session.get_digest_registry()
+    registry.clear()
+    registry.start()
+    registry.fail(message, "error")
+    return registry
+
+
+def test_finished_digest_shows_the_body(app_db, outline_env) -> None:
+    """완료되면 정리 본문을 미리보기로 보여 준다."""
+    finished_registry()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "셋 다 같은 말을 한다." in rendered
+
+
+def test_title_defaults_to_the_created_date(app_db, outline_env) -> None:
+    """제목 기본값이 예측 가능한 값이다."""
+    finished_registry()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert app.text_input[0].value == "정리본 2026-09-23"
+
+
+def test_saving_creates_an_outline_document(
+    app_db, outline_env, monkeypatch
+) -> None:
+    """저장을 누르면 문서를 만들고 링크를 보여 준다."""
+    from notebooklm_st.pages import digest as digest_page
+
+    finished_registry()
+    received: dict[str, object] = {}
+
+    def fake_create(config, title, markdown, **kwargs):
+        """넘어온 제목과 본문을 기록한다."""
+        received["title"] = title
+        received["markdown"] = markdown
+        return outline.SavedDocument(
+            id="doc-9",
+            title=title,
+            url=f"{BASE_URL}/doc/doc-9",
+        )
+
+    monkeypatch.setattr(digest_page.outline, "create_document", fake_create)
+
+    app = v1.AppTest.from_function(script).run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert received["title"] == "정리본 2026-09-23"
+    assert "## 출처" in str(received["markdown"])
+    assert len(app.success) == 1
+
+
+def test_saving_empties_the_slot(app_db, outline_env, monkeypatch) -> None:
+    """저장하면 초안이 사라지고 새 정리를 시작할 수 있다."""
+    from notebooklm_st import session
+    from notebooklm_st.pages import digest as digest_page
+
+    finished_registry()
+    monkeypatch.setattr(
+        digest_page.outline,
+        "create_document",
+        lambda config, title, markdown, **kwargs: outline.SavedDocument(
+            id="doc-9", title=title, url=f"{BASE_URL}/doc/doc-9"
+        ),
+    )
+
+    app = v1.AppTest.from_function(script).run()
+    app.button[0].click().run()
+
+    assert session.get_digest_registry().get() is None
+
+
+def test_save_failure_keeps_the_draft(app_db, outline_env, monkeypatch) -> None:
+    """저장이 실패해도 초안은 화면에 남는다."""
+    from notebooklm_st import session
+    from notebooklm_st.pages import digest as digest_page
+
+    finished_registry()
+
+    def boom(config, title, markdown, **kwargs):
+        """저장 실패를 만든다."""
+        raise outline.OutlineError("Outline 에 연결하지 못했습니다.")
+
+    monkeypatch.setattr(digest_page.outline, "create_document", boom)
+
+    app = v1.AppTest.from_function(script).run()
+    app.button[0].click().run()
+
+    assert len(app.error) == 1
+    handle = session.get_digest_registry().get()
+    assert handle is not None
+    assert handle.draft is not None
+
+
+def test_discarding_clears_the_slot(app_db, outline_env) -> None:
+    """버리면 슬롯이 비고 재료 선택으로 돌아간다."""
+    from notebooklm_st import session
+
+    finished_registry()
+
+    app = v1.AppTest.from_function(script).run()
+    app.button[1].click().run()
+
+    assert session.get_digest_registry().get() is None
+
+
+def test_failed_digest_shows_the_error(app_db, outline_env) -> None:
+    """실패하면 사유를 그대로 보여 준다."""
+    failed_registry()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert len(app.error) == 1
+    assert "읽지 못했습니다" in app.error[0].value
