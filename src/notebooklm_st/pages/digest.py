@@ -1,10 +1,18 @@
 """정리본 화면 — 저장된 요약본 여럿을 문서 하나로."""
 
+import sqlite3
+
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.core import digest_markdown, labels, models
-from notebooklm_st.services import digest_runner, nlm, outline, run_history
+from notebooklm_st.core import digest_markdown, digest_title, labels, models
+from notebooklm_st.services import (
+    digest_runner,
+    nlm,
+    outline,
+    questions,
+    run_history,
+)
 
 _SELECTED_KEY = "digest_selected"
 _INSTRUCTION_KEY = "digest_instruction"
@@ -12,18 +20,6 @@ _TITLE_KEY = "digest_title"
 _SAVED_KEY = "digest_saved"
 
 _POLL_INTERVAL = "1s"
-
-DEFAULT_INSTRUCTION = (
-    "아래 문서들은 각각 다른 영상의 요약본이다. 공통된 주장과"
-    " 엇갈리는 지점을 찾아 하나의 글로 정리해 줘. 각 주장이 어느"
-    " 문서에서 나온 것인지 문서 제목으로 밝히고, 마지막에 남은"
-    " 의문을 적어 줘."
-)
-"""화면에 채워 두는 기본 정리 지시.
-
-정본은 이 한 줄이다. 사람이 이번 정리에만 고쳐 쓸 수 있고, 고친
-값은 저장되지 않는다 — 정리는 매번 목적이 다르다.
-"""
 
 
 def render() -> None:
@@ -98,17 +94,48 @@ def _render_form(registry: digest_runner.DigestRegistry) -> None:
         key=_SELECTED_KEY,
         help=f"최대 {nlm.DIGEST_SOURCE_LIMIT}건까지 고를 수 있습니다.",
     )
-    instruction = st.text_area(
-        "정리 지시",
-        value=DEFAULT_INSTRUCTION,
-        key=_INSTRUCTION_KEY,
-        help="이번 정리에만 적용됩니다. 저장되지 않습니다.",
-    )
     # 다른 탭에서 그 사이 이력이 지워지면 선택값이 남은 채로 위젯이
     # 되살아나고, Streamlit 은 그 자리에 원본 라벨 문자열을 끼워
     # 넣는다. by_id 에 없는 값은 조용히 걸러 트레이스백을 막는다.
     selected = [by_id[key] for key in selected_ids if key in by_id]
+    instruction = _render_instruction(connection)
+    if instruction is None:
+        return
     _render_start(registry, config, selected, instruction)
+
+
+def _render_instruction(connection: sqlite3.Connection) -> str | None:
+    """정리 지시를 질문 목록에서 고르게 한다.
+
+    지시를 이 화면에서 따로 쓰지 않는다. 질문 관리가 이미 지시를
+    등록·수정·삭제하는 자리이므로, 목록을 공유하면 같은 지시를 두 곳에
+    두지 않아도 된다.
+
+    Args:
+        connection: 열린 커넥션.
+
+    Returns:
+        고른 질문의 본문. 등록된 질문이 없으면 ``None``.
+    """
+    question_list = questions.list_questions(connection)
+    if not question_list:
+        st.info(
+            "정리 지시로 쓸 질문이 없습니다."
+            " 질문 관리 화면에서 먼저 등록하세요."
+        )
+        return None
+    chosen = st.selectbox(
+        "정리 지시",
+        options=question_list,
+        format_func=lambda question: question.title,
+        key=_INSTRUCTION_KEY,
+        help="질문 관리 화면에 등록된 질문을 그대로 씁니다.",
+    )
+    if chosen is None:
+        return None
+    with st.expander("지시 내용"):
+        st.markdown(chosen.text)
+    return chosen.text
 
 
 def _render_start(
@@ -135,7 +162,7 @@ def _render_start(
     if st.button(
         "정리 시작",
         key="digest_start",
-        disabled=not selected or too_many or busy or not instruction.strip(),
+        disabled=not selected or too_many or busy,
     ):
         digest_runner.start_digest(
             registry, config, selected, instruction.strip()
@@ -190,9 +217,9 @@ def _render_draft(
     config = outline.config_from_env()
     title = st.text_input(
         "문서 제목",
-        value=f"정리본 {draft.created_on}",
+        value=digest_title.compose(draft.topic, draft.created_on),
         key=_TITLE_KEY,
-        help="Outline 문서의 제목이 됩니다.",
+        help="Outline 문서의 제목이 됩니다. 고쳐 쓸 수 있습니다.",
     )
     left, right = st.columns(2)
     save_clicked = left.button(

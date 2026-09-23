@@ -6,7 +6,7 @@ import pytest
 from streamlit.testing import v1
 
 from notebooklm_st.core import models, youtube
-from notebooklm_st.services import nlm, outline, run_history
+from notebooklm_st.services import nlm, outline, questions, run_history
 
 BASE_URL = "http://192.168.0.10:3000"
 TOKEN = "ol_api_secret_value"
@@ -66,6 +66,19 @@ def save_exported(
     return run_id
 
 
+INSTRUCTION_TITLE = "비교표로 정리"
+INSTRUCTION_TEXT = "공통 주장과 엇갈리는 지점을 비교표로 정리해 줘"
+
+
+def add_instruction(
+    connection: sqlite3.Connection,
+    title: str = INSTRUCTION_TITLE,
+    text: str = INSTRUCTION_TEXT,
+) -> models.Question:
+    """정리 지시로 쓸 질문 하나를 등록한다."""
+    return questions.add_question(connection, title, text)
+
+
 def test_missing_config_shows_a_notice(app_db) -> None:
     """Outline 설정이 없으면 안내를 보여 준다."""
     save_exported(app_db)
@@ -111,9 +124,74 @@ def test_unsaved_runs_are_not_offered(app_db, outline_env) -> None:
     assert "저장 안 된 것" not in options[0]
 
 
+def test_no_questions_shows_a_notice(app_db, outline_env) -> None:
+    """등록된 질문이 없으면 정리 지시를 고를 수 없다고 말한다."""
+    save_exported(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.selectbox) == 0
+    assert len(app.button) == 0
+    assert any("질문 관리" in element.value for element in app.info)
+
+
+def test_the_instruction_is_chosen_from_the_questions(
+    app_db, outline_env
+) -> None:
+    """등록된 질문의 제목이 정리 지시 선택지가 된다."""
+    save_exported(app_db)
+    add_instruction(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert app.selectbox[0].options == [INSTRUCTION_TITLE]
+
+
+def test_the_chosen_instruction_body_is_shown(app_db, outline_env) -> None:
+    """고른 지시의 본문을 읽을 수 있게 보여 준다."""
+    save_exported(app_db)
+    add_instruction(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    rendered = " ".join(element.value for element in app.markdown)
+    assert INSTRUCTION_TEXT in rendered
+
+
+def test_a_deleted_instruction_does_not_break_the_form(
+    app_db, outline_env
+) -> None:
+    """고른 뒤 다른 탭에서 지워진 질문이 화면을 깨뜨리지 않는다.
+
+    Streamlit 이 남은 첫 선택지로 스스로 되돌린다. 따로 걸러 내는
+    코드를 두지 않았으므로 그 동작에 의존한다는 사실을 여기서 못
+    박는다.
+    """
+    save_exported(app_db)
+    add_instruction(app_db)
+    second = add_instruction(
+        app_db, title="연표로 정리", text="연표로 정리해 줘"
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.selectbox[0].select(second).run()
+    questions.delete_question(app_db, second.id)
+    app.run()
+
+    assert not app.exception
+    remaining = app.selectbox[0].value
+    assert remaining is not None
+    assert remaining.title == INSTRUCTION_TITLE
+    assert len(app.button) == 1
+
+
 def test_start_is_disabled_without_a_selection(app_db, outline_env) -> None:
     """아무것도 고르지 않으면 시작할 수 없다."""
     save_exported(app_db)
+    add_instruction(app_db)
 
     app = v1.AppTest.from_function(script).run()
 
@@ -123,6 +201,7 @@ def test_start_is_disabled_without_a_selection(app_db, outline_env) -> None:
 def test_selecting_a_run_enables_the_start(app_db, outline_env) -> None:
     """한 건만 골라도 시작할 수 있다."""
     save_exported(app_db)
+    add_instruction(app_db)
 
     app = v1.AppTest.from_function(script).run()
     app.multiselect[0].select(app.multiselect[0].options[0]).run()
@@ -135,6 +214,7 @@ def test_running_query_blocks_the_start(app_db, outline_env) -> None:
     from notebooklm_st import session
 
     save_exported(app_db)
+    add_instruction(app_db)
     session.get_registry().create(
         "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("질문",)
     )
@@ -153,6 +233,7 @@ def test_start_hands_the_selection_to_the_runner(
     from notebooklm_st.pages import digest as digest_page
 
     save_exported(app_db)
+    add_instruction(app_db)
     received: dict[str, object] = {}
 
     def fake_start(registry, config, summaries, instruction, **kwargs):
@@ -171,11 +252,40 @@ def test_start_hands_the_selection_to_the_runner(
     assert isinstance(summaries, list)
     assert len(summaries) == 1
     assert summaries[0].outline_id == "doc-1"
-    assert received["instruction"] == digest_page.DEFAULT_INSTRUCTION
+    assert received["instruction"] == INSTRUCTION_TEXT
+
+
+def test_start_hands_the_chosen_instruction_to_the_runner(
+    app_db, outline_env, monkeypatch
+) -> None:
+    """고른 질문의 본문이 정리 지시로 넘어간다."""
+    from notebooklm_st.pages import digest as digest_page
+
+    save_exported(app_db)
+    add_instruction(app_db)
+    second = add_instruction(
+        app_db, title="연표로 정리", text="연표로 정리해 줘"
+    )
+    received: dict[str, object] = {}
+
+    def fake_start(registry, config, summaries, instruction, **kwargs):
+        """넘어온 지시를 기록한다."""
+        received["instruction"] = instruction
+        return True
+
+    monkeypatch.setattr(digest_page.digest_runner, "start_digest", fake_start)
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect[0].select(app.multiselect[0].options[0]).run()
+    app.selectbox[0].select(second).run()
+    app.button[0].click().run()
+
+    assert received["instruction"] == "연표로 정리해 줘"
 
 
 def test_too_many_materials_blocks_the_start(app_db, outline_env) -> None:
     """재료가 상한을 넘으면 경고가 뜨고 시작할 수 없다."""
+    add_instruction(app_db)
     for index in range(nlm.DIGEST_SOURCE_LIMIT + 1):
         save_exported(
             app_db,
@@ -190,18 +300,7 @@ def test_too_many_materials_blocks_the_start(app_db, outline_env) -> None:
     assert len(app.warning) == 1
 
 
-def test_blank_instruction_blocks_the_start(app_db, outline_env) -> None:
-    """정리 지시가 공백뿐이면 시작할 수 없다."""
-    save_exported(app_db)
-
-    app = v1.AppTest.from_function(script).run()
-    app.multiselect[0].select(app.multiselect[0].options[0]).run()
-    app.text_area[0].set_value("   ").run()
-
-    assert app.button[0].disabled is True
-
-
-def make_draft(instruction="정리해 줘", created_on="2026-09-23"):
+def make_draft(instruction="정리해 줘", created_on="2026-09-23", topic=None):
     """세션에 얹을 초안을 만든다."""
     return models.DigestDraft(
         body="## 공통 주장\n\n셋 다 같은 말을 한다.",
@@ -221,6 +320,7 @@ def make_draft(instruction="정리해 줘", created_on="2026-09-23"):
         ),
         instruction=instruction,
         created_on=created_on,
+        topic=topic,
     )
 
 
@@ -257,13 +357,22 @@ def test_finished_digest_shows_the_body(app_db, outline_env) -> None:
     assert "셋 다 같은 말을 한다." in rendered
 
 
-def test_title_defaults_to_the_created_date(app_db, outline_env) -> None:
-    """제목 기본값이 예측 가능한 값이다."""
+def test_title_uses_the_topic_from_the_pipeline(app_db, outline_env) -> None:
+    """NotebookLM 이 지은 주제가 제목 기본값이 된다."""
+    finished_registry(make_draft(topic="밸류에이션 세 강의"))
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert app.text_input[0].value == "[정리] 밸류에이션 세 강의"
+
+
+def test_title_falls_back_to_the_created_date(app_db, outline_env) -> None:
+    """주제를 받지 못하면 날짜로 떨어진다."""
     finished_registry()
 
     app = v1.AppTest.from_function(script).run()
 
-    assert app.text_input[0].value == "정리본 2026-09-23"
+    assert app.text_input[0].value == "[정리] 2026-09-23"
 
 
 def test_saving_creates_an_outline_document(
@@ -291,7 +400,7 @@ def test_saving_creates_an_outline_document(
     app.button[0].click().run()
 
     assert not app.exception
-    assert received["title"] == "정리본 2026-09-23"
+    assert received["title"] == "[정리] 2026-09-23"
     assert "## 출처" in str(received["markdown"])
     assert len(app.success) == 1
 
@@ -383,7 +492,7 @@ def test_second_draft_gets_a_fresh_title(
 
     app = v1.AppTest.from_function(script)
     app.run()
-    assert app.text_input[0].value == "정리본 2026-09-23"
+    assert app.text_input[0].value == "[정리] 2026-09-23"
     app.button[0].click().run()  # 저장
     app.button[0].click().run()  # 새 정리본 만들기
 
@@ -393,7 +502,7 @@ def test_second_draft_gets_a_fresh_title(
     app.run()
 
     assert not app.exception
-    assert app.text_input[0].value == "정리본 2026-09-24"
+    assert app.text_input[0].value == "[정리] 2026-09-24"
 
 
 def test_discarded_draft_gets_a_fresh_title(app_db, outline_env) -> None:
@@ -412,4 +521,4 @@ def test_discarded_draft_gets_a_fresh_title(app_db, outline_env) -> None:
     app.run()
 
     assert not app.exception
-    assert app.text_input[0].value == "정리본 2026-09-24"
+    assert app.text_input[0].value == "[정리] 2026-09-24"
