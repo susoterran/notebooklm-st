@@ -72,7 +72,8 @@ uv run notebooklm login
 
 ## 4. Outline 연결하기
 
-요약본은 Outline 에 저장된다. 앱에는 문서명과 링크만 남는다.
+요약본과 정리본은 Outline 에 저장된다. 앱에는 문서명과 링크만
+남는다.
 
 ### 4.1 API 키 만들기
 
@@ -81,7 +82,7 @@ Outline 웹에서 **프로필 → Settings → API Keys → New API Key**.
 - **Scopes** 에 `documents.create` 와 `documents.info` 를 넣는다.
   앱은 요약본을 올릴 때 앞의 것을, 정리본의 재료를 읽을 때 뒤의 것을
   쓴다. 둘뿐이라 키가 새더라도 삭제·사용자 조회는 막힌다.
-- **R4 까지 쓰던 쓰기 전용 키로는 정리본이 돌지 않는다.** 정리를
+- **지금까지 요약본 저장만 하던 키로는 정리본이 돌지 않는다.** 정리를
   시작하면 403 이 나고 화면이 scope 를 짚는다. 키를 새로 만들어
   `NOTEBOOKLM_ST_OUTLINE_TOKEN` 을 바꾸면 된다.
 - 키 값은 만든 직후 한 번만 보인다. 바로 복사한다.

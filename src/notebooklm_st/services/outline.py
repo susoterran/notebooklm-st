@@ -1,8 +1,8 @@
-"""Outline(개인 위키)에 요약본 문서를 만든다.
+"""Outline(개인 위키)에 문서를 만들고, 다시 읽어 온다.
 
 Outline 을 아는 유일한 모듈이다. SQLite 도 Streamlit 도 모른다.
-앱은 Outline 을 읽지 않는다 — 문서를 만들고 그 링크를 돌려주는 것이
-이 모듈의 전부다.
+문서를 만들어 그 링크를 돌려주는 것과, 만든 문서를 다시 읽어
+다른 기능의 재료로 내주는 것, 이 두 가지가 이 모듈의 전부다.
 """
 
 import dataclasses
@@ -92,7 +92,7 @@ class OutlineDocument:
 
 
 class OutlineError(RuntimeError):
-    """Outline 에 문서를 만들지 못했다.
+    """Outline 호출이 실패했다.
 
     메시지는 사람이 화면에서 읽는 문장이다. 토큰은 절대 담지 않는다.
     """
