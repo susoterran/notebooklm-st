@@ -2,6 +2,7 @@
 
 from streamlit.testing import v1
 
+from notebooklm_st import session
 from notebooklm_st.services import questions, runner
 
 
@@ -113,3 +114,25 @@ def test_run_button_is_locked_while_another_run_is_active(app_db) -> None:
     assert not app.exception
     assert app.button[0].disabled is True
     assert any("실행 중" in element.value for element in app.info)
+
+
+def test_run_is_blocked_while_digesting(app_db) -> None:
+    """정리본 작성 중에는 질의를 시작하지 못한다."""
+    questions.add_question(app_db, "핵심 주장", "핵심 주장 3가지 정리")
+    session.get_digest_registry().start()
+
+    def script():
+        from notebooklm_st.pages import ask
+
+        ask.render()
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.text_input[0].set_value(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ).run()
+    app.multiselect[0].set_value(questions.list_questions(app_db)).run()
+
+    assert not app.exception
+    assert any("정리본" in element.value for element in app.info)
+    assert app.button[0].disabled is True

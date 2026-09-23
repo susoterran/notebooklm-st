@@ -42,12 +42,19 @@ def render() -> None:
             f"진행 중인 실행이 {running}건 있습니다. 그 노트북까지 지워질 수"
             " 있어 삭제를 막았습니다. 실행 현황에서 완료를 확인하세요."
         )
+    digesting = session.get_digest_registry().is_running()
+    if digesting:
+        st.warning(
+            "정리본을 작성 중입니다. 정리도 tmp- 노트북을 쓰므로"
+            " 지금 지우면 작성이 깨집니다. 정리본 화면에서 완료를"
+            " 확인하세요."
+        )
 
     confirmed = st.checkbox("삭제에 동의합니다", key=_CONFIRM_KEY)
     if st.button(
         f"{len(notebooks)}개 모두 삭제",
         key="maintenance_delete",
-        disabled=not confirmed or running > 0,
+        disabled=not confirmed or running > 0 or digesting,
     ):
         _delete([notebook.id for notebook in notebooks])
 
