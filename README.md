@@ -132,13 +132,28 @@ yt-dlp 로 가져와 저장해 둔 값이 있을 때만 들어갑니다. 값이 
 | 환경변수 | 필수 | 값 |
 |---|---|---|
 | `NOTEBOOKLM_ST_OUTLINE_URL` | ✅ | **앱이 붙을** Outline 주소 (예: `http://192.168.0.10:3000`) |
-| `NOTEBOOKLM_ST_OUTLINE_TOKEN` | ✅ | API 토큰. scope 는 `documents.create` 와 `documents.info` 가 필요합니다 |
+| `NOTEBOOKLM_ST_OUTLINE_TOKEN` | ✅ | API 토큰. scope 는 아래 **API 토큰 발급** 을 보세요 |
 | `NOTEBOOKLM_ST_OUTLINE_COLLECTION` | ✅ | 문서를 넣을 컬렉션 ID (**UUID**. 컬렉션 이름이 아닙니다) |
 | `NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL` | | **사람이 브라우저로 열** Outline 주소. 비우면 위 주소를 그대로 씁니다 |
 
 필수 셋 중 하나라도 비면 이력 화면의 저장 버튼 자리에 안내가 나옵니다.
-앱은 그대로 뜨고 지난 실행도 읽을 수 있습니다. 발급 절차는
+앱은 그대로 뜨고 지난 실행도 읽을 수 있습니다. 배포 절차 전체는
 `docs/how-to/2026-09-16-homeserver-deploy.md` 에 있습니다.
+
+**API 토큰 발급.** Outline 웹에서 프로필 → **Settings → API Keys → New API Key**.
+
+**Scopes** 칸은 자유 입력이고 **공백으로 구분**합니다. 한 줄로 이렇게 적습니다.
+
+```
+documents.create documents.info
+```
+
+- 앞의 것은 요약본을 **올릴 때**, 뒤의 것은 정리본이 재료를 **읽을 때** 씁니다. 하나만 넣으면 그쪽 기능만 돌고 다른 쪽이 막힙니다.
+- 쉼표로 구분해도 받습니다(`documents.create, documents.info`). 칸 아래 안내문이 "Space-separated scopes…" 라고 알려 줍니다.
+- **비워 두면 전체 권한**이 됩니다 — 키를 만든 사용자가 할 수 있는 모든 것이 열립니다. 비우지 마세요.
+- 키 값은 만든 직후 **한 번만** 보입니다. 바로 복사해 `NOTEBOOKLM_ST_OUTLINE_TOKEN` 에 넣으세요.
+
+> **저장은 되는데 정리본만 안 된다면 scope 입니다.** 저장만 하던 키(`documents.create` 하나)로 정리를 시작하면 권한 오류(403)가 아니라 **인증 오류(401)** 와 `Authentication required` 가 옵니다. 토큰이 죽은 것처럼 보이지만, 저장이 되고 있다면 토큰은 멀쩡하고 `documents.info` 가 빠진 것입니다. 키를 새로 만들어 바꾸면 됩니다.
 
 **공개 주소는 언제 필요한가.** 앱은 저장할 때 API 를 한 번 부르고, 문서
 링크를 문자열로 적어 둡니다. 나중에 그 링크를 여는 것은 **브라우저**이지
