@@ -15,9 +15,11 @@ def app_db(monkeypatch, tmp_path) -> Iterator[sqlite3.Connection]:
     monkeypatch.setenv(store.DB_PATH_ENV_VAR, str(tmp_path / "app.db"))
     session.get_connection.clear()
     session.get_registry.clear()
+    session.get_digest_registry.clear()
     yield store.connect(tmp_path / "app.db")
     session.get_connection.clear()
     session.get_registry.clear()
+    session.get_digest_registry.clear()
 
 
 @pytest.fixture(autouse=True)
