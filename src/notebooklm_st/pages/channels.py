@@ -4,17 +4,42 @@
 페이지는 자기 자신을 import 하지 않는다.
 """
 
+import dataclasses
 import datetime
 import sqlite3
 
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.core import models
-from notebooklm_st.services import channel_feed, channel_lookup, channels
+from notebooklm_st.core import labels, models, new_videos, youtube
+from notebooklm_st.services import (
+    channel_feed,
+    channel_lookup,
+    channels,
+    questions,
+    run_history,
+    runner,
+    store,
+)
 
 _URL_KEY = "channels_url"
 _BASELINE_KEY = "channels_baseline"
+_QUESTIONS_KEY = "channels_questions"
+_FOUND_KEY = "channels_found"
+_STARTED_KEY = "channels_started"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Checked:
+    """채널 하나의 확인 결과.
+
+    세션에 담는 화면 전용 값이다. 채널 제목을 복사해 두므로 확인
+    뒤에 채널을 지워도 목록이 그대로 보인다.
+    """
+
+    title: str
+    entries: tuple[models.FeedEntry, ...]
+    error: str | None
 
 
 def render() -> None:
@@ -26,6 +51,7 @@ def render() -> None:
     if not channel_list:
         st.info("등록된 채널이 없습니다. 위에서 채널 URL 을 등록하세요.")
         return
+    _render_check(connection, channel_list)
     _render_list(connection, channel_list)
 
 
@@ -141,3 +167,157 @@ def _save_baseline(
         st.error(str(error))
         return
     st.rerun()
+
+
+def _render_check(
+    connection: sqlite3.Connection, channel_list: list[models.Channel]
+) -> None:
+    """확인 버튼과 그 결과를 그린다."""
+    if st.button("새 영상 확인", key="channels_check"):
+        st.session_state[_FOUND_KEY] = _check(connection, channel_list)
+        st.session_state[_STARTED_KEY] = set()
+    found = st.session_state.get(_FOUND_KEY)
+    if found is None:
+        return
+    _render_found(connection, found)
+
+
+def _check(
+    connection: sqlite3.Connection, channel_list: list[models.Channel]
+) -> list[_Checked]:
+    """채널마다 피드를 읽어 신규를 고른다.
+
+    **한 채널이 실패해도 멈추지 않는다.** 부분 목록임이 화면에
+    드러나고 실패한 채널이 사유와 함께 남는다. 정리본이 멈추는
+    이유(부분 결과가 완전해 보인다)가 여기엔 없다.
+
+    Args:
+        connection: 열린 커넥션.
+        channel_list: 확인할 채널들.
+
+    Returns:
+        채널 순서대로의 확인 결과.
+    """
+    known = run_history.list_video_ids(connection)
+    results: list[_Checked] = []
+    with st.spinner("새 영상을 확인하는 중"):
+        for channel in channel_list:
+            feed = channel_feed.fetch(channel.channel_id)
+            if feed.error is not None:
+                results.append(_Checked(channel.title, (), feed.error))
+                continue
+            results.append(
+                _Checked(
+                    channel.title,
+                    new_videos.select(feed.entries, channel.baseline, known),
+                    None,
+                )
+            )
+    return results
+
+
+def _render_found(
+    connection: sqlite3.Connection, found: list[_Checked]
+) -> None:
+    """확인 결과를 그리고 요약을 시작할 수 있게 한다."""
+    question_list = questions.list_questions(connection)
+    selected: list[models.Question] = []
+    if not question_list:
+        st.info("질문 관리 화면에서 질문을 먼저 등록하세요.")
+    else:
+        selected = st.multiselect(
+            "질문 선택",
+            options=question_list,
+            format_func=lambda question: question.title,
+            key=_QUESTIONS_KEY,
+            help="고른 질문을 이 목록의 모든 요약에 씁니다.",
+        )
+    for item in found:
+        if item.error is not None:
+            st.error(f"{item.title}: {item.error}")
+    total = sum(len(item.entries) for item in found)
+    if total == 0:
+        if all(item.error is None for item in found):
+            st.info("새 영상이 없습니다.")
+        return
+    # 등록된 질문이 아예 없으면 위에서 이미 안내를 냈다. 그 위에
+    # "질문을 하나 이상 고르세요" 를 겹쳐 적지 않는다.
+    reason = _blocked_reason(selected) if question_list else None
+    if reason is not None:
+        # 영상마다 그리면 같은 문장이 목록을 도배한다. 한 번만 적는다.
+        st.info(reason)
+    for item in found:
+        if item.entries:
+            st.subheader(item.title)
+            for entry in item.entries:
+                _render_entry(entry, selected, reason, bool(question_list))
+
+
+def _blocked_reason(selected: list[models.Question]) -> str | None:
+    """요약을 막을 이유를 찾아 문장으로 돌려준다.
+
+    질의와 정리는 같은 쿠키로 NotebookLM 에 붙으므로 동시에 돌리지
+    않는다. 질의 화면과 같은 가드다.
+
+    Args:
+        selected: 고른 질문들.
+
+    Returns:
+        막을 이유. 없으면 ``None``.
+    """
+    if session.get_registry().running_count() > 0:
+        return (
+            "이미 실행 중인 질의가 있습니다. 실행 현황 화면에서"
+            " 완료를 확인한 뒤 시작하세요."
+        )
+    if session.get_digest_registry().is_running():
+        return (
+            "정리본을 작성 중입니다. 정리본 화면에서 완료를 확인한 뒤"
+            " 시작하세요."
+        )
+    if not selected:
+        return "질문을 하나 이상 고르세요."
+    return None
+
+
+def _render_entry(
+    entry: models.FeedEntry,
+    selected: list[models.Question],
+    reason: str | None,
+    can_run: bool,
+) -> None:
+    """신규 영상 한 줄과 요약 버튼을 그린다.
+
+    Args:
+        entry: 그릴 신규 영상.
+        selected: 고른 질문들.
+        reason: 요약을 막을 이유. 없으면 ``None``.
+        can_run: 등록된 질문이 하나라도 있는가. 없으면 버튼 자체를
+            그리지 않는다(→ 스펙 §10.3). 미선택·실행 중과 달리
+            질문이 없으면 누를 길이 아예 없기 때문이다.
+    """
+    url = youtube.watch_url(entry.video_id)
+    started = st.session_state.get(_STARTED_KEY, set())
+    left, right = st.columns([4, 1])
+    left.markdown(
+        f"[{labels.shorten(entry.title)}]({url})"
+        f" · {entry.published.astimezone():%Y-%m-%d %H:%M}"
+    )
+    if entry.video_id in started:
+        right.caption("실행 중")
+        return
+    if not can_run:
+        return
+    if right.button(
+        "요약",
+        key=f"channels_run_{entry.video_id}",
+        disabled=reason is not None,
+    ):
+        runner.start_run(
+            session.get_registry(),
+            url,
+            selected,
+            store.default_db_path(),
+        )
+        st.session_state[_STARTED_KEY] = started | {entry.video_id}
+        st.rerun()

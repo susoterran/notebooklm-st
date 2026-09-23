@@ -5,7 +5,14 @@ import datetime
 import pytest
 from streamlit.testing import v1
 
-from notebooklm_st.services import channel_feed, channel_lookup, channels
+from notebooklm_st.core import models
+from notebooklm_st.services import (
+    channel_feed,
+    channel_lookup,
+    channels,
+    questions,
+    run_history,
+)
 
 CHANNEL_ID = "UCsBjURrPoezykLs9EqgamOA"
 HANDLE_URL = "https://www.youtube.com/@Fireship"
@@ -30,6 +37,32 @@ def button_by(app, label):
 def date_input_by(app, label):
     """라벨로 날짜 입력을 찾는다. 같은 이유로 인덱스를 쓰지 않는다."""
     return next(item for item in app.date_input if item.label == label)
+
+
+def make_entry(video_id="TbkUKCm3CHQ", published="2026-09-25T01:00:00+00:00"):
+    """피드 항목 하나를 만든다."""
+    return models.FeedEntry(
+        video_id=video_id,
+        title="새 영상",
+        published=datetime.datetime.fromisoformat(published),
+    )
+
+
+def feed_with(*entries, error=None):
+    """준비된 피드를 돌려주는 가짜 fetch 를 만든다."""
+
+    def fetch(channel_id, **kwargs):
+        """채널 ID 를 무시하고 준비된 결과를 돌려준다."""
+        return channel_feed.FeedResult(tuple(entries), error)
+
+    return fetch
+
+
+def registered(connection, title="Fireship"):
+    """기준일이 지난 채널 하나를 등록한다."""
+    return channels.add_channel(
+        connection, CHANNEL_ID, title, HANDLE_URL, "2026-09-01"
+    )
 
 
 @pytest.fixture
@@ -189,3 +222,149 @@ def test_deleting_removes_the_channel(app_db) -> None:
 
     assert not app.exception
     assert channels.list_channels(app_db) == []
+
+
+def test_checking_lists_new_videos(app_db, monkeypatch) -> None:
+    """확인을 누르면 신규 영상이 목록에 나온다."""
+    from notebooklm_st.pages import channels as channels_page
+
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    monkeypatch.setattr(
+        channels_page.channel_feed, "fetch", feed_with(make_entry())
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+
+    assert not app.exception
+    rendered = " ".join(item.value for item in app.markdown)
+    assert "새 영상" in rendered
+
+
+def test_an_already_summarized_video_is_not_listed(app_db, monkeypatch) -> None:
+    """이미 요약한 영상은 신규로 뜨지 않는다."""
+    from notebooklm_st.pages import channels as channels_page
+
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    run_history.save_run(
+        app_db,
+        models.RunResult(
+            url="https://youtu.be/TbkUKCm3CHQ",
+            video_id="TbkUKCm3CHQ",
+            title="이미 한 것",
+            items=(),
+        ),
+    )
+    monkeypatch.setattr(
+        channels_page.channel_feed, "fetch", feed_with(make_entry())
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+
+    assert any("새 영상이 없습니다" in item.value for item in app.info)
+
+
+def test_a_channel_failure_does_not_stop_the_others(
+    app_db, monkeypatch
+) -> None:
+    """채널 하나가 실패해도 나머지는 보인다."""
+    from notebooklm_st.pages import channels as channels_page
+
+    registered(app_db, title="되는 채널")
+    channels.add_channel(
+        app_db, "UC" + "z" * 22, "안 되는 채널", HANDLE_URL, "2026-09-01"
+    )
+
+    def fetch(channel_id, **kwargs):
+        """한 채널만 실패시킨다."""
+        if channel_id == CHANNEL_ID:
+            return channel_feed.FeedResult((make_entry(),), None)
+        return channel_feed.FeedResult((), "일시적인 오류입니다.")
+
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    monkeypatch.setattr(channels_page.channel_feed, "fetch", fetch)
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+
+    assert not app.exception
+    rendered = " ".join(item.value for item in app.markdown)
+    assert "새 영상" in rendered
+    assert any("일시적인 오류" in item.value for item in app.error)
+
+
+def test_no_questions_blocks_the_summary(app_db, monkeypatch) -> None:
+    """질문이 없으면 요약 버튼을 그리지 않는다."""
+    from notebooklm_st.pages import channels as channels_page
+
+    registered(app_db)
+    monkeypatch.setattr(
+        channels_page.channel_feed, "fetch", feed_with(make_entry())
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+
+    assert any("질문 관리" in item.value for item in app.info)
+    assert all(item.label != "요약" for item in app.button)
+
+
+def test_summary_hands_the_video_to_the_runner(app_db, monkeypatch) -> None:
+    """요약을 누르면 그 영상 URL 과 고른 질문이 러너로 넘어간다."""
+    from notebooklm_st.pages import channels as channels_page
+
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    monkeypatch.setattr(
+        channels_page.channel_feed, "fetch", feed_with(make_entry())
+    )
+    received: dict[str, object] = {}
+
+    def fake_start(registry, url, question_list, db_path, **kwargs):
+        """넘어온 인자를 기록한다."""
+        received["url"] = url
+        received["questions"] = [item.title for item in question_list]
+        return None
+
+    monkeypatch.setattr(channels_page.runner, "start_run", fake_start)
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
+    summary = next(item for item in app.button if item.label == "요약")
+    summary.click().run()
+
+    assert received["url"] == ("https://www.youtube.com/watch?v=TbkUKCm3CHQ")
+    assert received["questions"] == ["핵심 주장"]
+
+
+def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
+    """질의가 돌고 있으면 요약을 시작할 수 없다."""
+    from notebooklm_st import session
+    from notebooklm_st.pages import channels as channels_page
+
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    monkeypatch.setattr(
+        channels_page.channel_feed, "fetch", feed_with(make_entry())
+    )
+    session.get_registry().create(
+        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("질문",)
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
+
+    summary = next(item for item in app.button if item.label == "요약")
+    assert summary.disabled is True
+    assert any("질의" in item.value for item in app.info)
