@@ -1,6 +1,7 @@
 """화면과 저장소가 함께 쓰는 값 객체."""
 
 import dataclasses
+import datetime
 import json
 from collections.abc import Sequence
 
@@ -14,6 +15,34 @@ class Question:
     text: str
     created_at: str
     updated_at: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Channel:
+    """구독 중인 채널 하나."""
+
+    id: int
+    channel_id: str
+    """``UC`` 로 시작하는 YouTube 채널 ID."""
+    title: str
+    url: str
+    baseline: str
+    """``YYYY-MM-DD``. 이 날짜 이후 업로드만 신규로 본다."""
+    created_at: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FeedEntry:
+    """채널 피드의 항목 하나.
+
+    채널이 어느 것인지는 담지 않는다. 호출자가 채널마다 따로 읽어
+    쓰므로 중복이 된다.
+    """
+
+    video_id: str
+    title: str
+    published: datetime.datetime
+    """타임존이 붙은 시각. 피드가 UTC 로 준다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
