@@ -162,17 +162,23 @@ def _render_finished(
             st.info(text)
         else:
             st.error(text)
-        if st.button("재료 다시 고르기", key="digest_retry"):
-            registry.clear()
-            st.rerun()
+        _retry_button(registry)
         return
     if handle.draft is None:
+        # mypy 는 ``draft: DigestDraft | None`` 만 보고 이 분기를 아직
+        # 좁히지 못한다. 지금은 도달하지 않아도 타입 좁히기에 필요해
+        # 남겨 둔다.
         st.warning("작성이 끝났지만 결과가 비어 있습니다.")
-        if st.button("재료 다시 고르기", key="digest_retry"):
-            registry.clear()
-            st.rerun()
+        _retry_button(registry)
         return
     _render_draft(registry, handle.draft)
+
+
+def _retry_button(registry: digest_runner.DigestRegistry) -> None:
+    """끝난 정리를 지우고 재료 선택으로 돌아가는 버튼을 그린다."""
+    if st.button("재료 다시 고르기", key="digest_retry"):
+        _reset(registry)
+        st.rerun()
 
 
 def _render_draft(
@@ -194,7 +200,7 @@ def _render_draft(
         help="지금 보이는 그대로 올립니다.",
     )
     if right.button("버리기", key="digest_discard"):
-        registry.clear()
+        _reset(registry)
         st.rerun()
     st.caption(
         f"재료 {len(draft.sources)}건 ·"
@@ -226,9 +232,22 @@ def _save(
         except outline.OutlineError as error:
             st.error(str(error))
             return
-    registry.clear()
+    _reset(registry)
     st.session_state[_SAVED_KEY] = (document.title, document.url)
     st.rerun()
+
+
+def _reset(registry: digest_runner.DigestRegistry) -> None:
+    """슬롯을 비우고 이번 초안에 쓰던 제목 입력을 지운다.
+
+    ``_TITLE_KEY`` 위젯 값은 한 번 ``session_state`` 에 들어가면
+    그다음부터는 ``value=`` 기본값이 무시되고 저장된 값이 이긴다.
+    지우지 않으면 다음 초안의 제목 칸에 이전 정리본의 제목이 남을
+    여지가 생긴다. 저장·버리기·재시도, 정리를 끝내는 모든 자리에서
+    이 함수 하나로 슬롯과 제목 입력을 같이 정리한다.
+    """
+    registry.clear()
+    st.session_state.pop(_TITLE_KEY, None)
 
 
 def _render_saved() -> None:

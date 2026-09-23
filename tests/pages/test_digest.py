@@ -201,7 +201,7 @@ def test_blank_instruction_blocks_the_start(app_db, outline_env) -> None:
     assert app.button[0].disabled is True
 
 
-def make_draft(instruction="정리해 줘"):
+def make_draft(instruction="정리해 줘", created_on="2026-09-23"):
     """세션에 얹을 초안을 만든다."""
     return models.DigestDraft(
         body="## 공통 주장\n\n셋 다 같은 말을 한다.",
@@ -220,7 +220,7 @@ def make_draft(instruction="정리해 줘"):
             ),
         ),
         instruction=instruction,
-        created_on="2026-09-23",
+        created_on=created_on,
     )
 
 
@@ -360,3 +360,58 @@ def test_failed_digest_shows_the_error(app_db, outline_env) -> None:
 
     assert len(app.error) == 1
     assert "읽지 못했습니다" in app.error[0].value
+
+
+def test_second_draft_gets_a_fresh_title(
+    app_db, outline_env, monkeypatch
+) -> None:
+    """한 세션에서 정리본을 두 번 만들면 제목 칸이 새로 시작한다.
+
+    Streamlit 은 위젯의 ``value=`` 를 그 key 가 session_state 에
+    처음 나타날 때만 반영한다. 첫 초안의 제목 key 를 지우지 않으면
+    두 번째 초안에서도 첫 번째 제목이 그대로 남는다.
+    """
+    from notebooklm_st import session
+    from notebooklm_st.pages import digest as digest_page
+
+    finished_registry(make_draft(created_on="2026-09-23"))
+    monkeypatch.setattr(
+        digest_page.outline,
+        "create_document",
+        lambda config, title, markdown, **kwargs: outline.SavedDocument(
+            id="doc-9", title=title, url=f"{BASE_URL}/doc/doc-9"
+        ),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    assert app.text_input[0].value == "정리본 2026-09-23"
+    app.button[0].click().run()  # 저장
+    app.button[0].click().run()  # 새 정리본 만들기
+
+    registry = session.get_digest_registry()
+    registry.start()
+    registry.finish(make_draft(created_on="2026-09-24"))
+    app.run()
+
+    assert not app.exception
+    assert app.text_input[0].value == "정리본 2026-09-24"
+
+
+def test_discarded_draft_gets_a_fresh_title(app_db, outline_env) -> None:
+    """버린 초안 다음에도 제목 칸이 새로 시작한다."""
+    from notebooklm_st import session
+
+    finished_registry(make_draft(created_on="2026-09-23"))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button[1].click().run()  # 버리기
+
+    registry = session.get_digest_registry()
+    registry.start()
+    registry.finish(make_draft(created_on="2026-09-24"))
+    app.run()
+
+    assert not app.exception
+    assert app.text_input[0].value == "정리본 2026-09-24"
