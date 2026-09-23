@@ -9,13 +9,14 @@ def make_source(
     run_id: int = 1,
     outline_title: str | None = "AI 에이전트의 미래",
     outline_url: str | None = "https://wiki.example.com/doc/ai-abc",
+    title: str | None = "영상 제목",
 ) -> models.RunSummary:
     """저장된 요약본 하나를 만든다."""
     return models.RunSummary(
         id=run_id,
         url="https://youtu.be/dQw4w9WgXcQ",
         video_id="dQw4w9WgXcQ",
-        title="영상 제목",
+        title=title,
         created_at="2026-09-20T14:02:11",
         answer_count=0,
         outline_id=f"doc-{run_id}",
@@ -77,8 +78,8 @@ def test_source_without_a_link_is_plain_text() -> None:
     assert "](" not in document
 
 
-def test_source_falls_back_to_the_video_id() -> None:
-    """문서 제목이 없으면 영상 ID 로 대신한다."""
+def test_source_uses_video_title_when_no_outline() -> None:
+    """문서 제목이 없으면 영상 제목으로 대신한다."""
     draft = make_draft(
         sources=[make_source(outline_title=None, outline_url=None)]
     )
@@ -86,6 +87,17 @@ def test_source_falls_back_to_the_video_id() -> None:
     document = digest_markdown.to_markdown(draft)
 
     assert "- 영상 제목" in document
+
+
+def test_source_falls_back_to_the_video_id() -> None:
+    """둘 다 없으면 영상 ID 로 대신한다."""
+    draft = make_draft(
+        sources=[make_source(outline_title=None, outline_url=None, title=None)]
+    )
+
+    document = digest_markdown.to_markdown(draft)
+
+    assert "- dQw4w9WgXcQ" in document
 
 
 def test_rule_is_preceded_by_a_blank_line() -> None:
