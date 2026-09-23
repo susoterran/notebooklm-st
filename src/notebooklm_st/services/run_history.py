@@ -10,6 +10,26 @@ from notebooklm_st.core import models
 from notebooklm_st.services import store
 
 
+def list_video_ids(connection: sqlite3.Connection) -> set[str]:
+    """이력에 남은 영상 ID 를 모두 돌려준다.
+
+    빈 문자열은 뺀다. ``video_id`` 는
+    ``youtube.extract_video_id(url) or ""`` 로 채워지므로 ID 를 못
+    뽑은 옛 실행은 빈 문자열을 가진다. 그것이 집합에 섞이면 ID 가
+    빈 피드 항목과 엉뚱하게 맞부딪힌다.
+
+    Args:
+        connection: 열린 커넥션.
+
+    Returns:
+        요약한 적이 있는 영상 ID 집합.
+    """
+    rows = connection.execute(
+        "SELECT DISTINCT video_id FROM runs WHERE video_id <> ''"
+    ).fetchall()
+    return {row["video_id"] for row in rows}
+
+
 def save_run(
     connection: sqlite3.Connection,
     result: models.RunResult,
