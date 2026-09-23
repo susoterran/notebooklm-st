@@ -101,7 +101,8 @@ uv run notebooklm login
 2. **질의** 화면에서 YouTube URL 을 입력하고 질문을 선택한 뒤 실행합니다.
 3. **실행 현황** 화면에서 진행 상황을 봅니다. (1초마다 자동 갱신)
 4. **이력** 화면에서 답변을 확인하고, 제목을 정한 뒤 **Outline 에 저장**합니다. 저장하면 로컬에는 문서명과 링크만 남고 수정·삭제·검색은 Outline 에서 합니다.
-5. **정리** 화면에서 삭제되지 않고 남은 임시 노트북(`tmp-` 접두사)을 지웁니다.
+5. **정리본** 화면에서 저장된 요약본 여럿을 골라 하나의 글로 정리합니다. 제목을 확인하고 저장하면 Outline 에 문서가 생기며, 정리본은 로컬에 남지 않습니다.
+6. **정리** 화면에서 삭제되지 않고 남은 임시 노트북(`tmp-` 접두사)을 지웁니다.
 
 Outline 문서는 메타데이터 리스트로 시작하고 구분선 아래에 답변이
 이어집니다.
@@ -131,13 +132,16 @@ yt-dlp 로 가져와 저장해 둔 값이 있을 때만 들어갑니다. 값이 
 | 환경변수 | 필수 | 값 |
 |---|---|---|
 | `NOTEBOOKLM_ST_OUTLINE_URL` | ✅ | **앱이 붙을** Outline 주소 (예: `http://192.168.0.10:3000`) |
-| `NOTEBOOKLM_ST_OUTLINE_TOKEN` | ✅ | API 토큰. scope 는 `documents.create` 하나면 됩니다 |
+| `NOTEBOOKLM_ST_OUTLINE_TOKEN` | ✅ | API 토큰. scope 는 `documents.create` 와 `documents.info` 가 필요합니다 |
 | `NOTEBOOKLM_ST_OUTLINE_COLLECTION` | ✅ | 문서를 넣을 컬렉션 ID (**UUID**. 컬렉션 이름이 아닙니다) |
 | `NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL` | | **사람이 브라우저로 열** Outline 주소. 비우면 위 주소를 그대로 씁니다 |
 
 필수 셋 중 하나라도 비면 이력 화면의 저장 버튼 자리에 안내가 나옵니다.
 앱은 그대로 뜨고 지난 실행도 읽을 수 있습니다. 발급 절차는
 `docs/how-to/2026-09-16-homeserver-deploy.md` 에 있습니다.
+
+API 키 scope 에는 `documents.create` 와 `documents.info` 가 필요합니다. 앞의 것은 요약본을
+올릴 때, 뒤의 것은 정리본이 재료를 읽을 때 씁니다.
 
 **공개 주소는 언제 필요한가.** 앱은 저장할 때 API 를 한 번 부르고, 문서
 링크를 문자열로 적어 둡니다. 나중에 그 링크를 여는 것은 **브라우저**이지
@@ -179,7 +183,7 @@ uv run python scripts/smoke_check.py "https://www.youtube.com/watch?v=..."
 src/notebooklm_st/
 ├── app.py           # 진입점. st.navigation 으로 페이지 등록
 ├── session.py       # @st.cache_resource 로 공유하는 커넥션·레지스트리·인증 게이트
-├── pages/           # 질의 · 실행 현황 · 질문 관리 · 이력 · 정리
+├── pages/           # 질의 · 실행 현황 · 질문 관리 · 이력 · 정리본 · 정리
 ├── components/      # 답변 카드, 인증 게이트, 스키마 게이트, 진행 표시
 ├── services/        # 외부 I/O — NotebookLM API, SQLite, 인증, 백그라운드 러너
 └── core/            # 순수 로직 — URL 파싱, 답변 정제, 마크다운 변환, 오류 매핑, 값 객체
