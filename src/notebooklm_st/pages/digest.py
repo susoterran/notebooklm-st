@@ -104,9 +104,11 @@ def _render_form(registry: digest_runner.DigestRegistry) -> None:
         key=_INSTRUCTION_KEY,
         help="이번 정리에만 적용됩니다. 저장되지 않습니다.",
     )
-    _render_start(
-        registry, config, [by_id[key] for key in selected_ids], instruction
-    )
+    # 다른 탭에서 그 사이 이력이 지워지면 선택값이 남은 채로 위젯이
+    # 되살아나고, Streamlit 은 그 자리에 원본 라벨 문자열을 끼워
+    # 넣는다. by_id 에 없는 값은 조용히 걸러 트레이스백을 막는다.
+    selected = [by_id[key] for key in selected_ids if key in by_id]
+    _render_start(registry, config, selected, instruction)
 
 
 def _render_start(
