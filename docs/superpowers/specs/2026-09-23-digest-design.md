@@ -279,7 +279,7 @@ def build(
     runs: Sequence[models.RunSummary],
     instruction: str,
     on_progress: Callable[[str], None],
-) -> DigestDraft
+) -> models.DigestDraft
 ```
 
 1. `runs` 를 돌며 `outline.fetch_document(config, run.outline_id)`
@@ -289,7 +289,8 @@ def build(
 2. 읽은 문서를 `models.DigestSource` 로 옮겨
    `nlm.run_digest_pipeline` 에 넘긴다. 이 함수는 `asyncio.run` 으로
    부른다 — 스레드 본체에서 호출되므로 이벤트 루프가 없다
-3. 결과를 `DigestDraft(body, sources, instruction, created_on)` 로
+3. 결과를 `models.DigestDraft(body, sources, instruction,
+   created_on)` 로
    돌려준다. `sources` 는 출처 링크를 만들 `RunSummary` 들이다
 
 **한 건이라도 못 읽으면 거기서 멈춘다.** `OutlineError` 의 메시지
@@ -310,7 +311,7 @@ def build(
 class DigestHandle:
     status: Literal["running", "done", "failed"]
     progress: list[str]
-    draft: digest.DigestDraft | None
+    draft: models.DigestDraft | None
     error_message: str | None
     error_level: Literal["info", "error"] | None
     started_at: str
@@ -343,7 +344,7 @@ Streamlit API 를 부르지 않는다.
 ## 9. `core/digest_markdown.py` — 문서의 모양
 
 ```python
-def to_markdown(draft: DigestDraft) -> str
+def to_markdown(draft: models.DigestDraft) -> str
 ```
 
 ```markdown
@@ -489,7 +490,7 @@ DB 삭제를 요구했지만 R5 는 요구하지 않는다. 배포는 이미지�
 - `services/outline.py` — `OutlineDocument`·`fetch_document`
 - `services/nlm.py` — `run_digest_pipeline`, `SourcesLike.add_text`,
   소스 상한 상수
-- `core/models.py` — `DigestSource`
+- `core/models.py` — `DigestSource`·`DigestDraft`
 - `core/markdown_export.py` — `_one_line` → `one_line`
 - `pages/maintenance.py`·`pages/ask.py` — 가드
 - `app.py` — 네비게이션 · `session.py` — 레지스트리
