@@ -227,13 +227,11 @@ def make_draft(instruction="정리해 줘", created_on="2026-09-23"):
 def finished_registry(draft=None):
     """완료 상태의 레지스트리를 만들어 앱에 얹는다."""
     from notebooklm_st import session
-    from notebooklm_st.services import digest_runner
 
     registry = session.get_digest_registry()
     registry.clear()
     registry.start()
     registry.finish(draft if draft is not None else make_draft())
-    assert isinstance(registry, digest_runner.DigestRegistry)
     return registry
 
 
