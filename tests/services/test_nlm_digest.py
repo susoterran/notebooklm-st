@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from notebooklm import exceptions
 
-from notebooklm_st.core import models
+from notebooklm_st.core import digest_title, models
 from notebooklm_st.services import nlm
 
 
@@ -134,7 +134,10 @@ def make_sources(*titles):
 
 
 def digest(sources, client, instruction=INSTRUCTION, progress=None):
-    """가짜 클라이언트로 정리 파이프라인을 동기적으로 실행한다."""
+    """가짜 클라이언트로 정리 파이프라인을 동기적으로 실행한다.
+
+    ``(주제, 본문)`` 을 돌려준다.
+    """
     messages = progress if progress is not None else []
     return asyncio.run(
         nlm.run_digest_pipeline(
@@ -190,7 +193,66 @@ def test_the_instruction_is_asked_once():
 
     asks = [call for call in calls if call[0] == "ask"]
     assert len(asks) == 1
-    assert asks[0][2] == INSTRUCTION
+    assert INSTRUCTION in asks[0][2]
+
+
+def test_the_prompt_asks_for_a_title():
+    """제목 요구가 지시와 함께 한 번에 나간다."""
+    calls = []
+
+    digest(make_sources("요약 A"), FakeClient(calls))
+
+    asks = [call for call in calls if call[0] == "ask"]
+    assert digest_title.DIRECTIVE in asks[0][2]
+
+
+def test_the_topic_comes_from_the_title_line():
+    """첫 줄의 제목 표시가 주제가 되고 본문에서 빠진다."""
+    calls = []
+    answer = "제목: 밸류에이션 세 강의\n\n핵심은 셋이다."
+    client = FakeClient(calls, chat=FakeChat(calls, answer=answer))
+
+    topic, body = digest(make_sources("요약 A"), client)
+
+    assert topic == "밸류에이션 세 강의"
+    assert body == "핵심은 셋이다."
+
+
+def test_the_topic_is_missing_when_the_answer_has_no_title_line():
+    """제목 표시가 없으면 주제 없이 본문만 돌려준다."""
+    calls = []
+
+    topic, body = digest(make_sources("요약 A"), FakeClient(calls))
+
+    assert topic is None
+    assert body == "정리된 글"
+
+
+def test_the_topic_drops_citation_markers():
+    """주제에 박힌 인용 번호도 걷어낸다."""
+    calls = []
+    answer = "제목: 밸류에이션 [1]\n\n핵심은 셋이다."
+    client = FakeClient(calls, chat=FakeChat(calls, answer=answer))
+
+    topic, _ = digest(make_sources("요약 A"), client)
+
+    assert topic == "밸류에이션"
+
+
+def test_a_rule_after_the_title_line_does_not_eat_the_body():
+    """제목 줄 바로 뒤의 수평선이 본문을 삼키지 않는다.
+
+    후속 제안 블록을 자르는 규칙은 **마지막** 수평선을 기준으로 하므로,
+    제목 줄을 먼저 떼어내지 않으면 남은 수평선이 본문 전체를 잘라낸다.
+    """
+    calls = []
+    answer = "제목: 주제다\n\n---\n\n핵심은 셋이다."
+    client = FakeClient(calls, chat=FakeChat(calls, answer=answer))
+
+    topic, body = digest(make_sources("요약 A"), client)
+
+    assert topic == "주제다"
+    assert "핵심은 셋이다." in body
 
 
 def test_notebook_is_deleted_when_a_source_fails():
@@ -214,7 +276,7 @@ def test_body_drops_citation_markers():
         calls, chat=FakeChat(calls, answer="핵심은 셋이다 [1].")
     )
 
-    body = digest(make_sources("요약 A"), client)
+    _, body = digest(make_sources("요약 A"), client)
 
     assert body == "핵심은 셋이다."
 
@@ -225,7 +287,7 @@ def test_body_drops_the_trailing_suggestion_block():
     answer = "핵심은 셋이다.\n\n---\n\n💡 **다음으로 무엇을 할까요?**"
     client = FakeClient(calls, chat=FakeChat(calls, answer=answer))
 
-    body = digest(make_sources("요약 A"), client)
+    _, body = digest(make_sources("요약 A"), client)
 
     assert "다음으로" not in body
     assert body.startswith("핵심은 셋이다.")

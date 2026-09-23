@@ -8,7 +8,13 @@ from typing import Protocol, cast
 import notebooklm
 from notebooklm import exceptions
 
-from notebooklm_st.core import answer_text, errors, models, youtube
+from notebooklm_st.core import (
+    answer_text,
+    digest_title,
+    errors,
+    models,
+    youtube,
+)
 
 SOURCE_WAIT_TIMEOUT = 120.0
 TEMP_TITLE_PREFIX = "tmp-"
@@ -223,11 +229,15 @@ async def run_digest_pipeline(
     instruction: str,
     on_progress: Callable[[str], None],
     client_factory: ClientFactory = default_client_factory,
-) -> str:
+) -> tuple[str | None, str]:
     """재료 여러 편을 넣고 정리 지시를 한 번 던진다.
 
     ``run_pipeline`` 과 대칭이다 — 임시 노트북을 만들어 쓰고 반드시
     지운다. 다른 점은 소스가 여럿이고 질문이 하나라는 것뿐이다.
+
+    지시에는 제목 요구가 함께 실려 나가고(→ ``core.digest_title``)
+    돌아온 답변에서 그 줄을 떼어 주제로 돌려준다. 질의를 두 번
+    던지지 않는다.
 
     Args:
         sources: 노트북에 넣을 글들. 상한은 호출자가 지킨다
@@ -238,7 +248,8 @@ async def run_digest_pipeline(
             가짜 클라이언트를 넣을 수 있게 뚫어 둔다.
 
     Returns:
-        인용 흔적을 걷어낸 정리본 본문.
+        ``(주제, 본문)``. 둘 다 인용 흔적을 걷어낸 값이며, 답변이
+        제목 줄을 주지 않았으면 주제가 ``None`` 이다.
 
     Raises:
         exceptions.NotebookLMError: 노트북 생성·소스 등록·질의 중
@@ -265,18 +276,27 @@ async def run_digest_pipeline(
                     wait_timeout=SOURCE_WAIT_TIMEOUT,
                 )
             on_progress("정리 중")
-            result = await client.chat.ask(notebook.id, instruction)
+            result = await client.chat.ask(
+                notebook.id, digest_title.wrap(instruction)
+            )
         finally:
             # run_pipeline 과 같은 이유로 여기서 on_progress 를 부르지
             # 않는다. 콜백이 Streamlit 을 건드리는데, 사용자가 페이지를
             # 옮긴 순간 스크립트가 중단되어 삭제에 닿지 못한다.
             await client.notebooks.delete(notebook.id)
 
+    # 제목 줄을 **먼저** 떼어낸다. 후속 제안 블록을 자르는 규칙은
+    # 마지막 수평선을 기준으로 하므로, 답변이 제목 줄 뒤에 수평선을
+    # 두면 그 규칙이 본문 전체를 잘라낸다.
+    topic, body = digest_title.split(result.answer)
     # 인용 번호는 임시 노트북 안에서만 뜻이 있다. 노트북이 지워진
     # 뒤에도 위키에 남으면 아무 데도 가리키지 않는 숫자가 된다.
-    return answer_text.strip_citation_markers(
-        answer_text.strip_trailing_block(result.answer)
+    cleaned = answer_text.strip_citation_markers(
+        answer_text.strip_trailing_block(body)
     )
+    if topic is not None:
+        topic = answer_text.strip_citation_markers(topic).strip() or None
+    return topic, cleaned
 
 
 async def list_temp_notebooks(

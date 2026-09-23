@@ -128,8 +128,12 @@ class DigestDraft:
     sources: tuple[RunSummary, ...]
     instruction: str
     created_on: str
-    """``2026-09-23`` 형식의 날짜. 문서에 적고 제목
-    기본값에도 쓴다."""
+    """``2026-09-23`` 형식의 날짜. 문서에 적고, 주제를
+    받지 못했을 때 제목 기본값에도 쓴다."""
+    topic: str | None = None
+    """NotebookLM 이 정리와 함께 지은 주제. 제목
+    기본값이 된다. 답변이 제목 줄을 주지 않으면
+    ``None`` 이다(→ ``core.digest_title``)."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

@@ -63,11 +63,11 @@ def fake_pipeline(
 
     async def run(
         sources: Any, instruction: Any, on_progress: Any, **kwargs: Any
-    ) -> str:
-        """받은 인자를 기록하고 고정된 본문을 돌려준다."""
+    ) -> tuple[str | None, str]:
+        """받은 인자를 기록하고 고정된 주제·본문을 돌려준다."""
         received["sources"] = list(sources)
         received["instruction"] = instruction
-        return "정리된 글"
+        return "밸류에이션 세 강의", "정리된 글"
 
     monkeypatch.setattr(digest.nlm, "run_digest_pipeline", run)
     return received
@@ -171,3 +171,14 @@ def test_build_returns_a_draft(fake_outline, fake_pipeline) -> None:
     assert draft.sources == tuple(runs)
     assert draft.instruction == INSTRUCTION
     assert len(draft.created_on) == len("2026-09-23")
+
+
+def test_build_carries_the_topic_into_the_draft(
+    fake_outline, fake_pipeline
+) -> None:
+    """파이프라인이 지은 주제가 초안에 실린다."""
+    draft = digest.build(
+        make_config(), [make_run(1, "요약 A")], INSTRUCTION, lambda _: None
+    )
+
+    assert draft.topic == "밸류에이션 세 강의"

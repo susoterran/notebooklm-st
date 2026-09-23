@@ -38,7 +38,7 @@ def build(
                                     실패한 경우.
     """
     sources = _read_sources(config, runs, on_progress)
-    body = asyncio.run(
+    topic, body = asyncio.run(
         nlm.run_digest_pipeline(sources, instruction, on_progress)
     )
     return models.DigestDraft(
@@ -46,6 +46,7 @@ def build(
         sources=tuple(runs),
         instruction=instruction,
         created_on=datetime.date.today().isoformat(),
+        topic=topic,
     )
 
 
