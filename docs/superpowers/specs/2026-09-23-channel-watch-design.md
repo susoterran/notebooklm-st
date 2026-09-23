@@ -148,7 +148,10 @@ entries[].timestamp   None        ← 업로드 시각이 오지 않는다
 | 실행은 **한 건씩, 기존 러너 그대로** | `runner.start_run` 과 "한 번에 하나" 가드를 그대로 쓴다. R1~R5 가 기대는 실행 모델을 건드리지 않는다 |
 | 질문은 **목록 위에서 한 번** 고른다 | 영상마다 고르면 클릭이 배로 는다. 질의 화면과 같은 질문 목록을 쓴다 |
 | 조회 결과는 **세션에만** | 신규 영상은 언제든 다시 계산할 수 있는 파생물이다. 저장하면 무효화 시점을 관리해야 한다(정리본 초안과 같은 원칙) |
-| 확인 중 한 채널이 실패해도 **계속한다** | 부분 목록임이 화면에 드러나고 실패한 채널이 사유와 함께 남는다. 정리본이 멈추는 이유(부분 결과가 완전해 보인다)가 여기엔 없다 |
+| 확인 대상은 **채널 하나** | 기준일은 채널마다 다른 값인데 화면의 입력은 하나다. 여럿을 한 번에 돌리면 그 하나가 무엇에 걸리는지 말할 수 없다(→ 10.2) |
+| 고른 기준일을 **그 채널에 저장한다** | 기준일을 정하는 자리가 화면에 하나만 남는다. 두 곳에서 고칠 수 있으면 어느 쪽이 적용됐는지 말할 수 없다(→ 10.4) |
+| 화면을 **탭 셋으로 가른다** | 세로로 쌓으면 등록 칸의 기준일이 확인 버튼 바로 위에 붙어 확인용 값으로 읽힌다. 실제로 그 오해가 났다(→ 10) |
+| 채널명은 **고칠 수 있다** | yt-dlp 가 준 이름이 길거나 사람이 부르는 이름과 다르다. 목록이 이 이름으로 정렬된다(→ 9) |
 
 ### 3.1 기각한 안
 
@@ -168,6 +171,10 @@ entries[].timestamp   None        ← 업로드 시각이 오지 않는다
   건드려야 한다. 그 자리는 R1~R5 가 모두 기대고 있는 심장이고,
   무인 실행의 요구가 확정되기 전에는 무엇을 만들어야 할지도 정확히
   모른다.
+- **등록된 채널을 한 번에 다 확인하기** — 처음 만든 모양이다.
+  버튼 하나로 전부 훑으니 편해 보였지만, 화면의 기준일 입력 하나가
+  무엇에 걸리는지 말할 수 없었고 신규가 있는 채널만 그려져 "한
+  채널만 확인됐다" 로 읽혔다. 대상을 먼저 고르게 바꿨다.
 - **스케줄러 스레드를 Streamlit 안에** — 세션이 없으면 돌지 않는다
   (→ 2.5).
 
@@ -176,16 +183,23 @@ entries[].timestamp   None        ← 업로드 시각이 오지 않는다
 ## 4. 구조
 
 ```
-pages/channels.py
-    │  채널 등록 · 새 영상 확인 · 질문 선택 · 요약 시작
+pages/channels.py                     탭 셋 · 등록 · 목록 · 이름 수정
     ├──► services/channel_lookup.py   URL → channel_id (등록 시 1회, yt-dlp)
     ├──► services/channels.py         구독 CRUD (SQLite)
-    ├──► services/channel_feed.py     피드 읽기 (httpx, 확인마다 채널당 1회)
-    ├──► services/run_history.py      list_video_ids (이미 요약한 것)
-    ├──► core/new_videos.py           신규 판정(순수 함수)
-    ├──► services/questions.py        list_questions (읽기만)
-    └──► services/runner.py           start_run (R1 그대로)
+    ├──► services/channel_feed.py     등록 시 피드 존재 확인 (httpx)
+    └──► pages/_channel_check.py      "새 영상 확인" 탭
+            ├──► services/channels.py       기준일 저장
+            ├──► services/channel_feed.py   피드 읽기 (확인 1회)
+            ├──► services/run_history.py    list_video_ids (이미 요약한 것)
+            ├──► core/new_videos.py         신규 판정(순수 함수)
+            ├──► services/questions.py      list_questions (읽기만)
+            └──► services/runner.py         start_run (R1 그대로)
 ```
+
+화면을 두 파일로 나눈 이유는 크기다. 한 파일이 300줄을 넘으면
+쪼개는 것이 이 저장소의 규약이고, 등록·목록과 확인·요약은 서로를
+부르지 않는 두 덩어리다. `_channel_check` 는 네비게이션에 등록되지
+않으므로 이름 앞에 밑줄을 둔다.
 
 `core/new_videos.py` 는 **아무 I/O 도 모른다.** 피드에서 온 값
 객체와 기준일과 이미 요약한 ID 집합을 받아 거르고 정렬할 뿐이다.
@@ -378,6 +392,7 @@ def select(
 def list_channels(connection) -> list[models.Channel]
 def add_channel(connection, channel_id, title, url, baseline) -> models.Channel
 def update_baseline(connection, channel_pk: int, baseline: str) -> None
+def update_title(connection, channel_pk: int, title: str) -> None
 def delete_channel(connection, channel_pk: int) -> None
 ```
 
@@ -390,6 +405,10 @@ def delete_channel(connection, channel_pk: int) -> None
 - 같은 `channel_id` 를 다시 넣으면 `ValueError` 로 "이미 등록된
   채널입니다" 를 올린다. DB 의 `UNIQUE` 가 마지막 방어선이고,
   화면에 보여 줄 문장은 여기서 만든다.
+- `update_title` 은 앞뒤 공백을 지우고, 남는 것이 없으면
+  `ValueError` 로 막는다. 등록할 때 yt-dlp 가 준 이름이 길거나
+  사람이 부르는 이름과 다를 수 있고, 목록이 이 이름으로 정렬되므로
+  고칠 수 있어야 한다.
 - 삭제는 없으면 조용히 넘어간다(`delete_question` 과 같다).
 
 ### 9.1 스키마
@@ -426,19 +445,26 @@ def list_video_ids(connection: sqlite3.Connection) -> set[str]
 
 ---
 
-## 10. 화면 — `pages/channels.py`
+## 10. 화면 — `pages/channels.py` · `pages/_channel_check.py`
 
 네비게이션에서 **질의 다음** 자리에 둔다(`app.py`). 둘 다 요약을
 시작하는 화면이다.
 
+기능이 셋이라 **탭으로 가른다.** 한 화면에 세로로 쌓으면 등록 칸의
+기준일이 확인 버튼 바로 위에 붙어, 그것이 확인에 쓰이는 값으로
+읽힌다. 탭은 한 번에 하나만 보여 그 오해를 만들지 않는다.
+
 ```
 채널
-├ 채널 등록       URL 입력 · 기준일(기본 오늘) · [등록]
-├ [새 영상 확인]   등록된 채널을 차례로 조회
-├ 질문 선택        multiselect — 질의 화면과 같은 목록, 한 번만 고른다
-├ 신규 영상        채널별 묶음 · 제목 · 업로드일 · 링크 · [요약]
-└ 등록된 채널      expander: 링크 · 기준일 수정 · [삭제]
+├ [새 영상 확인] 탭   대상 채널(selectbox) · 이 채널의 기준일 · [새 영상 확인]
+│                     질문 선택(multiselect) · 신규 목록 · [요약]
+├ [채널 등록] 탭      채널 URL · 기준일(기본 오늘) · [등록]
+└ [등록된 채널] 탭    expander: 링크 · 채널 ID · 기준일(읽기 전용)
+                              채널명 입력 · [이름 저장] · [삭제]
 ```
+
+등록된 채널이 없으면 확인 탭과 목록 탭은 안내만 내고 등록 탭으로
+보낸다.
 
 ### 10.1 등록
 
@@ -450,21 +476,34 @@ def list_video_ids(connection: sqlite3.Connection) -> set[str]
 
 해석과 피드 확인은 둘 다 네트워크라 `st.spinner` 로 감싼다.
 
-기준일 기본값은 **오늘(로컬)** 이다. 과거로 당길 수 있지만 피드가
-최신 15건까지만 주므로 그보다 거슬러 올라가지는 못한다 — 도움말에
-적는다.
+기준일 기본값은 **오늘(로컬)** 이다. 등록 뒤 이 값을 바꾸는 자리는
+확인 탭이다(→ 10.2).
 
-### 10.2 확인
+### 10.2 확인 — 대상은 채널 하나다
 
-등록된 채널을 **순서대로** 조회한다. 채널당 HTTP 한 번이고 수백
-ms 다.
+`selectbox` 로 채널 하나를 고르고, 그 아래 `이 채널의 기준일` 을
+정한 뒤 `[새 영상 확인]` 을 누른다. **확인은 고른 채널만 조회한다.**
 
-한 채널이 실패해도 나머지를 계속하고, 실패한 채널은 그 자리에 사유를
-적는다(→ 3). 결과는 `(채널, 신규 목록 또는 사유)` 의 목록이다.
+여러 채널을 한 번에 돌리지 않는 이유는 기준일이다. 기준일은 채널마다
+다른 값인데 화면의 입력은 하나다. 여럿을 한 번에 돌리면 그 하나가
+무엇에 걸리는지 말할 수 없다.
+
+**고른 기준일은 확인할 때 그 채널에 저장된다.** 기준일을 정하는
+자리가 화면에 하나만 남고, 다음에 그 채널을 고르면 저장된 값이
+기본으로 뜬다.
+
+기준일 위젯의 `key` 에 **채널 id 를 넣는다.** `key` 가 같으면
+Streamlit 이 세션 값을 `value` 보다 우선해, 채널을 바꿔도 앞 채널의
+날짜가 남는다.
+
+조회는 HTTP 한 번이고 수백 ms 다. 실패하면 그 사유를 보여 준다.
 
 ### 10.3 신규 목록과 실행
 
 - 조회 결과는 **세션에만** 둔다. 화면을 떠났다 오면 다시 확인한다.
+- 결과에 **채널 id 를 함께 담는다.** 지금 고른 채널의 것이 아니면
+  그리지 않는다 — 대상을 바꿨는데 앞 채널의 목록이 남아 있으면
+  무엇을 보고 있는지 알 수 없다.
 - 질문은 목록 위에서 한 번 고른다. 등록된 질문이 없으면 안내만 내고
   `[요약]` 을 그리지 않는다(정리본 화면과 같은 패턴).
 - `[요약]` 은 `runner.start_run(registry, url, questions,
@@ -478,15 +517,15 @@ ms 다.
 - 진행 상황과 결과는 **실행 현황 화면**에서 본다. 이 화면은 시작만
   한다.
 
-### 10.4 목록과 삭제
+### 10.4 목록 · 이름 수정 · 삭제
 
 채널마다 `expander` 로 접어 둔다(질문 관리와 같은 모양). 안에서
-기준일을 고치고 삭제한다. 삭제해도 이미 만든 요약본과 이력은 그대로
+채널명을 고치고 삭제한다. 삭제해도 이미 만든 요약본과 이력은 그대로
 남는다.
 
-기준일을 고쳐도 **화면에 떠 있는 신규 목록은 바뀌지 않는다.** 목록은
-확인을 누른 시점의 결과이고 세션에만 있다(→ 10.3). 새 기준일로 보려면
-확인을 다시 누른다. 기준일 입력 옆에 그 사실을 한 줄로 적는다.
+**기준일은 여기서 읽기만 한다.** 고치는 자리는 확인 탭 하나뿐이다.
+두 곳에서 고칠 수 있으면 어느 쪽이 적용됐는지 말할 수 없다. 현재
+값을 캡션으로 적고 어디서 바꾸는지 함께 적는다.
 
 ---
 
@@ -499,13 +538,15 @@ ms 다.
 | 피드가 404 | 등록 거부. 피드 없는 채널이다 |
 | 피드가 5xx | 등록 거부하되 **다시 시도하라**고 말한다(→ 7.1) |
 | 이미 등록된 채널 | 등록 거부. "이미 등록된 채널입니다" |
-| 확인 중 한 채널 실패 | 나머지는 계속. 그 채널 자리에 사유 |
+| 고른 채널의 피드 실패 | 그 사유를 보여 준다. 목록은 그리지 않는다 |
 | 피드 항목에 필드가 빠짐 | 그 항목만 건너뛴다 |
-| 등록된 채널 없음 | 안내. 확인 버튼을 그리지 않는다 |
+| 등록된 채널 없음 | 확인 탭과 목록 탭이 안내만 내고 등록 탭으로 보낸다 |
 | 신규 없음 | "새 영상이 없습니다" |
 | 등록된 질문 없음 | 질문 관리로 안내. `[요약]` 없음 |
 | 질의·정리 실행 중 | `[요약]` 잠금 + 이유 |
+| 확인 뒤 대상 채널을 바꿈 | 앞 채널의 결과를 그리지 않는다(→ 10.3) |
 | 확인 뒤 채널을 삭제 | 세션의 결과는 채널 제목을 복사해 두므로 그대로 보인다 |
+| 채널명을 공백으로 저장 | 거부 + 사유. 이름은 목록의 정렬 키다 |
 
 ---
 
@@ -516,14 +557,24 @@ ms 다.
 | `core/new_videos` | 기준일 직전·당일·직후 경계 · 이미 요약한 것 제외 · 최신 우선 정렬 · KST 기준일과 UTC 피드가 하루 밀리지 않음 · 빈 입력 |
 | `services/channel_feed` | 가짜 getter 로 정상 파싱(ID·제목·시각) · 404 와 5xx 가 **다른 문구** · 그 밖의 상태 · 깨진 XML · 빈 피드는 성공 · 필드 빠진 항목은 건너뜀 · 크기 상한 초과 · 타임존 없는 시각은 건너뜀 |
 | `services/channel_lookup` | 가짜 runner 로 `channel_id` 추출 · 채널이 아닌 URL · 0 이 아닌 종료 코드 · 타임아웃 · 깨진 JSON |
-| `services/channels` | 등록·목록(이름순)·기준일 수정·삭제 · 중복 거부 · 빈 값 거부 · 잘못된 기준일 형식 거부 |
+| `services/channels` | 등록·목록(이름순)·기준일 수정·이름 수정·삭제 · 중복 거부 · 빈 값 거부 · 빈 이름 거부 · 잘못된 기준일 형식 거부 |
 | `run_history.list_video_ids` | 저장된 ID 를 모두 돌려줌 · 빈 문자열 제외 · 중복 제거 |
-| `pages/channels` | 채널 없음 안내 · 등록 성공과 실패 각 사유 · 확인 후 신규 목록 · 신규 없음 · 질문 없음 · 실행 중 잠금 · `[요약]` 이 러너에 URL·질문을 넘김 · 한 채널이 실패해도 나머지가 보임 |
+| `pages/channels` | 채널 없음 안내 · 등록 성공과 실패 각 사유 · 목록 표시 · 이름 수정 · 빈 이름 거부 · 삭제 |
+| `pages/_channel_check` | 확인 후 신규 목록 · 신규 없음 · **고른 채널만 조회** · **확인이 기준일을 저장** · **대상을 바꾸면 결과가 사라짐** · 피드 실패 사유 · 질문 없음 · 실행 중 잠금 · `[요약]` 이 러너에 URL·질문을 넘김 |
 
-화면 테스트는 `AppTest` 로 한다. `selectbox`·`multiselect` 의
-`select()` 에는 **원본 옵션 객체**를 넘긴다 — 라벨 문자열을 주면
-`format_func` 을 한 번 더 먹여 찾으므로 실패한다(R5 에서 실물로
-확인).
+화면 테스트는 `AppTest` 로 한다. 둘 다 `pages/channels.render()` 를
+진입점으로 돌린다 — `_channel_check` 는 그 안에서 불린다.
+
+`AppTest` 로 확인한 것 셋(실물 확인):
+
+- **`st.tabs` 안의 위젯도 한 목록으로 모인다.** 그래서 위젯은 탭이
+  아니라 **라벨**로 찾는다. 인덱스로 찾으면 버튼이 하나 늘 때마다
+  깨진다.
+- `selectbox`·`multiselect` 의 `select()`·`set_value()` 에는
+  **원본 옵션 객체**를 넘긴다 — 라벨 문자열을 주면 `format_func` 을
+  한 번 더 먹여 찾으므로 실패한다.
+- `AppTest.from_function` 은 함수 본문만 떼어 돌린다. 그 안에서 쓰는
+  것은 **함수 안에서 import** 해야 한다.
 
 검증은 CI 와 같은 네 단이다 — `ruff format --check .`,
 `ruff check .`, `mypy src tests`, `pytest`.
@@ -537,7 +588,7 @@ ms 다.
 - `core/new_videos.py`
 - `services/channels.py` · `services/channel_feed.py` ·
   `services/channel_lookup.py`
-- `pages/channels.py`
+- `pages/channels.py` · `pages/_channel_check.py`
 - 각 대응 테스트
 
 **수정**
@@ -545,9 +596,11 @@ ms 다.
 - `core/models.py` — `Channel`·`FeedEntry`
 - `core/youtube.py` — `watch_url(video_id)` 를 더한다. 신규 목록이
   영상 URL 을 지어야 하는데 같은 f-string 이
-  `core/markdown_export.py` 에도 있다. 한 줄짜리 중복이지만 지금
-  세 번째가 생기므로 여기로 모으고, `markdown_export._source_url`
-  이 그것을 쓰게 한다
+  `core/markdown_export.py` 와 `services/video_metadata.py` 에도
+  있다. 한 줄짜리 중복이지만 지금 세 번째가 생기므로 여기로 모으고,
+  **세 곳이 모두** 그것을 쓰게 한다
+- `services/video_metadata.py` — yt-dlp 에 넘길 URL 을
+  `youtube.watch_url` 로 짓는다(위 중복 제거)
 - `services/store.py` — `channels` 스키마와 기대 컬럼
 - `services/run_history.py` — `list_video_ids`
 - `app.py` — 네비게이션에 채널 페이지
@@ -555,8 +608,7 @@ ms 다.
 
 **건드리지 않음**: `services/runner.py`, `services/runs.py`,
 `services/nlm.py`, `services/outline.py`, `services/auth.py`,
-`services/questions.py`, `services/video_metadata.py`,
-`services/digest*.py`, `core/digest*.py`, `pages/ask.py`,
+`services/questions.py`, `services/digest*.py`, `core/digest*.py`, `pages/ask.py`,
 `pages/history.py`, `pages/digest.py`, `session.py`,
 `docker-compose.yml`, `Dockerfile`, `pyproject.toml`.
 
