@@ -455,3 +455,17 @@ def test_shutdown_ends_a_live_session(rig: Rig) -> None:
     assert status.state is login_protocol.State.FAILED
     assert status.detail == supervisor.DETAIL_STOPPED
     assert not rig.browser_profile.exists()
+
+
+def test_build_wires_the_container_paths(monkeypatch) -> None:
+    """진입점은 이미지의 환경변수에서 경로를 잡는다."""
+    monkeypatch.setenv(login_protocol.DIR_ENV_VAR, "/data/login")
+    monkeypatch.setenv("NOTEBOOKLM_HOME", "/data/notebooklm")
+
+    built = supervisor.build()
+
+    assert built._login_dir == pathlib.Path("/data/login")
+    assert built._browser_profile == pathlib.Path(
+        "/data/notebooklm/profiles/default/browser_profile"
+    )
+    assert built._env["NO_COLOR"] == "1"

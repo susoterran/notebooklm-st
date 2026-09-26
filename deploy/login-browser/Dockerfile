@@ -42,5 +42,13 @@ ENV PYTHONUNBUFFERED=1 \
     NOTEBOOKLM_HOME=/data/notebooklm \
     NOTEBOOKLM_ST_LOGIN_DIR=/data/login \
     TZ=Asia/Seoul
+# 앱 패키지 중 감시 루프와 신호 계약만 싣는다. 두 __init__.py 는
+# docstring 뿐이라 다른 모듈을 끌어오지 않는다.
+COPY src/notebooklm_st/__init__.py /app/src/notebooklm_st/__init__.py
+COPY src/notebooklm_st/core/__init__.py /app/src/notebooklm_st/core/__init__.py
+COPY src/notebooklm_st/core/login_protocol.py /app/src/notebooklm_st/core/login_protocol.py
+COPY src/notebooklm_st/login_browser/ /app/src/notebooklm_st/login_browser/
+ENV PYTHONPATH=/app/src
 USER app
 EXPOSE 6080
+CMD ["python", "-m", "notebooklm_st.login_browser.supervisor"]

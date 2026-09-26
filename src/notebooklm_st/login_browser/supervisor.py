@@ -10,14 +10,19 @@ CLI 가 앱과 같은 프로필에 직접 저장한다.
 설계: docs/superpowers/specs/2026-09-26-remote-login-design.md §6
 """
 
+import contextlib
 import dataclasses
 import datetime as dt
 import logging
+import os
 import pathlib
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
+import time
+import types
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
@@ -403,3 +408,134 @@ def _stop(process: ProcessLike) -> None:
             process.wait(STOP_GRACE)
         except subprocess.TimeoutExpired:
             logger.error("자식 프로세스가 끝나지 않습니다")
+
+
+X_SOCKET = pathlib.Path("/tmp/.X11-unix/X99")
+READY_TIMEOUT = 5.0
+WORK_DIR = pathlib.Path("/tmp/login-browser")
+
+
+class _GroupProcess:
+    """자식과 그 자손을 한 프로세스 그룹으로 다룬다.
+
+    크로미움은 CLI 의 자손이다. CLI 에만 신호를 보내면 크로미움이
+    남는다.
+    """
+
+    def __init__(self, popen: subprocess.Popen[bytes]) -> None:
+        """감쌀 ``Popen`` 을 받아 둔다."""
+        self._popen = popen
+
+    def poll(self) -> int | None:
+        """끝났으면 종료 코드, 아니면 ``None``."""
+        return self._popen.poll()
+
+    def wait(self, timeout: float) -> int:
+        """끝날 때까지 기다린다."""
+        return self._popen.wait(timeout)
+
+    def terminate(self) -> None:
+        """그룹 전체에 SIGTERM 을 보낸다."""
+        if sys.platform == "win32":
+            self._popen.terminate()
+        else:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self._popen.pid, signal.SIGTERM)
+
+    def kill(self) -> None:
+        """그룹 전체에 SIGKILL 을 보낸다."""
+        if sys.platform == "win32":
+            self._popen.kill()
+        else:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self._popen.pid, signal.SIGKILL)
+
+
+def _launch(
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    log_path: pathlib.Path | None,
+) -> ProcessLike:
+    """자식을 새 세션(프로세스 그룹)으로 띄운다."""
+    if log_path is None:
+        popen = subprocess.Popen(
+            list(argv),
+            env=dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    else:
+        with log_path.open("wb") as log:
+            popen = subprocess.Popen(
+                list(argv),
+                env=dict(env),
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+    return _GroupProcess(popen)
+
+
+def _wait_for_display() -> bool:
+    """Xvfb 의 소켓이 생길 때까지 기다린다."""
+    deadline = time.monotonic() + READY_TIMEOUT
+    while time.monotonic() < deadline:
+        if X_SOCKET.exists():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _utc_now() -> dt.datetime:
+    """지금 시각(UTC)."""
+    return dt.datetime.now(dt.UTC)
+
+
+def build() -> Supervisor:
+    """이미지의 환경변수로 감시 루프를 조립한다."""
+    home = pathlib.Path(os.environ["NOTEBOOKLM_HOME"])
+    return Supervisor(
+        login_dir=pathlib.Path(os.environ[login_protocol.DIR_ENV_VAR]),
+        profile_dir=home / "profiles" / "default",
+        work_dir=WORK_DIR,
+        launch=_launch,
+        clock=_utc_now,
+        wait_ready=_wait_for_display,
+        # rich 의 색 코드가 CLI 로그 마지막 줄(화면에 보이는 사유)에
+        # 섞이지 않게 한다.
+        env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
+    )
+
+
+def _exit_on_signal(signum: int, frame: types.FrameType | None) -> None:
+    """Docker stop 의 SIGTERM 을 정상 종료로 바꾼다."""
+    raise SystemExit(0)
+
+
+def main() -> None:
+    """감시 루프를 돈다. 컨테이너의 진입점이다."""
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
+    supervisor = build()
+    signal.signal(signal.SIGTERM, _exit_on_signal)
+    supervisor.recover()
+    logger.info("원격 로그인 요청을 기다립니다")
+    try:
+        while True:
+            try:
+                supervisor.tick()
+            except Exception:
+                # 한 주기가 실패해도 루프는 산다. 죽으면 앱이 "꺼져
+                # 있음" 만 보여 주고 사람은 원인을 모른다.
+                logger.exception("감시 주기가 실패했습니다")
+            time.sleep(TICK_SECONDS)
+    finally:
+        supervisor.shutdown()
+
+
+if __name__ == "__main__":
+    main()

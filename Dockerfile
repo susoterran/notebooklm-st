@@ -45,6 +45,7 @@ ENV PATH=/app/.venv/bin:$PATH \
 ENV HOME=/data \
     NOTEBOOKLM_HOME=/data/notebooklm \
     NOTEBOOKLM_ST_DB=/data/questions.db \
+    NOTEBOOKLM_ST_LOGIN_DIR=/data/login \
     TZ=Asia/Seoul \
     STREAMLIT_SERVER_PORT=8611 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
