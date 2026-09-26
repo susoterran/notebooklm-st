@@ -429,7 +429,7 @@ dev 가 포함한다. 데스크톱의 `uv sync` 결과는 달라지지 않는다
     build:
       context: .
       dockerfile: deploy/login-browser/Dockerfile
-    image: notebooklm-st-login-browser:local
+    image: ghcr.io/susoterran/notebooklm-st-login-browser:${NOTEBOOKLM_ST_TAG:-latest}
     container_name: notebooklm-st-login-browser
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
@@ -451,14 +451,49 @@ dev 가 포함한다. 데스크톱의 `uv sync` 결과는 달라지지 않는다
 수 있다. 도커 기본 유예 10초면 정리 도중 SIGKILL 되어 `browser_profile/`
 (자격증명)이 볼륨에 남을 수 있다. 남더라도 다음 기동의 복구(6.3)가 지운다.
 
+홈서버는 두 이미지를 GHCR 에서 받는다(`docker compose pull`). 앱은
+`ghcr.io/susoterran/notebooklm-st`, 사이드카는
+`ghcr.io/susoterran/notebooklm-st-login-browser` 이고, 태그는 변수
+`NOTEBOOKLM_ST_TAG`(기본 `latest`) **하나를 두 서비스가 함께 쓴다.**
+사이드카의 notebooklm-py 가 앱과 같은 버전이어야 로그인 결과를 앱이
+그대로 읽으므로(9.1), 두 이미지가 늘 같은 릴리스를 가리키게 한다.
+배포 디렉터리의 `.env` 에 `NOTEBOOKLM_ST_TAG=v1.2.0` 처럼 적어 고정할
+수 있다.
+
+`build:` 는 두 서비스 모두 남긴다. 소스에서 굽고 싶을 때
+(`docker compose up -d --build`)와 로컬 개발용이다. 구운 이미지도 같은
+이름을 얻는다.
+
+홈서버가 사이드카를 굽지 않고 받는 이유는 둘이다. 크로미움과
+`playwright install --with-deps` 를 담은 빌드가 홈서버에서 몇 분씩
+걸리고 네트워크·apt 상태에 흔들린다. 그리고 CI 가 스캔·단언한 바로 그
+이미지가 돌아야 게이트가 의미를 가진다 — 홈서버에서 다시 구우면 그
+사이에 바뀐 베이스 이미지·apt 패키지가 검증 없이 들어간다.
+
 `app` 서비스에는 `NOTEBOOKLM_ST_LOGIN_VIEWER_URL` 한 줄만 더한다.
 `NOTEBOOKLM_ST_LOGIN_DIR` 은 두 이미지 모두 Dockerfile 이 굽는다.
 
 ### 9.3 CI
 
-`.github/workflows/build.yml` 의 `image` 잡에 사이드카 이미지 **빌드**를
-더한다. 게시는 하지 않는다 — compose 가 홈서버에서 로컬로 빌드한다.
-빌드한 이미지에서 다음을 단언한다.
+`.github/workflows/build.yml` 의 `image` 잡이 사이드카 이미지도 굽고,
+검사하고, 앱과 함께 GHCR 에 게시한다. 순서는 앱과 같다 — 모든 게이트를
+지난 뒤에만 올린다.
+
+1. **태그 규칙.** 사이드카용 `docker/metadata-action`(`meta_login`)을
+   따로 두고 앱과 같은 규칙을 쓴다. 정식 릴리스는 릴리스 태그와
+   `latest`, 수동 실행은 `devel`, 모든 게시에 `sha-…`. 라벨도 앱과 같은
+   틀(title `notebooklm-st-login-browser`, revision·source·version).
+2. **스캔 빌드.** `docker/build-push-action` 으로
+   `file: deploy/login-browser/Dockerfile` 을 `load: true`, `push: false`
+   로 로컬(`notebooklm-st-login-browser:scan`)에만 굽는다.
+3. **취약점 게이트.** 앱과 같은 Trivy 설정(HIGH·CRITICAL,
+   `ignore-unfixed`, 같은 액션 핀·스캐너 버전)으로 막는다. 걸리면 앱도
+   사이드카도 게시되지 않는다. 시크릿 스캔은 앱처럼 보고만 한다.
+4. **compose 이름 붙이기.** 잡 env 로 `NOTEBOOKLM_ST_TAG=ci` 를 두고
+   두 스캔 이미지에 `ghcr.io/…:ci` 이름을 붙인다. compose 가 찾는 이름이
+   로컬에 있으므로 동작 게이트는 다시 굽지도 GHCR 에서 받지도 않고 스캔한
+   그 이미지로 돈다. `ci` 태그는 롤링 태그와 겹치지 않고 게시되지 않는다.
+5. **동작 게이트.** 이 이미지에서 다음을 단언한다.
 
 ```bash
 docker compose run --rm --no-deps -T login-browser python -c "import notebooklm_st.login_browser.supervisor"
@@ -474,6 +509,18 @@ import 만으로는 감시 루프가 도는지 모른다. 그래서 기존 `기�
 `docker compose logs login-browser` 를 찍고 실패한다.
 
 앱 이미지의 `import playwright` 실패 단언은 그대로 둔다.
+
+6. **게시.** 모든 게이트를 지나면 앱과 사이드카를 각각
+   `docker/build-push-action` 으로 push 한다(`sbom: true`,
+   `provenance: mode=max`). 스캔 빌드와 컨텍스트·Dockerfile 이 같아
+   레이어는 잡 안의 buildx 캐시로 CACHED 로 지나간다 — 재빌드가 아니다.
+
+권한은 그대로다. `image` 잡만 `packages: write` 를 가진다. 새 액션은
+들이지 않고 앱이 쓰던 핀만 쓴다.
+
+GHCR 에 처음 생기는 패키지는 비공개다. 사이드카 패키지는 첫 게시 뒤
+사람이 GitHub 웹에서 공개 여부를 정한다. 비공개로 두면 홈서버에서
+`read:packages` PAT 로 `docker login ghcr.io` 가 필요하다.
 
 ---
 
@@ -592,14 +639,14 @@ uv run pytest
 | `src/notebooklm_st/components/auth_gate.py` | 배너만 남기고 다시 확인·업로더를 옮김 |
 | `src/notebooklm_st/core/errors.py` | `LOGIN_HINT` 문구 |
 | `deploy/login-browser/Dockerfile` | 신규 |
-| `docker-compose.yml` | `login-browser` 서비스, 앱에 뷰어 주소 |
+| `docker-compose.yml` | `login-browser` 서비스, 앱에 뷰어 주소, 두 이미지를 GHCR 이름·공통 태그 변수로 |
 | `Dockerfile` | `NOTEBOOKLM_ST_LOGIN_DIR` |
 | `pyproject.toml`, `uv.lock` | `login-browser` 그룹, mypy `disallow_untyped_defs` 대상에 `notebooklm_st.login_browser.*` |
-| `.github/workflows/build.yml` | 사이드카 빌드·단언 |
+| `.github/workflows/build.yml` | 사이드카 스캔 빌드·Trivy 게이트·단언·GHCR 게시 |
 | 테스트 | 11절 |
 | `README.md` | 첫 실행 — 인증, 홈서버 절, 사용 순서에 인증 페이지 |
 | `docs/how-to/2026-09-16-auth-reseed.md` | 원격 로그인을 정본으로, 데스크톱 로그인·업로드·볼륨 복사를 대체 경로로 다시 쓴다 |
-| `docs/how-to/2026-09-16-homeserver-deploy.md` | 사이드카, 포트 9005, 뷰어 주소 |
+| `docs/how-to/2026-09-16-homeserver-deploy.md` | 사이드카, 포트 9005, 뷰어 주소, GHCR 받기·태그 고정·패키지 공개 범위 |
 
 건드리지 않는 것: `services/nlm.py`, `services/runner.py`, `services/runs.py`,
 `services/digest_runner.py`, `services/auth.py` 의 판정 로직.
@@ -631,6 +678,5 @@ uv run pytest
   인증 페이지로 대신한다
 - **HTTPS·인터넷 노출** — 비노출 전제 위의 설계다
 - **다중 계정·프로필** — `default` 프로필 하나만 다룬다
-- **사이드카 이미지의 GHCR 게시** — compose 가 로컬로 빌드한다
 - **앱이 사이드카를 켜고 끄기** — 사이드카는 상시 떠 있고 평소에는 감시
   루프만 돈다
