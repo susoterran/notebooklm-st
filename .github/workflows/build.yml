@@ -154,6 +154,39 @@ jobs:
              off = datetime.datetime.now().astimezone().utcoffset(); \
              sys.exit(0 if off.total_seconds() == 32400 else 1)"
 
+      # ── 사이드카 게이트 ───────────────────────────────────────────────────
+      # 사이드카는 게시하지 않는다. compose 가 홈서버에서 로컬로 굽는다.
+      # 여기서는 굽히는지, 앱 의존성이 없는지, 앱과 notebooklm-py 버전이
+      # 같은지, 그리고 기동 뒤 감시 루프가 heartbeat 를 갱신하는지만 본다.
+      # 아래 기동 단계의 compose up 이 이 이미지를 쓴다.
+      - name: 사이드카 이미지 빌드
+        run: docker compose build login-browser
+
+      - name: 사이드카가 감시 루프를 임포트하는지
+        run: |
+          docker compose run --rm --no-deps -T login-browser python -c \
+            "import notebooklm_st.login_browser.supervisor"
+
+      - name: 사이드카에 앱 의존성이 없는지 — import 가 실패해야 정상
+        run: |
+          set +e
+          out=$(docker compose run --rm --no-deps -T login-browser python -c "import streamlit" 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ] || ! echo "$out" | grep -q "No module named 'streamlit'"; then
+            echo "예상 밖 결과 (종료코드 $rc)" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+
+      - name: 사이드카의 notebooklm-py 가 앱과 같은 버전인지
+        run: |
+          probe='import importlib.metadata as m; print(m.version("notebooklm-py"))'
+          app=$(docker compose run --rm --no-deps -T app python -c "$probe" | tr -d '\r')
+          side=$(docker compose run --rm --no-deps -T login-browser python -c "$probe" | tr -d '\r')
+          echo "app=$app login-browser=$side"
+          test -n "$app" && test "$app" = "$side"
+
       - name: 기동과 헬스체크
         run: |
           docker compose up -d
@@ -164,6 +197,23 @@ jobs:
             sleep 2
           done
           docker compose logs
+          exit 1
+
+      # import 만으로는 루프가 도는지 모른다. 앱은 heartbeat 가 10초 넘게
+      # 멈추면 "꺼져 있음" 으로 본다. 같은 기준으로 확인한다. 컨테이너 안
+      # 에서 재야 볼륨 권한과 호스트 시계에 흔들리지 않는다.
+      - name: 사이드카 감시 루프가 heartbeat 를 갱신하는지
+        run: |
+          probe='import os, pathlib, sys, time
+          p = pathlib.Path(os.environ["NOTEBOOKLM_ST_LOGIN_DIR"], "heartbeat")
+          sys.exit(0 if p.exists() and time.time() - p.stat().st_mtime <= 10 else 1)'
+          for _ in $(seq 1 15); do
+            if docker compose exec -T login-browser python -c "$probe"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs login-browser
           exit 1
 
       - name: 정리

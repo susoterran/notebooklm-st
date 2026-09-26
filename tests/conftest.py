@@ -6,7 +6,8 @@ from collections.abc import Iterator
 import pytest
 
 from notebooklm_st import session
-from notebooklm_st.services import auth, outline, store
+from notebooklm_st.core import login_protocol
+from notebooklm_st.services import auth, login_session, outline, store
 
 
 @pytest.fixture
@@ -47,3 +48,13 @@ def clear_outline_env(monkeypatch) -> None:
         outline.COLLECTION_ENV_VAR,
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def clear_login_env(monkeypatch) -> None:
+    """개발 기기의 원격 로그인 설정이 테스트에 새지 않게 막는다.
+
+    필요한 테스트가 직접 채워 쓴다.
+    """
+    monkeypatch.delenv(login_session.VIEWER_URL_ENV_VAR, raising=False)
+    monkeypatch.delenv(login_protocol.DIR_ENV_VAR, raising=False)

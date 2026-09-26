@@ -717,6 +717,9 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+login-browser = [
+    { name = "notebooklm-py", extra = ["browser"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -733,6 +736,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.5" },
 ]
+login-browser = [{ name = "notebooklm-py", extras = ["browser"], specifier = "==0.8.1" }]
 
 [[package]]
 name = "numpy"

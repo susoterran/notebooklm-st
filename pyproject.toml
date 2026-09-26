@@ -41,18 +41,25 @@ warn_redundant_casts = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["notebooklm_st.core.*", "notebooklm_st.services.*"]
+module = [
+    "notebooklm_st.core.*",
+    "notebooklm_st.services.*",
+    "notebooklm_st.login_browser.*",
+]
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [dependency-groups]
+# 원격 로그인 사이드카가 쓴다(deploy/login-browser/Dockerfile).
+# 앱과 같은 락에서 설치되므로 notebooklm-py 버전이 어긋나지 않는다.
+login-browser = ["notebooklm-py[browser]==0.8.1"]
 dev = [
-    "mypy>=2.3.1",
     # 데스크톱에서 notebooklm login 을 돌리는 데 필요하다. 컨테이너
     # 이미지는 uv sync --no-dev 로 이것을 뺀다.
-    "notebooklm-py[browser]==0.8.1",
+    { include-group = "login-browser" },
+    "mypy>=2.3.1",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
 ]
