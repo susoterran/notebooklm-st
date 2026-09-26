@@ -68,7 +68,7 @@
 - **사람이 확인한다** — 실제 구글 로그인(B·C), 휴대폰(E, 선택). 계정 비밀번호가 필요하므로 에이전트가 대신 입력하지 않는다.
 - B 또는 C 가 "막힘" 이면 여기서 멈추고 보고한다. 이후 태스크를 진행하지 않는다.
 
-홈서버 고유 조건(아키텍처·Docker 버전·볼륨 권한)은 Task 9 의 홈서버 E2E 에서 본다. 그 전에 따로 확인하고 싶으면 홈서버에서 같은 스크립트를 `deploy/login-browser/spike.sh up ~/notebooklm-spike` 로 돌리면 된다.
+홈서버는 **x86_64, Docker 26.1.4** 다(사용자 확인). 이 PC 의 Docker Desktop(linux/amd64, 29.8.0)과 아키텍처가 같아 이미지·크로미움 바이너리가 그대로 맞는다. 이 계획이 쓰는 compose 설정(`build.dockerfile`·`read_only`·`tmpfs`·`shm_size`·`user`)은 모두 Docker 26 이전부터 있던 것이다. 남는 홈서버 고유 조건(볼륨 권한·LAN 접근)은 Task 9 의 홈서버 E2E 에서 본다. 그 전에 따로 확인하고 싶으면 홈서버에서 같은 스크립트를 `deploy/login-browser/spike.sh up ~/notebooklm-spike` 로 돌리면 된다.
 
 **Files:**
 - Modify: `pyproject.toml` (`[dependency-groups]`)
