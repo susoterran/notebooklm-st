@@ -68,7 +68,7 @@ mkdir -p data && sudo chown 1000:1000 data
 docker compose pull && docker compose up -d
 ```
 
-앱과 `login-browser` 사이드카 이미지는 CI 가 검증해 GHCR 에 올린 것을 받습니다. 두 이미지는 태그 변수 `NOTEBOOKLM_ST_TAG` 하나를 함께 쓰며(기본 `latest`), `.env` 에 `NOTEBOOKLM_ST_TAG=v1.2.0` 처럼 적어 릴리스를 고정할 수 있습니다. 업데이트도 같은 `pull && up -d` 입니다. 소스에서 굽고 싶을 때만 `docker compose up -d --build` 를 씁니다. GHCR 패키지가 비공개면 홈서버에서 `docker login ghcr.io` 가 필요합니다.
+앱과 `login-browser` 사이드카 이미지는 CI 가 검증해 GHCR 에 올린 것을 받습니다. 두 이미지는 태그 변수 `NOTEBOOKLM_ST_TAG` 하나를 함께 쓰며(기본 `latest`), `.env` 에 `NOTEBOOKLM_ST_TAG=v1.2.0` 처럼 적어 릴리스를 고정할 수 있습니다. 업데이트도 같은 `pull && up -d` 입니다. 소스에서 굽고 싶을 때만 `docker compose up -d --build` 를 씁니다. GHCR 패키지가 비공개면 홈서버에서 `docker login ghcr.io` 가 필요합니다. 사이드카를 담은 첫 정식 릴리스 전에는 사이드카의 `latest` 가 없으므로, 워크플로를 수동 실행해 `devel` 을 게시한 뒤 `.env` 에 `NOTEBOOKLM_ST_TAG=devel` 을 적습니다.
 
 접속 주소는 **http://<홈서버IP>:9004** 입니다. 컨테이너 안에서는 8611 에서 돌고, `docker-compose.yml` 이 호스트 9004 에 붙입니다.
 

@@ -71,6 +71,14 @@ echo 'NOTEBOOKLM_ST_TAG=v1.2.0' >> .env
 | `devel` | 워크플로를 수동 실행했을 때(테스트용) |
 | `sha-…` | 모든 게시. 커밋 단위로 되돌릴 때 |
 
+**첫 정식 릴리스 전에는 사이드카의 `latest` 가 없다.** 사이드카
+이미지는 이 워크플로가 처음 게시하므로, 사이드카를 담은 정식
+릴리스가 나오기 전에는 `ghcr.io/susoterran/notebooklm-st-login-browser:latest`
+가 없어 기본값(변수를 비운 `latest`)으로 `pull` 하면 사이드카에서
+실패한다. 그때까지는 워크플로를 수동 실행해 `devel` 을 게시한 뒤
+`.env` 에 `NOTEBOOKLM_ST_TAG=devel` 을 적는다. 릴리스가 나오면 그
+릴리스 태그로 고정하거나 줄을 지워 `latest` 로 돌아간다.
+
 ### 2.2 업데이트
 
 ```bash
