@@ -192,10 +192,11 @@ idle ──start──► starting ──► running ──┬─► succeeded
 ```
 시작
  1. status = starting
- 2. password = secrets.token_urlsafe(12)
-    x11vnc 비밀번호 파일을 /tmp 에 만든다(storepasswd)
+ 2. password = secrets.token_urlsafe(6)   (8자 — VNC 인증은 8자까지만 쓴다)
+    비밀번호 파일을 /tmp 에 0600 으로 쓰고 x11vnc 에 `-passwdfile rm:<파일>`
+    로 넘긴다. x11vnc 가 읽은 뒤 지운다
  3. Xvfb :99 -screen 0 1280x800x24
- 4. x11vnc -display :99 -localhost -rfbauth <파일> -forever -shared
+ 4. x11vnc -display :99 -localhost -passwdfile rm:<파일> -forever -shared
  5. websockify --web <novnc 경로> 6080 localhost:5900
  6. DISPLAY=:99 python -m notebooklm login --fresh --browser-timeout 900
  7. status = running (password, deadline = 지금 + 300초)
@@ -245,7 +246,8 @@ idle ──start──► starting ──► running ──┬─► succeeded
 ```
 
 - 상태 줄은 `AuthGate` 의 판정을 그린다. 만료와 확인 불가의 구분(R1 §7.2)은
-  그대로다.
+  그대로다. 확인 불가 문구는 배너와 이 페이지가 함께 쓰므로
+  `errors.probe_failed_text()` 로 `core/errors.py` 에 둔다.
 - **다시 확인**은 `gate.recheck()` 를 부른다.
 - 업로더는 기존 `auth_gate._render_upload()` 를 이 페이지로 옮긴 것이다.
   동작은 바꾸지 않는다.
@@ -258,17 +260,21 @@ idle ──start──► starting ──► running ──┬─► succeeded
 | 사이드카 꺼짐 (heartbeat 10초 초과 또는 없음) | "로그인 브라우저가 꺼져 있습니다" |
 | 실행 중인 질의·정리본 있음 | 시작 버튼 비활성 + "진행 중인 실행이 끝난 뒤 로그인하세요" (8.2) |
 | `idle`·마지막 결과 | 마지막 결과 한 줄(있으면) + **구글 로그인 시작** |
-| 앱이 요청을 썼고 사이드카가 아직 받지 않음 | "로그인 브라우저를 준비하는 중" |
+| 앱이 `start` 요청을 썼고 사이드카가 아직 받지 않음 | "로그인 브라우저를 준비하는 중" |
 | `starting` | "로그인 브라우저를 준비하는 중" |
 | `running` | iframe + 남은 시간 + **취소** + **새 탭에서 열기** |
 | 방금 `succeeded` 로 바뀜 | `gate.recheck()` → 성공이면 "인증되었습니다" / 실패면 "로그인은 끝났지만 인증이 살아나지 않았습니다" |
 
-- "요청을 썼지만 받지 않음" 은 `request.json` 의 `id` 와 `status.json` 의
-  `request_id` 가 다를 때다.
+- "요청을 썼지만 받지 않음" 은 `request.json` 이 `start` 이고 그 `id` 가
+  `status.json` 의 `request_id` 와 다를 때다. `cancel` 은 사이드카가 세션이
+  없으면 무시하므로 이 판정에 넣지 않는다 — 넣으면 영원히 "준비 중" 이다.
+- 결과 처리(성공 시 `recheck()`, 결과 문구)는 **이 탭이 그 요청을 지켜보던
+  경우에만** 한다. 지켜보지 않던 탭은 마지막 결과를 한 줄로만 보여 준다.
+  며칠 전의 `succeeded` 를 새 탭이 "인증되었습니다" 로 오해하지 않게 한다.
 - 요청·`starting`·`running` 동안만 `st.fragment(run_every=1)` 로 갱신한다.
   평소에는 폴링하지 않는다.
-- `succeeded` 를 본 뒤의 `recheck()` 는 **그 `request_id` 에 대해 한 번만**
-  부른다. 처리한 `request_id` 를 `st.session_state` 에 둔다. 다른 탭에서
+- 지켜보는 요청의 `id` 는 `st.session_state` 에 둔다. 결과를 처리하면
+  지운다. 그래서 `recheck()` 는 요청 하나에 한 번만 불린다. 다른 탭에서
   먼저 확인했으면 게이트가 이미 `ok` 라 결과는 같다.
 
 ### 7.3 iframe
@@ -326,8 +332,8 @@ def read_status(directory: Path) -> login_protocol.Status: ...
 
 def sidecar_alive(directory: Path, now: float) -> bool: ...
 
-def pending_request_id(directory: Path) -> str | None: ...
-    # request.json 의 id. status 의 request_id 와 비교해 "받지 않음" 을 가린다
+def pending_request(directory: Path) -> login_protocol.Request | None: ...
+    # request.json. status 의 request_id 와 비교해 "받지 않음" 을 가린다(7.2)
 
 def request_start(directory: Path) -> str: ...      # 새 id 를 돌려준다
 def request_cancel(directory: Path) -> str: ...
