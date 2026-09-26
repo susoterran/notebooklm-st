@@ -5,7 +5,6 @@ import logging
 import os
 
 from notebooklm_st.core import login_protocol
-from notebooklm_st.core.login_protocol import Action, State
 from notebooklm_st.services import digest_runner, login_session, runs
 
 
@@ -34,7 +33,9 @@ def test_login_dir_follows_the_environment(monkeypatch, tmp_path) -> None:
 
 def test_read_status_treats_a_missing_file_as_idle(tmp_path) -> None:
     """사이드카가 아직 아무것도 쓰지 않았으면 idle 이다."""
-    assert login_session.read_status(tmp_path).state is State.IDLE
+    assert (
+        login_session.read_status(tmp_path).state is login_protocol.State.IDLE
+    )
 
 
 def test_read_status_treats_a_broken_file_as_idle(tmp_path, caplog) -> None:
@@ -44,7 +45,7 @@ def test_read_status_treats_a_broken_file_as_idle(tmp_path, caplog) -> None:
     with caplog.at_level(logging.WARNING):
         status = login_session.read_status(tmp_path)
 
-    assert status.state is State.IDLE
+    assert status.state is login_protocol.State.IDLE
     assert "상태 파일" in caplog.text
 
 
@@ -71,7 +72,7 @@ def test_request_start_writes_a_fresh_request(tmp_path) -> None:
     assert first != second
     assert request is not None
     assert request.id == second
-    assert request.action is Action.START
+    assert request.action is login_protocol.Action.START
 
 
 def test_request_cancel_writes_a_cancel(tmp_path) -> None:
@@ -81,7 +82,7 @@ def test_request_cancel_writes_a_cancel(tmp_path) -> None:
     request = login_session.pending_request(tmp_path)
     assert request is not None
     assert request.id == request_id
-    assert request.action is Action.CANCEL
+    assert request.action is login_protocol.Action.CANCEL
 
 
 def test_pending_request_ignores_a_broken_file(tmp_path) -> None:
@@ -127,7 +128,7 @@ def test_remaining_seconds_counts_down_to_the_deadline() -> None:
     """마감까지 남은 초. 지났으면 0, 마감이 없으면 None."""
     now = dt.datetime(2026, 9, 26, 12, 0, tzinfo=dt.UTC)
     status = login_protocol.Status(
-        state=State.RUNNING, deadline="2026-09-26T12:01:30+00:00"
+        state=login_protocol.State.RUNNING, deadline="2026-09-26T12:01:30+00:00"
     )
 
     assert login_session.remaining_seconds(status, now) == 90

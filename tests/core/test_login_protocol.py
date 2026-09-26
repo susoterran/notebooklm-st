@@ -6,13 +6,14 @@ import sys
 import pytest
 
 from notebooklm_st.core import login_protocol
-from notebooklm_st.core.login_protocol import Action, State
 
 
 def test_request_round_trips_through_json() -> None:
     """요청은 JSON 으로 갔다 와도 같다."""
     request = login_protocol.Request(
-        id="r1", action=Action.START, requested_at="2026-09-26T12:00:00+00:00"
+        id="r1",
+        action=login_protocol.Action.START,
+        requested_at="2026-09-26T12:00:00+00:00",
     )
 
     assert login_protocol.Request.from_json(request.to_json()) == request
@@ -21,7 +22,7 @@ def test_request_round_trips_through_json() -> None:
 def test_status_round_trips_through_json() -> None:
     """상태는 JSON 으로 갔다 와도 같다."""
     status = login_protocol.Status(
-        state=State.RUNNING,
+        state=login_protocol.State.RUNNING,
         request_id="r1",
         password="pw123456",
         deadline="2026-09-26T12:05:00+00:00",
@@ -67,9 +68,11 @@ def test_written_files_read_back(tmp_path) -> None:
     """쓴 것을 그대로 읽는다. 디렉터리가 없으면 만든다."""
     directory = tmp_path / "login"
     request = login_protocol.Request(
-        id="r1", action=Action.CANCEL, requested_at="t"
+        id="r1", action=login_protocol.Action.CANCEL, requested_at="t"
     )
-    status = login_protocol.Status(state=State.FAILED, detail="끝")
+    status = login_protocol.Status(
+        state=login_protocol.State.FAILED, detail="끝"
+    )
 
     login_protocol.write_request(directory, request)
     login_protocol.write_status(directory, status)
@@ -97,4 +100,7 @@ def test_write_atomic_keeps_the_file_private(tmp_path) -> None:
 
 def test_active_states_are_the_ones_with_a_live_session() -> None:
     """세션이 떠 있는 상태는 starting 과 running 뿐이다."""
-    assert {State.STARTING, State.RUNNING} == login_protocol.ACTIVE_STATES
+    assert {
+        login_protocol.State.STARTING,
+        login_protocol.State.RUNNING,
+    } == login_protocol.ACTIVE_STATES
