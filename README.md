@@ -74,6 +74,9 @@ docker compose up -d --build
 `NOTEBOOKLM_ST_LOGIN_VIEWER_URL=http://<홈서버IP>:9005` 를 적습니다.
 로그인 화면은 `login-browser` 사이드카가 9005 에서 중계하고, 앱의
 **인증** 페이지가 그 화면을 끼워 보여 줍니다.
+주소의 호스트는 앱을 실제로 여는 주소와 같은 것을 씁니다(Tailscale 로
+접속하면 Tailscale IP·이름). 여는 기기에서 닿지 않는 호스트면 그
+화면이 빈 칸으로 나옵니다.
 
 절차와 운영 규칙은 [홈서버에 배포하기](docs/how-to/2026-09-16-homeserver-deploy.md) 에 있습니다.
 
