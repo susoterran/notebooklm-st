@@ -12,6 +12,7 @@ from streamlit.navigation import page as st_page
 
 from notebooklm_st import session
 from notebooklm_st.core import errors
+from notebooklm_st.pages import _remote_login
 from notebooklm_st.services import auth
 
 TITLE = "인증"
@@ -45,6 +46,7 @@ def render() -> None:
                 st.rerun()
     # 버튼 처리(위) 뒤에 그려야 다시 확인이 바꾼 판정을 반영한다.
     _render_state(gate)
+    _remote_login.render(gate)
     _render_upload(gate)
 
 
