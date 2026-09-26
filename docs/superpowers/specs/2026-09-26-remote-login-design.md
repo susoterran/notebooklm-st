@@ -2,7 +2,7 @@
 
 - **작성일**: 2026-09-26
 - **상태**: 구현 중 (계획: `docs/superpowers/plans/2026-09-26-remote-login.md`)
-- **기획**: `docs/requests/requests_spec.md`
+- **기획**: `docs/requests/2026-09-26-remote-login.md`
 - **대상**: 신규 사이드카 컨테이너(`login-browser`), 신규 「인증」 페이지,
   `components/auth_gate.py`, `docker-compose.yml`, `pyproject.toml`,
   재시드 문서. 질의 파이프라인(`services/nlm.py`)과 실행 모델
