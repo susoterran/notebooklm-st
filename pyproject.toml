@@ -41,7 +41,11 @@ warn_redundant_casts = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["notebooklm_st.core.*", "notebooklm_st.services.*"]
+module = [
+    "notebooklm_st.core.*",
+    "notebooklm_st.services.*",
+    "notebooklm_st.login_browser.*",
+]
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
