@@ -27,6 +27,8 @@ def as_page() -> st_page.StreamlitPage:
     """내비게이션과 배너 링크가 함께 쓰는 페이지 객체.
 
     두 곳이 같은 ``url_path`` 를 봐야 링크가 이 페이지로 간다.
+    호출마다 새 ``Page`` 를 만들지만 Streamlit 은 ``url_path`` 로
+    페이지를 맞추므로 내비게이션과 배너 링크가 같은 페이지를 가리킨다.
     """
     return st.Page(render, title=TITLE, url_path=URL_PATH)
 
