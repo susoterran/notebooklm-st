@@ -152,18 +152,28 @@ class Supervisor:
 
         재시작 전의 세션이 남아 있으면 정리하고 실패로 쓴다. 그때 있던
         요청은 처리한 것으로 기록해, 사람 없이 다시 실행되지 않게 한다.
+        남은 요청이 아직 답하지 않은 시작이면 그 ``id`` 로 실패를 써서
+        답한다. 답하지 않으면 그 요청을 지켜보는 탭이 결과를 받지 못한다.
         """
         status = self._read_status()
         if status.state in login_protocol.ACTIVE_STATES:
             self._cleanup_files()
-            self._write_status(
+            status = self._write_status(
                 login_protocol.State.FAILED,
                 status.request_id,
                 DETAIL_RESTARTED,
             )
         request = self._read_request()
-        if request is not None:
-            self._last_request_id = request.id
+        if request is None:
+            return
+        self._last_request_id = request.id
+        if (
+            request.action is login_protocol.Action.START
+            and request.id != status.request_id
+        ):
+            self._write_status(
+                login_protocol.State.FAILED, request.id, DETAIL_RESTARTED
+            )
 
     def tick(self) -> None:
         """감시 한 주기. 1초마다 부른다."""
@@ -376,23 +386,26 @@ class Supervisor:
         *,
         password: str | None = None,
         deadline: dt.datetime | None = None,
-    ) -> None:
-        """상태를 쓴다. 비밀번호와 마감은 running 일 때만 넘긴다."""
-        login_protocol.write_status(
-            self._login_dir,
-            login_protocol.Status(
-                state=state,
-                request_id=request_id,
-                password=password,
-                deadline=(
-                    None
-                    if deadline is None
-                    else deadline.isoformat(timespec="seconds")
-                ),
-                detail=detail,
-                updated_at=self._clock().isoformat(timespec="seconds"),
+    ) -> login_protocol.Status:
+        """상태를 쓴다. 비밀번호와 마감은 running 일 때만 넘긴다.
+
+        Returns:
+            쓴 상태.
+        """
+        status = login_protocol.Status(
+            state=state,
+            request_id=request_id,
+            password=password,
+            deadline=(
+                None
+                if deadline is None
+                else deadline.isoformat(timespec="seconds")
             ),
+            detail=detail,
+            updated_at=self._clock().isoformat(timespec="seconds"),
         )
+        login_protocol.write_status(self._login_dir, status)
+        return status
 
 
 def _stop(process: ProcessLike) -> None:

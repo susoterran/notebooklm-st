@@ -421,6 +421,79 @@ def test_recover_does_not_replay_the_last_request(rig: Rig) -> None:
     assert rig.launcher.processes == []
 
 
+@pytest.mark.parametrize(
+    "leftover",
+    [
+        None,
+        login_protocol.Status(
+            state=login_protocol.State.SUCCEEDED, request_id="old"
+        ),
+    ],
+)
+def test_recover_answers_a_swallowed_start(
+    rig: Rig, leftover: login_protocol.Status | None
+) -> None:
+    """재시작 직전의 시작 요청에는 그 id 로 실패를 써서 답한다.
+
+    답하지 않으면 그 요청을 지켜보는 탭이 결과를 영영 받지 못한다.
+    다시 실행하지는 않는다.
+    """
+    if leftover is not None:
+        login_protocol.write_status(rig.login_dir, leftover)
+    rig.request("r0")
+
+    rig.sup.recover()
+    rig.sup.tick()
+
+    status = rig.status()
+    assert status.state is login_protocol.State.FAILED
+    assert status.request_id == "r0"
+    assert status.detail == supervisor.DETAIL_RESTARTED
+    assert rig.launcher.processes == []
+
+
+def test_recover_leaves_an_answered_start_alone(rig: Rig) -> None:
+    """이미 그 id 로 결과를 썼으면 상태를 바꾸지 않는다."""
+    finished = login_protocol.Status(
+        state=login_protocol.State.SUCCEEDED, request_id="r0"
+    )
+    login_protocol.write_status(rig.login_dir, finished)
+    rig.request("r0")
+
+    rig.sup.recover()
+
+    assert rig.status() == finished
+
+
+def test_recover_leaves_a_leftover_cancel_alone(rig: Rig) -> None:
+    """남은 취소 요청에는 답하지 않는다. 기다리는 탭이 없다."""
+    rig.request("r0", login_protocol.Action.CANCEL)
+
+    rig.sup.recover()
+
+    assert rig.status() == login_protocol.IDLE
+
+
+def test_recover_answers_a_start_left_by_a_restarted_session(
+    rig: Rig,
+) -> None:
+    """세션 r1 중에 들어온 시작 r2 는 r1 을 정리한 뒤 r2 로 답한다."""
+    login_protocol.write_status(
+        rig.login_dir,
+        login_protocol.Status(
+            state=login_protocol.State.RUNNING, request_id="r1", password="p"
+        ),
+    )
+    rig.request("r2")
+
+    rig.sup.recover()
+
+    status = rig.status()
+    assert status.state is login_protocol.State.FAILED
+    assert status.request_id == "r2"
+    assert status.detail == supervisor.DETAIL_RESTARTED
+
+
 def test_every_tick_refreshes_the_heartbeat(rig: Rig) -> None:
     """앱이 사이드카의 생사를 알 수 있게 매 틱 heartbeat 를 갱신한다."""
     heartbeat = rig.login_dir / login_protocol.HEARTBEAT_FILE

@@ -27,6 +27,15 @@ HEARTBEAT_STALE_AFTER = 10.0
 넉넉히 잡는다.
 """
 
+START_ACK_TIMEOUT = 30.0
+"""시작 요청을 이보다 오래 받지 않으면 더는 기다리지 않는다(초).
+
+사이드카는 1초마다 요청을 보고 받자마자 ``starting`` 을 쓴다. 이만큼
+지나도 답이 없으면 사이드카가 그 요청을 처리하지 않은 것이다(재시작
+직전에 쓰였거나 다른 탭의 세션 중에 쓰였다). 계속 기다리면 화면이
+"준비 중" 에 묶여 시작 버튼이 다시 나오지 않는다.
+"""
+
 
 def viewer_url() -> str | None:
     """사용자 브라우저가 닿는 noVNC 주소.
@@ -99,6 +108,27 @@ def pending_request(directory: pathlib.Path) -> login_protocol.Request | None:
         return login_protocol.read_request(directory)
     except (OSError, login_protocol.ProtocolError):
         return None
+
+
+def start_is_stale(request: login_protocol.Request, now: dt.datetime) -> bool:
+    """시작 요청이 사이드카의 답을 기다리기엔 너무 오래됐는지.
+
+    Args:
+        request: 앱이 마지막으로 쓴 요청.
+        now: 지금 시각(UTC, aware).
+
+    Returns:
+        ``START_ACK_TIMEOUT`` 초가 지났으면 ``True``. 요청 시각을 읽지
+        못해도 ``True`` — 영원히 기다리는 쪽보다 시작 버튼을 다시
+        보여 주는 쪽이 낫다.
+    """
+    try:
+        requested = dt.datetime.fromisoformat(request.requested_at)
+    except ValueError:
+        return True
+    if requested.tzinfo is None:
+        return True
+    return (now - requested).total_seconds() > START_ACK_TIMEOUT
 
 
 def request_start(directory: pathlib.Path) -> str:

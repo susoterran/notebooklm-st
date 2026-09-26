@@ -217,6 +217,59 @@ def test_a_leftover_cancel_does_not_look_pending(login_dir) -> None:
     assert app.button(key="remote_login_start") is not None
 
 
+def test_a_stale_start_request_offers_the_start_button(login_dir) -> None:
+    """사이드카가 받지 않은 채 오래된 시작 요청은 준비 중으로 보지 않는다.
+
+    재시작 직전에 쓰였거나 다른 탭의 세션 중에 쓰인 요청이다. 계속
+    기다리면 시작 버튼이 영영 돌아오지 않는다.
+    """
+    old = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    login_protocol.write_request(
+        login_dir,
+        login_protocol.Request(
+            id="r0",
+            action=login_protocol.Action.START,
+            requested_at=old.isoformat(timespec="seconds"),
+        ),
+    )
+
+    app = v1.AppTest.from_function(_script).run()
+
+    assert not app.exception
+    assert len(app.info) == 0
+    assert app.button(key="remote_login_start") is not None
+
+
+def test_a_watched_result_wins_over_another_tabs_start(
+    login_dir, monkeypatch
+) -> None:
+    """지켜보던 요청이 끝났으면 다른 탭의 새 시작 요청이 있어도 처리한다."""
+    calls = []
+
+    def probe() -> bool:
+        """호출을 세고 살아 있다고 답한다."""
+        calls.append(1)
+        return True
+
+    gate = auth.AuthGate(probe=probe)
+    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
+    app = v1.AppTest.from_function(_script)
+    app.run()
+    app.button(key="remote_login_start").click().run()
+    request = login_protocol.read_request(login_dir)
+    assert request is not None
+    _write(
+        login_dir, state=login_protocol.State.SUCCEEDED, request_id=request.id
+    )
+    login_session.request_start(login_dir)
+
+    app.run()
+
+    assert not app.exception
+    assert len(calls) == 1
+    assert any("인증되었습니다" in box.value for box in app.success)
+
+
 def test_a_broken_status_file_still_offers_the_start_button(login_dir) -> None:
     """상태 파일이 깨져도 트레이스백 없이 시작 버튼을 그린다."""
     (login_dir / login_protocol.STATUS_FILE).write_text("{", encoding="utf-8")

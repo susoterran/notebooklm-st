@@ -72,12 +72,15 @@ def _unaccepted(
     """사이드카가 아직 받지 않은 시작 요청이 있는지.
 
     취소는 넣지 않는다. 사이드카는 세션이 없으면 취소를 무시하므로,
-    넣으면 영원히 "준비 중" 으로 보인다.
+    넣으면 영원히 "준비 중" 으로 보인다. 같은 까닭으로 오래된 시작
+    요청도 넣지 않는다. 사이드카가 재시작 직전이나 다른 세션 중에 받은
+    요청은 그 ``id`` 로 상태를 쓰지 않을 수 있다.
     """
     return (
         request is not None
         and request.action is login_protocol.Action.START
         and request.id != status.request_id
+        and not login_session.start_is_stale(request, dt.datetime.now(dt.UTC))
     )
 
 
@@ -94,15 +97,17 @@ def _area(gate: auth.AuthGate, base: str, directory: pathlib.Path) -> None:
     if status.state is login_protocol.State.RUNNING and status.password:
         _render_running(base, directory, status)
         return
+    # 결과 처리를 준비 중 판정보다 먼저 한다. 다른 탭이 새 시작 요청을
+    # 써 두었어도 이 탭이 지켜보던 요청의 결과는 처리해야 한다.
+    if _finish_watched(gate, status):
+        # 배너와 페이지 상태 줄까지 새 판정으로 다시 그리고, 폴링을
+        # 멈춘다.
+        st.rerun(scope="app")
     if status.state is login_protocol.State.STARTING or _unaccepted(
         login_session.pending_request(directory), status
     ):
         st.info("로그인 브라우저를 준비하는 중입니다.")
         return
-    if _finish_watched(gate, status):
-        # 배너와 페이지 상태 줄까지 새 판정으로 다시 그리고, 폴링을
-        # 멈춘다.
-        st.rerun(scope="app")
     _render_idle(directory, status)
 
 

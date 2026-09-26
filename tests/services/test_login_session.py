@@ -137,3 +137,38 @@ def test_remaining_seconds_counts_down_to_the_deadline() -> None:
         == 0
     )
     assert login_session.remaining_seconds(login_protocol.IDLE, now) is None
+
+
+def _start_at(requested_at: str) -> login_protocol.Request:
+    """``requested_at`` 만 다른 시작 요청."""
+    return login_protocol.Request(
+        id="r1",
+        action=login_protocol.Action.START,
+        requested_at=requested_at,
+    )
+
+
+def test_a_recent_start_is_not_stale() -> None:
+    """사이드카가 받을 시간 안의 시작 요청은 아직 기다린다."""
+    now = dt.datetime(2026, 9, 26, 12, 0, 29, tzinfo=dt.UTC)
+
+    assert not login_session.start_is_stale(
+        _start_at("2026-09-26T12:00:00+00:00"), now
+    )
+
+
+def test_an_old_start_is_stale() -> None:
+    """30초가 넘도록 받지 않은 시작 요청은 더 기다리지 않는다."""
+    now = dt.datetime(2026, 9, 26, 12, 0, 31, tzinfo=dt.UTC)
+
+    assert login_session.start_is_stale(
+        _start_at("2026-09-26T12:00:00+00:00"), now
+    )
+
+
+def test_an_unreadable_request_time_is_stale() -> None:
+    """요청 시각을 읽지 못하면 오래된 것으로 본다."""
+    now = dt.datetime(2026, 9, 26, 12, 0, tzinfo=dt.UTC)
+
+    assert login_session.start_is_stale(_start_at("t"), now)
+    assert login_session.start_is_stale(_start_at("2026-09-26T12:00:00"), now)
