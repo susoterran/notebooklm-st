@@ -109,3 +109,20 @@ def test_login_redirect_uses_the_login_hint() -> None:
 def test_login_hint_points_at_the_reseed_document() -> None:
     """만료 안내는 절차 문서를 가리킨다."""
     assert "auth-reseed" in errors.LOGIN_HINT
+
+
+def test_login_hint_points_at_the_auth_page() -> None:
+    """만료 안내는 언제든 닿는 인증 페이지로 보낸다. 재시작은 필요 없다."""
+    assert "「인증」 페이지" in errors.LOGIN_HINT
+    assert "재시작" not in errors.LOGIN_HINT
+
+
+def test_probe_failed_text_shows_only_the_exception_type() -> None:
+    """확인 불가 문구는 예외 타입만 보여 준다. 메시지에 구글 URL 이 있다."""
+    text = errors.probe_failed_text(
+        RuntimeError("https://accounts.google.com/secret")
+    )
+
+    assert "RuntimeError" in text
+    assert "accounts.google.com" not in text
+    assert "확인하지 못했습니다" in text

@@ -338,48 +338,6 @@ def test_auth_gate_stays_quiet_when_authenticated(stub_auth_gate) -> None:
     assert not app.error
 
 
-def test_auth_gate_offers_recheck_when_expired(monkeypatch) -> None:
-    """만료되면 안내와 다시 확인 버튼을 보여 준다."""
-    gate = auth.AuthGate(probe=lambda: False)
-    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
-
-    def script():
-        from notebooklm_st.components import auth_gate
-
-        auth_gate.render()
-
-    app = v1.AppTest.from_function(script).run()
-
-    assert not app.exception
-    assert len(app.error) == 1
-    assert app.button(key="auth_gate_recheck") is not None
-
-
-def test_auth_gate_rechecks_when_the_button_is_pressed(monkeypatch) -> None:
-    """다시 확인 버튼은 브라우저 없이 판정만 다시 돌린다."""
-    calls = []
-
-    def probe() -> bool:
-        """호출을 세고 계속 만료로 답한다."""
-        calls.append(1)
-        return False
-
-    gate = auth.AuthGate(probe=probe)
-    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
-
-    def script():
-        from notebooklm_st.components import auth_gate
-
-        auth_gate.render()
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    app.button(key="auth_gate_recheck").click().run()
-
-    assert not app.exception
-    assert len(calls) == 2
-
-
 def test_auth_gate_separates_a_failed_probe_from_an_expiry(monkeypatch):
     """확인 자체가 실패하면 만료가 아니라 확인 불가로 알린다."""
     secret_url = "https://accounts.google.com/secret"
@@ -409,120 +367,8 @@ def test_auth_gate_separates_a_failed_probe_from_an_expiry(monkeypatch):
     assert "RuntimeError" in app.error[0].value
 
 
-def test_auth_gate_imports_an_uploaded_credential(monkeypatch) -> None:
-    """업로드한 자격증명을 반입하고 곧바로 다시 확인한다."""
-    seen: list[bytes] = []
-    results = iter([False, True])
-
-    def probe() -> bool:
-        """첫 확인은 만료, 반입 뒤에는 정상으로 답한다."""
-        return next(results, True)
-
-    def fake_import(payload: bytes) -> auth.ImportResult:
-        """반입 호출을 기록하고 성공으로 답한다."""
-        seen.append(payload)
-        return auth.ImportResult(ok=True, detail="반입했습니다")
-
-    gate = auth.AuthGate(probe=probe)
-    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
-    monkeypatch.setattr(auth, "import_credentials", fake_import)
-
-    def script():
-        """AppTest 진입점 — 인증 게이트를 그린다."""
-        from notebooklm_st.components import auth_gate
-
-        auth_gate.render()
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    app.file_uploader(key="auth_gate_upload").set_value(
-        ("storage_state.json", b'{"cookies": []}', "application/json")
-    )
-    app.run()
-    app.button(key="auth_gate_import").click().run()
-
-    assert not app.exception
-    assert seen == [b'{"cookies": []}']
-    assert gate.ok is True
-
-
-def test_auth_gate_reports_a_successful_import_that_stays_expired(
-    monkeypatch,
-) -> None:
-    """반입은 성공해도 다시 확인이 실패하면 성공 취급하지 않는다.
-
-    ``st.rerun()`` 은 ``NoReturn`` 이라 타입 체커가 이 분기 순서를
-    지켜 주지 않는다. 분기가 뒤집히면 이 테스트만 잡아낸다.
-    """
-    seen: list[bytes] = []
-
-    def probe() -> bool:
-        """반입 뒤에도 계속 만료로 답한다."""
-        return False
-
-    def fake_import(payload: bytes) -> auth.ImportResult:
-        """반입 호출을 기록하고 성공으로 답한다."""
-        seen.append(payload)
-        return auth.ImportResult(ok=True, detail="반입했습니다")
-
-    gate = auth.AuthGate(probe=probe)
-    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
-    monkeypatch.setattr(auth, "import_credentials", fake_import)
-
-    def script():
-        """AppTest 진입점 — 인증 게이트를 그린다."""
-        from notebooklm_st.components import auth_gate
-
-        auth_gate.render()
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    app.file_uploader(key="auth_gate_upload").set_value(
-        ("storage_state.json", b'{"cookies": []}', "application/json")
-    )
-    app.run()
-    app.button(key="auth_gate_import").click().run()
-
-    assert not app.exception
-    assert seen == [b'{"cookies": []}']
-    assert any("살아나지 않았습니다" in box.value for box in app.error)
-    assert gate.ok is False
-
-
-def test_auth_gate_reports_a_failed_import(monkeypatch) -> None:
-    """반입이 실패하면 사유를 보여 주고 판정을 바꾸지 않는다."""
-
-    def fake_import(payload: bytes) -> auth.ImportResult:
-        """실패로 답한다."""
-        return auth.ImportResult(ok=False, detail="쿠키가 모자랍니다")
-
-    gate = auth.AuthGate(probe=lambda: False)
-    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
-    monkeypatch.setattr(auth, "import_credentials", fake_import)
-
-    def script():
-        """AppTest 진입점 — 인증 게이트를 그린다."""
-        from notebooklm_st.components import auth_gate
-
-        auth_gate.render()
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    app.file_uploader(key="auth_gate_upload").set_value(
-        ("storage_state.json", b"{}", "application/json")
-    )
-    app.run()
-    app.button(key="auth_gate_import").click().run()
-
-    assert not app.exception
-    assert any("쿠키가 모자랍니다" in box.value for box in app.error)
-    assert gate.ok is False
-
-
-def test_auth_gate_hides_the_uploader_when_authenticated(
-    stub_auth_gate,
-) -> None:
-    """인증이 살아 있으면 업로더를 그리지 않는다."""
+def test_auth_gate_never_draws_the_uploader(stub_auth_gate) -> None:
+    """배너는 업로더를 그리지 않는다. 업로더는 인증 페이지에 있다."""
 
     def script():
         """AppTest 진입점 — 인증 게이트를 그린다."""
@@ -534,6 +380,41 @@ def test_auth_gate_hides_the_uploader_when_authenticated(
 
     assert not app.exception
     assert len(app.file_uploader) == 0
+
+
+def test_auth_gate_links_to_the_auth_page_when_expired(monkeypatch) -> None:
+    """만료되면 안내와 인증 페이지 링크만 그린다."""
+    gate = auth.AuthGate(probe=lambda: False)
+    monkeypatch.setattr(session, "get_auth_gate", lambda: gate)
+
+    def script():
+        """AppTest 진입점 — 인증 게이트를 그린다."""
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert [box.value for box in app.error] == [errors.LOGIN_HINT]
+    assert [link.proto.page for link in app.get("page_link")] == ["auth"]
+    assert len(app.button) == 0
+    assert len(app.file_uploader) == 0
+
+
+def test_auth_gate_draws_no_link_when_authenticated(stub_auth_gate) -> None:
+    """인증이 살아 있으면 링크도 그리지 않는다."""
+
+    def script():
+        """AppTest 진입점 — 인증 게이트를 그린다."""
+        from notebooklm_st.components import auth_gate
+
+        auth_gate.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.get("page_link")) == 0
 
 
 def test_answer_view_never_draws_an_editor() -> None:

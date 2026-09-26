@@ -20,6 +20,7 @@ import streamlit as st
 from notebooklm_st.components import auth_gate, schema_gate
 from notebooklm_st.pages import (
     ask,
+    auth,
     channels,
     dashboard,
     digest,
@@ -53,6 +54,7 @@ def main() -> None:
             st.Page(history.render, title="이력", url_path="history"),
             st.Page(digest.render, title="정리본", url_path="digest"),
             st.Page(maintenance.render, title="정리", url_path="maintenance"),
+            auth.as_page(),
         ]
     )
     auth_gate.render()
