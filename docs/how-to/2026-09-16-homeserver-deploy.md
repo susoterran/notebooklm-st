@@ -1,12 +1,15 @@
 # 홈서버에 배포하기
 
 앱을 홈서버의 도커 컨테이너로 띄우는 절차다. 설계 근거는
-`docs/superpowers/specs/2026-09-16-container-deploy-design.md` 에 있다.
+`docs/superpowers/specs/2026-09-16-container-deploy-design.md` 와
+`docs/superpowers/specs/2026-09-26-remote-login-design.md`(원격 로그인)
+에 있다.
 
 ## 준비물
 
 - 홈서버에 Docker Engine 과 Compose v2
-- 데스크톱에 이 저장소와 `uv` (자격증명을 만들 때 쓴다)
+- (선택) 데스크톱에 이 저장소와 `uv` — 원격 로그인을 쓸 수 없을 때만
+  자격증명을 만드는 데 쓴다
 - NotebookLM 에 접근 가능한 구글 계정
 
 ## 1. 저장소와 데이터 디렉터리
@@ -17,6 +20,7 @@
 git clone <저장소 URL> notebooklm-st
 cd notebooklm-st
 printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" > .env
+printf 'NOTEBOOKLM_ST_LOGIN_VIEWER_URL=http://%s:9005\n' "<홈서버IP>" >> .env
 mkdir -p data
 sudo chown "$(id -u):$(id -g)" data
 ```
@@ -25,6 +29,10 @@ sudo chown "$(id -u):$(id -g)" data
 읽으므로 **이후 모든 명령에 접두사를 붙이지 않아도 된다.** 이 파일은
 `.gitignore` 와 `.dockerignore` 에 이미 들어 있어 저장소나 이미지로
 새지 않는다.
+
+`NOTEBOOKLM_ST_LOGIN_VIEWER_URL` 은 원격 로그인 화면의 주소다. **다른
+기기의 브라우저가 닿는 주소**여야 한다(컨테이너 안의 주소가 아니다).
+비워 두면 인증 페이지에 원격 로그인 영역이 나오지 않는다.
 
 `chown` 을 빼먹으면 컨테이너가 `/data` 에 쓰지 못해 기동이 실패한다.
 
@@ -41,33 +49,24 @@ docker compose ps        # STATUS 가 healthy 가 될 때까지 기다린다
 docker compose logs -f   # 기동 로그
 ```
 
-접속 주소는 **http://<홈서버IP>:9004** 다. 컨테이너 안에서는 8611 에서
-돌고 `docker-compose.yml` 이 호스트 9004 에 붙인다.
+컨테이너가 둘 뜬다.
+
+| 컨테이너 | 주소 | 하는 일 |
+|---|---|---|
+| `notebooklm-st` | **http://<홈서버IP>:9004** | 앱. 컨테이너 안 8611 |
+| `notebooklm-st-login-browser` | `http://<홈서버IP>:9005` | 원격 로그인 화면 중계. 로그인 세션 중에만 이 포트를 듣는다. 사람이 직접 열 일은 없다 — 앱의 인증 페이지가 끼워 보여 준다 |
+
+사이드카 이미지는 크로미움을 담아 처음 빌드가 몇 분 걸린다.
 
 ## 3. 자격증명 넣기
 
-앱은 브라우저를 띄우지 않는다. 최초 로그인은 사람이 데스크톱에서 한다.
+1. 아무 기기(PC·휴대폰)의 브라우저로 앱을 연다.
+2. **인증** 페이지에서 **구글 로그인 시작** 을 누른다.
+3. 페이지 안에 뜬 구글 로그인 화면에서 로그인한다.
+4. "인증되었습니다" 가 뜨면 끝이다.
 
-데스크톱에서.
-
-```bash
-cd notebooklm-st
-uv sync
-uv run notebooklm login
-```
-
-크로미움이 열린다. 구글 로그인을 마치면 CLI 가
-`~/.notebooklm/profiles/default/storage_state.json` 에 저장한다
-(윈도우는 `C:\Users\<사용자>\.notebooklm\profiles\default\`).
-
-홈서버 대시보드에서.
-
-1. 만료 배너 아래 **자격증명 올리기** 를 편다.
-2. 그 `storage_state.json` 을 고른다.
-3. **반입** 을 누른다.
-
-반입에 성공하면 앱이 곧바로 다시 확인까지 하고 화면을 새로 그린다.
-업로드가 안 될 때의 대체 경로와 자격증명 취급 수칙은
+원격 로그인을 쓸 수 없을 때의 대체 경로(데스크톱 로그인 → 업로드,
+볼륨 직접 복사)와 자격증명 취급 수칙은
 [인증이 만료됐을 때 되살리기](2026-09-16-auth-reseed.md) 에 있다.
 
 ## 4. Outline 연결하기
@@ -201,19 +200,23 @@ docker compose up -d
 | 4 | `docker compose ps` | `healthy` |
 | 5 | 다른 기기에서 `http://<홈서버IP>:9004` | 화면이 뜬다 |
 | 6 | `ls -l data/` | `questions.db`·`notebooklm/` 이 내 UID 소유 |
-| 7 | 업로드 UI 로 자격증명 반입 | 배너가 사라진다 |
+| 7 | 인증 페이지에서 구글 로그인 | "인증되었습니다", 배너가 사라진다 |
+| 7a | 로그인 뒤 `ls data/notebooklm/profiles/default/` | `browser_profile` 이 **없다** |
+| 7b | `docker compose run --rm login-browser python -c "import streamlit"` | **실패해야 정상** |
 | 8 | `docker compose down && docker compose up -d` | 질문·문서 링크·인증이 보존된다 |
 | 9 | 이력에서 실행 하나를 Outline 에 저장 | 문서가 컬렉션에 생기고, 이력이 링크 한 줄로 바뀐다 |
 
 ## 운영 규칙
 
-- **인터넷에 내놓지 않는다.** 대시보드의 자격증명 업로드 폼은 앱이
-  외부에 노출되지 않는다는 전제 위에 있다. 포트포워딩·리버스
-  프록시·터널로 9004 를 인터넷에 열려면 먼저 업로드 폼을 제거해야
-  한다. 홈 LAN 안에서도 구간은 평문 HTTP 다 — 같은 Wi-Fi 의 다른
-  기기에는 보인다. **방화벽으로 막았다고 안심하지 않는다** — 도커는
-  iptables 에 직접 규칙을 넣어 `ufw` 같은 호스트 방화벽을 우회한다.
-  라우터에서 9004 를 포워딩하지 않는 것이 유일한 방어선이다.
+- **인터넷에 내놓지 않는다.** 원격 로그인 화면(9005)과 자격증명 업로드
+  폼은 앱이 외부에 노출되지 않는다는 전제 위에 있다. 포트포워딩·리버스
+  프록시·터널로 9004·9005 를 인터넷에 열려면 먼저 사이드카를 끄고
+  업로드 폼을 제거해야 한다. 홈 LAN 안에서도 구간은 평문 HTTP 다 —
+  로그인 화면에 치는 구글 비밀번호가 같은 Wi-Fi 의 다른 기기에 보인다.
+  Tailscale 같은 암호화 경로로 접속하기를 권장한다. **방화벽으로
+  막았다고 안심하지 않는다** — 도커는 iptables 에 직접 규칙을 넣어
+  `ufw` 같은 호스트 방화벽을 우회한다. 라우터에서 9004·9005 를
+  포워딩하지 않는 것이 유일한 방어선이다.
 - **볼륨에 `:ro` 를 걸지 않는다.** 앱이 회전된 쿠키를 되쓴다. 읽기
   전용으로 마운트하면 재시작마다 옛 쿠키로 돌아가고 결국 죽는다.
 - **실행 중일 때 재시작하지 않는다.** 질의는 백그라운드 스레드에서
@@ -224,14 +227,8 @@ docker compose up -d
 
 ## 인증이 만료되면
 
-인증 판정은 **앱이 뜰 때 한 번만** 한다. 떠 있는 도중에 세션이 죽으면
-배너는 다시 그려지지 않는다.
-
-```bash
-docker restart notebooklm-st
-```
-
-배너가 다시 뜨면 3단계의 반입 절차를 따른다.
+**인증** 페이지에서 구글 로그인을 다시 한다. 앱을 재시작할 필요는
+없다. 절차는 3절과 같다.
 
 ## 로그 보기
 
