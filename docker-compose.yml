@@ -1,10 +1,18 @@
 # 이미지를 이 호스트에 붙인다. 앱 환경변수는 이미지에 있으므로
 # 여기서 다시 적지 않는다 — 두 곳에 적으면 어긋난다. 예외는
 # Outline 연결값이다. 토큰이 시크릿이라 이미지에 구울 수 없다.
+#
+# 홈서버는 두 이미지를 GHCR 에서 받는다(docker compose pull). CI 가
+# 스캔·동작 게이트를 통과시킨 바로 그 이미지다. 태그는 변수 하나로
+# 두 서비스가 함께 쓴다 — 앱과 사이드카의 notebooklm-py 버전이 같아야
+# 해서다. 배포 디렉터리의 .env 에 고정할 수 있다(예
+# NOTEBOOKLM_ST_TAG=v1.2.0, 수동 실행 이미지는 devel). 비우면 latest.
+# build: 는 소스에서 굽고 싶을 때(docker compose up -d --build)를 위해
+# 남겨 둔다. 그때 구운 이미지도 같은 이름을 얻는다.
 services:
   app:
     build: .
-    image: notebooklm-st:local
+    image: ghcr.io/susoterran/notebooklm-st:${NOTEBOOKLM_ST_TAG:-latest}
     container_name: notebooklm-st
     # 홈서버 사용자의 UID 가 1000 이 아니면 PUID/PGID 로 덮는다.
     user: "${PUID:-1000}:${PGID:-1000}"
@@ -46,7 +54,7 @@ services:
     build:
       context: .
       dockerfile: deploy/login-browser/Dockerfile
-    image: notebooklm-st-login-browser:local
+    image: ghcr.io/susoterran/notebooklm-st-login-browser:${NOTEBOOKLM_ST_TAG:-latest}
     container_name: notebooklm-st-login-browser
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:

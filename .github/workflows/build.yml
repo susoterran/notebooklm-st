@@ -35,6 +35,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # compose 는 두 이미지를 GHCR 이름·이 태그로 찾는다. 롤링 태그
+    # (latest·devel)와 겹치지 않는 CI 전용 값으로 두고, 스캔한 이미지에
+    # 이 이름을 붙여 동작 게이트가 다시 굽거나 받지 않게 한다.
+    env:
+      NOTEBOOKLM_ST_TAG: ci
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       # sbom·provenance 첨부에는 docker-container 드라이버가 필요하다.
@@ -62,6 +67,25 @@ jobs:
           labels: |
             org.opencontainers.image.title=notebooklm-st
             org.opencontainers.image.description=YouTube 영상 질의응답 도구
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.event.release.tag_name || 'devel' }}
+      # 사이드카도 앱과 같은 태그 규칙으로 게시한다. 홈서버 compose 는
+      # 태그 변수 하나로 두 이미지를 받으므로, 태그가 어긋나면 앱과
+      # 사이드카의 notebooklm-py 버전이 갈라진다.
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        id: meta_login
+        with:
+          images: ghcr.io/susoterran/notebooklm-st-login-browser
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=devel,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=notebooklm-st-login-browser
+            org.opencontainers.image.description=notebooklm-st 원격 구글 로그인 사이드카
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ github.event.release.tag_name || 'devel' }}
@@ -110,13 +134,49 @@ jobs:
           severity: 'HIGH,CRITICAL'
           format: table
 
+      # 사이드카도 같은 게이트를 지난다. 크로미움·Xvfb·noVNC 가 든 이미지라
+      # 앱보다 OS 패키지가 많고, 걸리면 앱도 사이드카도 게시되지 않는다.
+      # 두 이미지는 태그 하나로 함께 움직이므로 한쪽만 올라가면 안 된다.
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: deploy/login-browser/Dockerfile
+          load: true
+          push: false
+          tags: notebooklm-st-login-browser:scan
+      - name: 사이드카 취약점 스캔 게이트 (HIGH·CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: notebooklm-st-login-browser:scan
+          version: v0.70.0
+          scanners: vuln
+          exit-code: '1'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true    # 앱 게이트와 같은 이유
+          format: table
+      # 앱의 시크릿 스캔과 같은 이유로 보고만 한다.
+      - name: 사이드카 시크릿 스캔 (보고만, 게이트 아님)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: notebooklm-st-login-browser:scan
+          version: v0.70.0
+          scanners: secret
+          exit-code: '0'
+          severity: 'HIGH,CRITICAL'
+          format: table
+
       # ── 동작 게이트 ───────────────────────────────────────────────────────
       # 취약하지 않은 것과 실제로 도는 것은 다른 질문이다. 스캔이 통과해도
       # PYTHONPATH가 틀렸거나 /data에 쓰지 못하는 이미지는 게시되면 안 된다.
-      # 스캔 빌드가 만든 바로 그 이미지에 compose 태그를 붙여, 홈서버와 같은
-      # 설정(비root·read_only·tmpfs·볼륨)으로 돌려본다. 태그를 먼저 붙이므로
-      # compose는 다시 굽지 않는다. 환경변수는 이미지에 박혀 있어 따로 주지 않는다.
-      - run: docker tag notebooklm-st:scan notebooklm-st:local
+      # 스캔 빌드가 만든 바로 그 이미지에 compose 가 찾는 이름(GHCR 이름 +
+      # 위 잡 env 의 CI 전용 태그)을 붙여, 홈서버와 같은 설정(비root·
+      # read_only·tmpfs·볼륨)으로 돌려본다. 이름이 로컬에 이미 있으므로
+      # compose 는 다시 굽지도, GHCR 에서 받지도 않는다. 이 태그는 로컬에만
+      # 있고 게시되지 않는다. 환경변수는 이미지에 박혀 있어 따로 주지 않는다.
+      - run: |
+          docker tag notebooklm-st:scan "ghcr.io/susoterran/notebooklm-st:$NOTEBOOKLM_ST_TAG"
+          docker tag notebooklm-st-login-browser:scan \
+            "ghcr.io/susoterran/notebooklm-st-login-browser:$NOTEBOOKLM_ST_TAG"
       # compose의 user: 기본값과 맞춘다. 홈서버에서 사람이 밟는 chown 절차와 같다.
       - run: mkdir -p data && sudo chown 1000:1000 data
 
@@ -155,13 +215,10 @@ jobs:
              sys.exit(0 if off.total_seconds() == 32400 else 1)"
 
       # ── 사이드카 게이트 ───────────────────────────────────────────────────
-      # 사이드카는 게시하지 않는다. compose 가 홈서버에서 로컬로 굽는다.
-      # 여기서는 굽히는지, 앱 의존성이 없는지, 앱과 notebooklm-py 버전이
-      # 같은지, 그리고 기동 뒤 감시 루프가 heartbeat 를 갱신하는지만 본다.
-      # 아래 기동 단계의 compose up 이 이 이미지를 쓴다.
-      - name: 사이드카 이미지 빌드
-        run: docker compose build login-browser
-
+      # 위에서 스캔하고 태그를 붙인 사이드카 이미지로 돈다. 감시 루프를
+      # 임포트하는지, 앱 의존성이 없는지, 앱과 notebooklm-py 버전이
+      # 같은지, 그리고 기동 뒤 감시 루프가 heartbeat 를 갱신하는지 본다.
+      # 아래 기동 단계의 compose up 도 이 이미지를 쓴다.
       - name: 사이드카가 감시 루프를 임포트하는지
         run: |
           docker compose run --rm --no-deps -T login-browser python -c \
@@ -221,6 +278,7 @@ jobs:
         run: docker compose down
 
       # ── 게시 ──────────────────────────────────────────────────────────────
+      # 모든 게이트를 지난 뒤에만 두 이미지를 올린다.
       # 위 스캔 빌드와 컨텍스트·Dockerfile이 같으므로 레이어는 CACHED로 지나간다.
       # 재빌드가 아니다(잡 안에서 유지되는 buildx 캐시. cache-from/to와는 무관).
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -231,3 +289,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true               # 구성 패키지 목록(SBOM)을 이미지에 첨부 → CVE 발생 시 영향 여부 즉시 조회
           provenance: mode=max     # 빌드 출처(커밋·워크플로우·러너) 기록 첨부
+      # 사이드카도 같은 방식이다. 스캔 빌드와 같은 file·context 라 CACHED.
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: deploy/login-browser/Dockerfile
+          push: true
+          tags: ${{ steps.meta_login.outputs.tags }}
+          labels: ${{ steps.meta_login.outputs.labels }}
+          sbom: true
+          provenance: mode=max
