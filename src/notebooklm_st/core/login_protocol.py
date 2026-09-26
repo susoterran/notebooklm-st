@@ -17,8 +17,8 @@ import datetime as dt
 import enum
 import json
 import os
+import pathlib
 import tempfile
-from pathlib import Path
 
 DIR_ENV_VAR = "NOTEBOOKLM_ST_LOGIN_DIR"
 REQUEST_FILE = "request.json"
@@ -140,7 +140,7 @@ def now_iso() -> str:
     return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
-def write_atomic(path: Path, text: str) -> None:
+def write_atomic(path: pathlib.Path, text: str) -> None:
     """읽는 쪽이 반쯤 쓰인 파일을 보지 않게 쓴다.
 
     같은 디렉터리의 임시 파일에 쓴 뒤 ``os.replace`` 로 바꾼다. 권한은
@@ -159,11 +159,11 @@ def write_atomic(path: Path, text: str) -> None:
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except BaseException:
-        Path(temporary).unlink(missing_ok=True)
+        pathlib.Path(temporary).unlink(missing_ok=True)
         raise
 
 
-def read_request(directory: Path) -> Request | None:
+def read_request(directory: pathlib.Path) -> Request | None:
     """요청 파일을 읽는다.
 
     Returns:
@@ -179,7 +179,7 @@ def read_request(directory: Path) -> Request | None:
     return Request.from_json(text)
 
 
-def read_status(directory: Path) -> Status:
+def read_status(directory: pathlib.Path) -> Status:
     """상태 파일을 읽는다.
 
     Returns:
@@ -195,13 +195,13 @@ def read_status(directory: Path) -> Status:
     return Status.from_json(text)
 
 
-def write_request(directory: Path, request: Request) -> None:
+def write_request(directory: pathlib.Path, request: Request) -> None:
     """요청 파일을 쓴다. 디렉터리가 없으면 만든다."""
     directory.mkdir(parents=True, exist_ok=True)
     write_atomic(directory / REQUEST_FILE, request.to_json())
 
 
-def write_status(directory: Path, status: Status) -> None:
+def write_status(directory: pathlib.Path, status: Status) -> None:
     """상태 파일을 쓴다. 디렉터리가 없으면 만든다."""
     directory.mkdir(parents=True, exist_ok=True)
     write_atomic(directory / STATUS_FILE, status.to_json())

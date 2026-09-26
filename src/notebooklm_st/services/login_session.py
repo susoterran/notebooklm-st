@@ -9,9 +9,9 @@
 import datetime as dt
 import logging
 import os
+import pathlib
 import urllib.parse
 import uuid
-from pathlib import Path
 
 from notebooklm_st.core import login_protocol
 from notebooklm_st.services import digest_runner, runs
@@ -41,17 +41,17 @@ def viewer_url() -> str | None:
     return value or None
 
 
-def login_dir() -> Path | None:
+def login_dir() -> pathlib.Path | None:
     """신호 파일을 두는 디렉터리.
 
     Returns:
         디렉터리. 설정이 없으면 ``None``.
     """
     value = os.environ.get(login_protocol.DIR_ENV_VAR, "").strip()
-    return Path(value) if value else None
+    return pathlib.Path(value) if value else None
 
 
-def read_status(directory: Path) -> login_protocol.Status:
+def read_status(directory: pathlib.Path) -> login_protocol.Status:
     """사이드카의 상태를 읽는다.
 
     파일이 깨졌거나 읽히지 않으면 ``idle`` 로 본다. 화면이 트레이스백
@@ -68,7 +68,7 @@ def read_status(directory: Path) -> login_protocol.Status:
         return login_protocol.IDLE
 
 
-def sidecar_alive(directory: Path, now: float) -> bool:
+def sidecar_alive(directory: pathlib.Path, now: float) -> bool:
     """사이드카가 떠 있는지 heartbeat 로 판정한다.
 
     Args:
@@ -86,7 +86,7 @@ def sidecar_alive(directory: Path, now: float) -> bool:
     return now - modified <= HEARTBEAT_STALE_AFTER
 
 
-def pending_request(directory: Path) -> login_protocol.Request | None:
+def pending_request(directory: pathlib.Path) -> login_protocol.Request | None:
     """앱이 마지막으로 쓴 요청.
 
     상태의 ``request_id`` 와 비교해 사이드카가 아직 받지 않은 요청을
@@ -101,7 +101,7 @@ def pending_request(directory: Path) -> login_protocol.Request | None:
         return None
 
 
-def request_start(directory: Path) -> str:
+def request_start(directory: pathlib.Path) -> str:
     """로그인 시작을 요청한다.
 
     Returns:
@@ -110,7 +110,7 @@ def request_start(directory: Path) -> str:
     return _write_request(directory, login_protocol.Action.START)
 
 
-def request_cancel(directory: Path) -> str:
+def request_cancel(directory: pathlib.Path) -> str:
     """진행 중인 로그인의 취소를 요청한다.
 
     Returns:
@@ -169,7 +169,9 @@ def remaining_seconds(
     return max(0, int((deadline - now).total_seconds()))
 
 
-def _write_request(directory: Path, action: login_protocol.Action) -> str:
+def _write_request(
+    directory: pathlib.Path, action: login_protocol.Action
+) -> str:
     """새 요청을 쓴다."""
     request = login_protocol.Request(
         id=uuid.uuid4().hex,
