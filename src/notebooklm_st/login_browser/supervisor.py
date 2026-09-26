@@ -123,6 +123,7 @@ class Supervisor:
         wait_ready: Callable[[], bool],
         env: Mapping[str, str],
         make_password: Callable[[], str] = _password,
+        display_socket: pathlib.Path | None = None,
     ) -> None:
         """주변을 받아 둔다.
 
@@ -135,6 +136,10 @@ class Supervisor:
             wait_ready: 가상 화면이 뜰 때까지 기다린다. 못 뜨면 ``False``.
             env: 자식에게 줄 환경변수의 바탕.
             make_password: 세션 비밀번호를 만든다.
+            display_socket: 가상 화면의 X 소켓. Xvfb 를 띄우기 전에
+                지운다. SIGKILL 된 이전 Xvfb 가 남긴 소켓을 보고
+                ``wait_ready`` 가 너무 일찍 참을 돌려주지 않게 한다.
+                ``None`` 이면 건드리지 않는다.
         """
         self._login_dir = login_dir
         self._browser_profile = profile_dir / "browser_profile"
@@ -144,6 +149,7 @@ class Supervisor:
         self._wait_ready = wait_ready
         self._env = dict(env)
         self._make_password = make_password
+        self._display_socket = display_socket
         self._session: _Session | None = None
         self._last_request_id: str | None = None
 
@@ -154,10 +160,13 @@ class Supervisor:
         요청은 처리한 것으로 기록해, 사람 없이 다시 실행되지 않게 한다.
         남은 요청이 아직 답하지 않은 시작이면 그 ``id`` 로 실패를 써서
         답한다. 답하지 않으면 그 요청을 지켜보는 탭이 결과를 받지 못한다.
+
+        흔적(크로미움 프로필 등)은 상태와 상관없이 항상 지운다. 프로필은
+        계정 동등 자격증명이고, 지우는 것은 멱등하고 싸다.
         """
+        self._cleanup_files()
         status = self._read_status()
         if status.state in login_protocol.ACTIVE_STATES:
-            self._cleanup_files()
             status = self._write_status(
                 login_protocol.State.FAILED,
                 status.request_id,
@@ -260,6 +269,8 @@ class Supervisor:
         self._work_dir.mkdir(parents=True, exist_ok=True)
         password_file = self._work_dir / PASSWORD_FILE
         login_protocol.write_atomic(password_file, password + "\n")
+        if self._display_socket is not None:
+            self._display_socket.unlink(missing_ok=True)
         processes.append(
             self._spawn(
                 "Xvfb",
@@ -554,6 +565,7 @@ def build() -> Supervisor:
         launch=_launch,
         clock=_utc_now,
         wait_ready=_wait_for_display,
+        display_socket=X_SOCKET,
         # rich 의 색 코드가 CLI 로그 마지막 줄(화면에 보이는 사유)에
         # 섞이지 않게 한다.
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},

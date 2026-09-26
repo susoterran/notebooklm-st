@@ -140,6 +140,7 @@ def make_rig(
     *,
     fail_on: str | None = None,
     ready: bool = True,
+    display_socket: pathlib.Path | None = None,
 ) -> Rig:
     """감시 루프와 가짜 실행기·시계를 한 벌 엮는다."""
     login_dir = tmp_path / "login"
@@ -159,6 +160,7 @@ def make_rig(
         wait_ready=lambda: ready,
         env={"PATH": "/usr/bin"},
         make_password=lambda: PASSWORD,
+        display_socket=display_socket,
     )
     return Rig(sup, launcher, clock, login_dir, browser_profile, work_dir)
 
@@ -456,6 +458,49 @@ def test_recover_leaves_a_finished_result_alone(rig: Rig) -> None:
     assert rig.status() == finished
 
 
+def test_recover_always_removes_the_browser_profile(rig: Rig) -> None:
+    """끝난 결과만 남아 있어도 크로미움 프로필은 지운다.
+
+    프로필은 계정 동등 자격증명이다. 지우는 것은 멱등하고 싸다.
+    """
+    login_protocol.write_status(
+        rig.login_dir,
+        login_protocol.Status(
+            state=login_protocol.State.SUCCEEDED, request_id="r0"
+        ),
+    )
+
+    rig.sup.recover()
+
+    assert not rig.browser_profile.exists()
+
+
+def test_a_stale_display_socket_is_removed_before_xvfb(tmp_path) -> None:
+    """이전 Xvfb 가 남긴 소켓을 지운 뒤 새 Xvfb 를 띄운다.
+
+    남아 있으면 가상 화면이 뜨기도 전에 떴다고 판정한다.
+    """
+    socket = tmp_path / "X99"
+    socket.write_text("", encoding="utf-8")
+    seen: list[bool] = []
+    rig = make_rig(tmp_path, display_socket=socket)
+    launcher = rig.launcher
+
+    def launch(argv, env, log_path) -> FakeProcess:
+        """Xvfb 를 띄우는 순간 소켓이 남아 있는지 기록한다."""
+        if argv[0] == "Xvfb":
+            seen.append(socket.exists())
+        return launcher(argv, env, log_path)
+
+    rig.sup._launch = launch
+    rig.request("r1")
+
+    rig.sup.tick()
+
+    assert seen == [False]
+    assert rig.status().state is login_protocol.State.RUNNING
+
+
 def test_recover_does_not_replay_the_last_request(rig: Rig) -> None:
     """재시작 전의 시작 요청이 사람 없이 다시 실행되지 않는다."""
     rig.request("r0")
@@ -587,3 +632,4 @@ def test_build_wires_the_container_paths(monkeypatch) -> None:
         "/data/notebooklm/profiles/default/browser_profile"
     )
     assert built._env["NO_COLOR"] == "1"
+    assert built._display_socket == supervisor.X_SOCKET
