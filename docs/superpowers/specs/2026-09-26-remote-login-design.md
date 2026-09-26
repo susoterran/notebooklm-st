@@ -188,12 +188,21 @@ idle ──start──► starting ──► running ──┬─► succeeded
 
 ### 6.3 기동 시 복구
 
-사이드카가 뜰 때 `status.json` 이 `starting`/`running` 이면, 정리(6.4 의
-종료 단계)를 돌린 뒤 `failed`(`detail`: "로그인 브라우저가 재시작되었습니다")
-로 쓴다. 반쯤 열린 세션과 남은 `browser_profile/` 을 남기지 않는다.
+사이드카가 뜰 때 다음을 차례로 한다. 재시작 사유는 모두 `detail`
+"로그인 브라우저가 재시작되었습니다" 다.
 
-같은 이유로 **기동 시 그때 있는 `request.json` 의 `id` 를 처리한 것으로
-기록한다.** 재시작 전의 `start` 요청이 사람 없이 다시 실행되지 않게 한다.
+1. **흔적을 상태와 상관없이 지운다**(6.4 정리의 2·3단계). `browser_profile/`
+   은 계정 동등 자격증명이고, 지우기는 멱등하고 싸다. 끝난 결과만 남아
+   있어도 지운다. `status.json` 은 이 단계에서 건드리지 않는다.
+2. `status.json` 이 `starting`/`running` 이면 그 `request_id` 로 `failed` 를
+   쓴다. 반쯤 열린 세션을 남기지 않는다.
+3. **그때 있는 `request.json` 의 `id` 를 처리한 것으로 기록한다.** 재시작
+   전의 `start` 요청이 사람 없이 다시 실행되지 않게 한다.
+4. 그 요청이 `start` 이고 그 `id` 가 (2 를 거친) `status.json` 의
+   `request_id` 와 다르면, **그 `id` 로 `failed` 를 써서 답한다.** 다시
+   실행하지는 않는다. 답하지 않으면 그 요청을 지켜보는 탭이 결과를 받지
+   못한다. `cancel` 이 남아 있거나 이미 그 `id` 로 결과를 썼으면 상태를
+   바꾸지 않는다.
 
 ### 6.4 세션 한 번의 수명
 
@@ -203,7 +212,8 @@ idle ──start──► starting ──► running ──┬─► succeeded
  2. password = secrets.token_urlsafe(6)   (8자 — VNC 인증은 8자까지만 쓴다)
     비밀번호 파일을 /tmp 에 0600 으로 쓰고 x11vnc 에 `-passwdfile rm:<파일>`
     로 넘긴다. x11vnc 가 읽은 뒤 지운다
- 3. Xvfb :99 -screen 0 1280x800x24
+ 3. 남은 X 소켓(/tmp/.X11-unix/X99)을 지운 뒤 Xvfb :99 -screen 0 1280x800x24
+    를 띄우고, 소켓이 생길 때까지 기다린다(5초)
  4. x11vnc -display :99 -localhost -passwdfile rm:<파일> -forever -shared
  5. websockify --web <novnc 경로> 6080 localhost:5900
  6. DISPLAY=:99 python -m notebooklm login --fresh --browser-timeout 900
@@ -222,6 +232,14 @@ idle ──start──► starting ──► running ──┬─► succeeded
 ```
 
 - 3~6 중 하나라도 뜨지 못하면 정리 후 `failed`(`detail` 에 어느 단계인지).
+- 시작 도중의 **예상 밖 파일 오류**(`OSError` — 비밀번호 파일·임시
+  디렉터리·`running` 상태 쓰기 등)도 같은 정리 후 `failed`(`detail`
+  "로그인 브라우저를 띄우지 못했습니다(파일 오류)")로 끝낸다. 잡지 않으면
+  상태가 `starting` 에 남고 띄운 프로세스가 샌다.
+- 정리는 파일 하나를 지우지 못해도 나머지(특히 `browser_profile/`)를 마저
+  지운다.
+- 이전 Xvfb 가 SIGKILL 되면 X 소켓이 남는다. 3단계에서 먼저 지우지 않으면
+  새 Xvfb 가 뜨기도 전에 떴다고 판정한다.
 - `failed` 의 `detail` 에는 CLI stderr 의 **마지막 한 줄**만 담는다. 화면이
   이 문자열을 그대로 보여 준다.
 - x11vnc 는 `-localhost` 라 컨테이너 밖에서 닿지 않는다. 밖에서 닿는 것은
@@ -232,7 +250,8 @@ idle ──start──► starting ──► running ──┬─► succeeded
 ### 6.5 주입점
 
 `supervisor` 는 테스트할 수 있도록 **프로세스를 띄우는 함수·시계·디렉터리
-경로를 주입받는다.** 실제 Xvfb·크로미움 없이 상태 기계 전체를 검증한다.
+경로·X 소켓 경로를 주입받는다.** 실제 Xvfb·크로미움 없이, 실제 `/tmp` 를
+건드리지 않고 상태 기계 전체를 검증한다.
 
 ---
 
@@ -268,19 +287,33 @@ idle ──start──► starting ──► running ──┬─► succeeded
 | 사이드카 꺼짐 (heartbeat 10초 초과 또는 없음) | "로그인 브라우저가 꺼져 있습니다" |
 | 실행 중인 질의·정리본 있음 | 시작 버튼 비활성 + "진행 중인 실행이 끝난 뒤 로그인하세요" (8.2) |
 | `idle`·마지막 결과 | 마지막 결과 한 줄(있으면) + **구글 로그인 시작** |
-| 앱이 `start` 요청을 썼고 사이드카가 아직 받지 않음 | "로그인 브라우저를 준비하는 중" |
+| 앱이 30초 안에 `start` 요청을 썼고 사이드카가 아직 받지 않음 | "로그인 브라우저를 준비하는 중" |
 | `starting` | "로그인 브라우저를 준비하는 중" |
 | `running` | iframe + 남은 시간 + **취소** + **새 탭에서 열기** |
-| 방금 `succeeded` 로 바뀜 | `gate.recheck()` → 성공이면 "인증되었습니다" / 실패면 "로그인은 끝났지만 인증이 살아나지 않았습니다" |
+| 이 탭이 지켜보던 요청이 결과로 끝남 | `succeeded` 면 `gate.recheck()` → 성공이면 "인증되었습니다" / 실패면 "로그인은 끝났지만 인증이 살아나지 않았습니다". 그 밖의 결과는 "로그인하지 못했습니다: <결과> — <detail>" |
 
-- "요청을 썼지만 받지 않음" 은 `request.json` 이 `start` 이고 그 `id` 가
-  `status.json` 의 `request_id` 와 다를 때다. `cancel` 은 사이드카가 세션이
-  없으면 무시하므로 이 판정에 넣지 않는다 — 넣으면 영원히 "준비 중" 이다.
+화면은 위에서 아래로 이 순서로 판정한다: 사이드카 꺼짐 → `running`
+(비밀번호 있음) → **지켜보던 요청의 결과 처리** → 준비 중(`starting` 또는
+받지 않은 `start`) → `idle`·마지막 결과.
+
+- "요청을 썼지만 받지 않음" 은 `request.json` 이 `start` 이고, 그 `id` 가
+  `status.json` 의 `request_id` 와 다르고, **`requested_at` 이 30초
+  (`START_ACK_TIMEOUT`) 안일 때만**이다. 사이드카는 1초마다 요청을 보고
+  받자마자 `starting` 을 쓰므로 30초면 넉넉하다. 그보다 오래된 `start` 는
+  사이드카가 처리하지 않은 것이다(재시작 직전에 쓰였거나 다른 탭의 세션
+  중에 쓰였다). 계속 기다리면 영원히 "준비 중" 이고 시작 버튼이 돌아오지
+  않는다. `requested_at` 을 읽지 못해도 오래된 것으로 본다.
+- `cancel` 은 사이드카가 세션이 없으면 무시하므로 이 판정에 넣지 않는다 —
+  넣으면 영원히 "준비 중" 이다.
+- **결과 처리는 준비 중 판정보다 먼저 한다.** 이 탭이 지켜보던 요청이
+  결과로 끝났으면, 다른 탭이 새 `start` 를 써 두어 준비 중으로 보일 때도
+  이 탭은 `recheck()` 와 결과 문구를 처리한다. 순서가 반대면 실제로 로그인한
+  탭이 `recheck()` 를 부르지 못한다.
 - 결과 처리(성공 시 `recheck()`, 결과 문구)는 **이 탭이 그 요청을 지켜보던
   경우에만** 한다. 지켜보지 않던 탭은 마지막 결과를 한 줄로만 보여 준다.
   며칠 전의 `succeeded` 를 새 탭이 "인증되었습니다" 로 오해하지 않게 한다.
-- 요청·`starting`·`running` 동안만 `st.fragment(run_every=1)` 로 갱신한다.
-  평소에는 폴링하지 않는다.
+- 받지 않은 `start`(위와 같은 30초 판정)·`starting`·`running` 동안만
+  `st.fragment(run_every=1)` 로 갱신한다. 평소에는 폴링하지 않는다.
 - 지켜보는 요청의 `id` 는 `st.session_state` 에 둔다. 결과를 처리하면
   지운다. 그래서 `recheck()` 는 요청 하나에 한 번만 불린다. 다른 탭에서
   먼저 확인했으면 게이트가 이미 `ok` 라 결과는 같다.
@@ -330,6 +363,7 @@ how-to 링크를 남긴다. "앱을 재시작하세요" 는 뺀다 — 인증 �
 VIEWER_URL_ENV_VAR = "NOTEBOOKLM_ST_LOGIN_VIEWER_URL"
 LOGIN_DIR_ENV_VAR = "NOTEBOOKLM_ST_LOGIN_DIR"
 HEARTBEAT_STALE_AFTER = 10.0   # 초
+START_ACK_TIMEOUT = 30.0       # 초. 이보다 오래 받지 않은 start 는 기다리지 않는다(7.2)
 
 
 def viewer_url() -> str | None: ...           # 비었으면 None
@@ -342,6 +376,9 @@ def sidecar_alive(directory: Path, now: float) -> bool: ...
 
 def pending_request(directory: Path) -> login_protocol.Request | None: ...
     # request.json. status 의 request_id 와 비교해 "받지 않음" 을 가린다(7.2)
+
+def start_is_stale(request: login_protocol.Request, now: datetime) -> bool: ...
+    # requested_at 이 START_ACK_TIMEOUT 을 넘겼거나 읽히지 않으면 True
 
 def request_start(directory: Path) -> str: ...      # 새 id 를 돌려준다
 def request_cancel(directory: Path) -> str: ...
@@ -402,11 +439,17 @@ dev 가 포함한다. 데스크톱의 `uv sync` 결과는 달라지지 않는다
     volumes:
       - ./data:/data
     restart: unless-stopped
+    stop_grace_period: 30s     # 종료 정리가 끝날 시간(아래)
     read_only: true
     tmpfs: ["/tmp"]
     shm_size: "1gb"            # 크로미움 공유 메모리
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 ```
+
+`stop_grace_period` 를 30초로 둔다. 내려갈 때 사이드카는 떠 있는 세션을
+정리하는데(6.4), 프로세스 그룹 4개를 SIGTERM·SIGKILL 로 각각 5초씩 기다릴
+수 있다. 도커 기본 유예 10초면 정리 도중 SIGKILL 되어 `browser_profile/`
+(자격증명)이 볼륨에 남을 수 있다. 남더라도 다음 기동의 복구(6.3)가 지운다.
 
 `app` 서비스에는 `NOTEBOOKLM_ST_LOGIN_VIEWER_URL` 한 줄만 더한다.
 `NOTEBOOKLM_ST_LOGIN_DIR` 은 두 이미지 모두 Dockerfile 이 굽는다.
@@ -418,9 +461,17 @@ dev 가 포함한다. 데스크톱의 `uv sync` 결과는 달라지지 않는다
 빌드한 이미지에서 다음을 단언한다.
 
 ```bash
-docker run --rm <사이드카> python -c "import notebooklm_st.login_browser.supervisor"
-docker run --rm <사이드카> python -c "import streamlit"   # 실패해야 한다
+docker compose run --rm --no-deps -T login-browser python -c "import notebooklm_st.login_browser.supervisor"
+docker compose run --rm --no-deps -T login-browser python -c "import streamlit"   # 실패해야 한다
+# 사이드카와 앱의 notebooklm-py 버전이 같다
 ```
+
+import 만으로는 감시 루프가 도는지 모른다. 그래서 기존 `기동과 헬스체크`
+단계(`compose up -d` 뒤 앱 헬스 루프) **다음에**, 컨테이너 안에서
+`$NOTEBOOKLM_ST_LOGIN_DIR/heartbeat` 가 생기고 수정 시각이 10초 안인지
+(앱의 "꺼져 있음" 판정과 같은 기준, 8.1) 몇 초 기다리며 확인한다.
+컨테이너 안에서 재야 볼륨 권한과 호스트 시계에 흔들리지 않는다. 실패하면
+`docker compose logs login-browser` 를 찍고 실패한다.
 
 앱 이미지의 `import playwright` 실패 단언은 그대로 둔다.
 
@@ -436,7 +487,8 @@ docker run --rm <사이드카> python -c "import streamlit"   # 실패해야 한
   해시로만 넘긴다(7.3).
 - **평소에는 아무것도 듣지 않는다.** websockify 는 세션 중에만 뜬다.
 - **브라우저 프로필을 남기지 않는다.** `--fresh` 로 시작하고, 끝나면
-  `browser_profile/` 을 지운다(6.4).
+  `browser_profile/` 을 지운다(6.4). 기동할 때도 상태와 상관없이 지우고
+  (6.3), 종료 정리가 끝날 유예를 compose 에 둔다(9.2).
 - **평문 구간.** 앱과 뷰어는 모두 HTTP 다. 로그인 화면에 치는 **구글
   비밀번호의 키 입력이 LAN 위를 암호화 없이 지나간다.** 업로드하던 쿠키
   파일도 같은 구간을 지났지만, 비밀번호는 한 단계 더 민감하다. how-to
@@ -463,8 +515,12 @@ tests/login_browser/test_supervisor.py   (가짜 프로세스 실행기·시계 
   cancel → cancelled
   어느 종료든 모든 자식이 종료되고 browser_profile/ 이 지워지고 password 가 지워짐
   자식 하나가 뜨지 못함 → failed, 이미 뜬 것은 정리됨
+  시작 도중 OSError(가상 화면 확인 오류, 임시 디렉터리 실패) → 정리 후 failed
+  Xvfb 를 띄우기 전에 남은 X 소켓이 지워짐
   기동 시 running 이 남아 있으면 → 정리 후 failed
+  기동 시 결과와 상관없이 browser_profile/ 이 지워짐
   기동 시 있던 request 는 다시 실행하지 않음
+  기동 시 답하지 않은 start 는 그 id 로 failed(재시작), cancel·답한 start 는 그대로
   매 틱 heartbeat 가 갱신됨
 
 tests/services/test_login_session.py   (tmp_path)
@@ -472,6 +528,7 @@ tests/services/test_login_session.py   (tmp_path)
   read_status: 없음 → idle, 깨짐 → idle + 경고
   sidecar_alive: 10초 경계
   request_start / request_cancel: 새 id, 원자적 쓰기
+  start_is_stale: 29초 아님 / 31초 stale / 요청 시각을 읽지 못하면 stale
   busy: 질의만 / 정리본만 / 둘 다 없음
 ```
 
@@ -492,6 +549,8 @@ tests/services/test_login_session.py   (tmp_path)
   시작 → request.json 이 써짐
   running → iframe 주소에 해시로 password, 취소 버튼
   succeeded → recheck 를 한 번만 부름, 결과 문구
+  30초 넘은 받지 않은 start → 준비 중 아님, 시작 버튼
+  지켜보던 요청이 끝났고 다른 탭의 새 start 가 있음 → recheck 한 번, 결과 문구
 ```
 
 `tests/test_app.py:test_app_boots_with_all_pages` 는 페이지가 하나 늘어난
