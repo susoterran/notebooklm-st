@@ -1,7 +1,7 @@
 # 원격 구글 로그인 설계 — 앱 화면 안에서 재인증
 
 - **작성일**: 2026-09-26
-- **상태**: 구현 중 (계획: `docs/superpowers/plans/2026-09-26-remote-login.md`, Task 1 완료)
+- **상태**: 구현 중 (계획: `docs/superpowers/plans/2026-09-26-remote-login.md`)
 - **기획**: `docs/requests/requests_spec.md`
 - **대상**: 신규 사이드카 컨테이너(`login-browser`), 신규 「인증」 페이지,
   `components/auth_gate.py`, `docker-compose.yml`, `pyproject.toml`,
@@ -501,8 +501,8 @@ tests/services/test_login_session.py   (tmp_path)
 
 계획의 첫 작업(스파이크)과 마지막 작업(E2E)이다.
 
-- **스파이크(완료, Task 1)**: 사이드카 이미지만 먼저 만들어 이 PC 의 Docker
-  Desktop 에서 띄우고, noVNC 로 구글 로그인이 통과해 `storage_state.json` 이
+- **스파이크**: 사이드카 이미지만 먼저 만들어 이 PC 의 Docker Desktop 에서
+  띄우고, noVNC 로 구글 로그인이 통과해 `storage_state.json` 이
   생기는지, 같은 자리에서 noVNC 가 해시의 `password` 를 읽는지, 크로미움이
   비루트·`read_only` 로 추가 옵션 없이 뜨는지 확인했다 — 결과는 2절.
 - **E2E(홈서버)**: PC 브라우저와 휴대폰(iOS·Android 각 하나)에서 인증 페이지 →

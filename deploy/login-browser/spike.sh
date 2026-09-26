@@ -63,11 +63,15 @@ winpath() {
 }
 
 up() {
-  local data password repo_win
+  local data password dockerfile context
   data="$(data_dir "${1:-}")"
-  repo_win="$(winpath "$REPO")"
-  "$DOCKER" build -f "$repo_win\\deploy\\login-browser\\Dockerfile" \
-    -t "$IMAGE" "$repo_win"
+  # 경로 전체(파일 하나)를 통째로 변환한다. 이미 변환된 윈도우 경로 뒤에
+  # 백슬래시를 이어 붙이면 리눅스(cygpath 없음)에서는 winpath() 가 원본
+  # posix 경로를 그대로 돌려주므로 "/repo\deploy\login-browser\Dockerfile"
+  # 처럼 백슬래시가 섞여 build 가 실패한다.
+  dockerfile="$(winpath "$REPO/deploy/login-browser/Dockerfile")"
+  context="$(winpath "$REPO")"
+  "$DOCKER" build -f "$dockerfile" -t "$IMAGE" "$context"
   # 호스트에서 sudo chown 하지 않아도 되게, 컨테이너의 root 로 맞춘다.
   "$DOCKER" run --rm --user 0:0 -v "$data:/data" "$IMAGE" \
     chown 1000:1000 /data
