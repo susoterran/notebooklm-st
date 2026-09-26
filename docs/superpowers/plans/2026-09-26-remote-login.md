@@ -25,6 +25,8 @@
 - 비밀번호·쿠키·뷰어 주소의 해시 부분은 화면 문구·로그에 남기지 않는다(iframe `src` 만 예외).
 - 독스트링은 한국어 Google 스타일, `line-length = 80`. 주변 코드의 주석 밀도를 따른다.
 - **uv 는 에이전트 셸 PATH 에 없다.** `C:\Users\susot\.local\bin\uv.exe`(Git Bash: `/c/Users/susot/.local/bin/uv`)로 부른다. 아래 명령의 `uv` 는 모두 이 경로다.
+- **docker 도 에이전트 셸 PATH 에 없다.** Docker Desktop 이 설치돼 있고 데몬이 돈다. `C:\Users\susot\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe`(Git Bash: `/c/Users/susot/AppData/Local/Programs/DockerDesktop/resources/bin/docker.exe`)로 부른다. `command not found` 로 Docker 가 없다고 단정하지 않는다.
+- 스파이크·수동 확인에서 생기는 자격증명(쿠키·크로미움 프로필)은 **저장소 밖**에만 둔다. 저장소의 `data/` 는 `.gitignore` 에 없다.
 - 검증 4단: `uv run ruff format .` → `uv run ruff check --fix .` → `uv run mypy src tests` → `uv run pytest`. 이 계획의 코드 블록이 E501(줄 길이)에 걸리면 문자열을 나누는 식으로만 고친다. 동작은 바꾸지 않는다.
 - 커밋: `develop` 에만, `.claude/rules/commit-strategy.md` 형식(gitmoji + Conventional Commits, 한국어 제목 ≤50자, 마지막 줄 `Assisted-by: <커밋하는 에이전트의 모델 ID>`). `git push` 금지.
 
@@ -44,6 +46,7 @@
 |---|---|---|
 | `pyproject.toml`, `uv.lock` | `login-browser` 그룹, mypy 대상 | 1, 4 |
 | `deploy/login-browser/Dockerfile` | 사이드카 이미지 | 1, 5 |
+| `deploy/login-browser/spike.sh` | 감시 루프 없이 세션을 손으로 띄우는 스파이크 | 1 |
 | `src/notebooklm_st/core/login_protocol.py` | 두 컨테이너의 유일한 계약 | 2 |
 | `src/notebooklm_st/services/login_session.py` | 앱 쪽 요청 쓰기·상태 읽기·판정 | 3 |
 | `src/notebooklm_st/login_browser/supervisor.py` | 사이드카 감시 루프·세션 수명 | 4, 5 |
@@ -59,15 +62,28 @@
 
 ### Task 1: 사이드카 기반 이미지와 스파이크
 
-설계서 §13 의 가정 1·2·5 를 닫는다. **이 태스크는 사람이 홈서버에서 구글 로그인을 해야 끝난다.** 결과가 "막힘" 이면 여기서 멈추고 보고한다. 이후 태스크를 진행하지 않는다.
+설계서 §13 의 가정 1·2·5 를 닫는다. 스파이크는 **이 PC 의 Docker Desktop** 에서 한다. 사이드카가 나중에 할 일을 감시 루프 없이 스크립트로 똑같이 재현한다.
+
+- **에이전트가 확인한다** — 빌드, 버전, 앱 의존성 부재, 비root·read_only 기동(D), 해시 비밀번호 자동 접속(A), 틀린 비밀번호 거부, x11vnc 비노출.
+- **사람이 확인한다** — 실제 구글 로그인(B·C), 휴대폰(E, 선택). 계정 비밀번호가 필요하므로 에이전트가 대신 입력하지 않는다.
+- B 또는 C 가 "막힘" 이면 여기서 멈추고 보고한다. 이후 태스크를 진행하지 않는다.
+
+홈서버 고유 조건(아키텍처·Docker 버전·볼륨 권한)은 Task 9 의 홈서버 E2E 에서 본다. 그 전에 따로 확인하고 싶으면 홈서버에서 같은 스크립트를 `deploy/login-browser/spike.sh up ~/notebooklm-spike` 로 돌리면 된다.
 
 **Files:**
 - Modify: `pyproject.toml` (`[dependency-groups]`)
 - Modify: `uv.lock`
 - Create: `deploy/login-browser/Dockerfile`
+- Create: `deploy/login-browser/spike.sh`
 
 **Interfaces:**
-- Produces: 의존성 그룹 `login-browser`, 이미지 `notebooklm-st-login-browser` (감시 루프 없이 도구만 든 상태)
+- Produces: 의존성 그룹 `login-browser`, 이미지 `notebooklm-st-login-browser` (감시 루프 없이 도구만 든 상태), `deploy/login-browser/spike.sh up|check|down`
+
+**Docker 경로.** 에이전트 셸 PATH 에 `docker` 가 없다. 이 태스크의 명령은 모두 아래 변수를 쓴다(Git Bash).
+
+```bash
+export DOCKER=/c/Users/susot/AppData/Local/Programs/DockerDesktop/resources/bin/docker.exe
+```
 
 - [ ] **Step 1: 의존성 그룹을 나눈다**
 
@@ -146,82 +162,238 @@ USER app
 EXPOSE 6080
 ```
 
-- [ ] **Step 4: 로컬에서 빌드가 되는지 본다**
+- [ ] **Step 4: 스파이크 스크립트를 만든다**
 
-Run: `docker build -f deploy/login-browser/Dockerfile -t notebooklm-st-login-browser:spike .`
-Expected: 성공. 이 기기에 Docker 가 없으면 이 단계를 건너뛰었다고 보고에 적고 Step 5 에서 홈서버가 빌드하게 한다.
+`deploy/login-browser/spike.sh` (실행 권한: `git update-index --chmod=+x deploy/login-browser/spike.sh`):
 
-추가로 확인(Docker 가 있을 때):
+```bash
+#!/usr/bin/env bash
+# 원격 로그인 스파이크 — 사이드카 이미지만으로 구글 로그인이 되는지 본다.
+#
+# 감시 루프 없이, 사이드카가 세션마다 띄울 것(Xvfb → x11vnc →
+# websockify → notebooklm login)을 운영과 같은 조건(비root 1000,
+# read_only, /tmp tmpfs, shm 1GB)으로 손수 띄운다.
+#
+#   spike.sh up <데이터 디렉터리>     이미지를 굽고 세션을 띄운다
+#   spike.sh check                    프로세스·포트·결과를 본다
+#   spike.sh down <데이터 디렉터리>   내리고 스파이크 자격증명을 지운다
+#
+# 데이터 디렉터리에는 계정 동등 자격증명이 생긴다. 저장소 밖만 받는다.
+# Docker 가 PATH 에 없으면 DOCKER 에 전체 경로를 준다.
+#
+# 설계: docs/superpowers/specs/2026-09-26-remote-login-design.md §13
+set -euo pipefail
 
-Run: `docker run --rm notebooklm-st-login-browser:spike python -c "import importlib.metadata as m; print(m.version('notebooklm-py'))"`
+DOCKER="${DOCKER:-docker}"
+IMAGE=notebooklm-st-login-browser:spike
+NAME=notebooklm-st-login-spike
+PORT="${SPIKE_PORT:-9005}"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# Git Bash 가 /data 같은 컨테이너 경로를 윈도우 경로로 바꾸지 않게 한다.
+export MSYS_NO_PATHCONV=1
+
+usage() {
+  sed -n '8,10p' "$0" >&2
+  exit 2
+}
+
+# 데이터 디렉터리를 만들고, docker -v 에 넘길 호스트 경로를 출력한다.
+data_dir() {
+  [ -n "${1:-}" ] || usage
+  mkdir -p "$1"
+  local dir
+  dir="$(cd "$1" && pwd)"
+  case "$dir/" in
+    "$REPO"/*)
+      echo "저장소 안에는 둘 수 없습니다: $dir" >&2
+      exit 2
+      ;;
+  esac
+  # Docker Desktop(윈도우)은 윈도우 경로를 받는다.
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$dir"
+  else
+    echo "$dir"
+  fi
+}
+
+up() {
+  local data password
+  data="$(data_dir "${1:-}")"
+  "$DOCKER" build -f "$REPO/deploy/login-browser/Dockerfile" \
+    -t "$IMAGE" "$REPO"
+  # 호스트에서 sudo chown 하지 않아도 되게, 컨테이너의 root 로 맞춘다.
+  "$DOCKER" run --rm --user 0:0 -v "$data:/data" "$IMAGE" \
+    chown 1000:1000 /data
+  password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 8)"
+  "$DOCKER" run -d --name "$NAME" -p "$PORT:6080" -v "$data:/data" \
+    --shm-size=1g --read-only --tmpfs /tmp --user 1000:1000 \
+    -e SPIKE_PASSWORD="$password" "$IMAGE" bash -c '
+      Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &
+      for _ in $(seq 50); do
+        [ -S /tmp/.X11-unix/X99 ] && break
+        sleep 0.1
+      done
+      printf "%s\n" "$SPIKE_PASSWORD" > /tmp/vncpass
+      chmod 600 /tmp/vncpass
+      x11vnc -display :99 -localhost -rfbport 5900 \
+        -passwdfile rm:/tmp/vncpass -forever -shared -quiet &
+      websockify --web /usr/share/novnc 6080 localhost:5900 &
+      DISPLAY=:99 NO_COLOR=1 python -m notebooklm login --fresh \
+        --browser-timeout 900 > /tmp/login.log 2>&1
+      echo $? > /tmp/exit
+      sleep infinity'
+  echo
+  echo "뷰어: http://localhost:$PORT/vnc.html#autoconnect=1&resize=scale&password=$password"
+  echo "다른 기기에서는 localhost 대신 이 기기의 LAN 주소를 쓴다."
+}
+
+check() {
+  "$DOCKER" exec -i "$NAME" python - <<'EOF'
+import os
+from pathlib import Path
+
+procs = sorted(
+    {
+        p.joinpath("comm").read_text().strip()
+        for p in Path("/proc").glob("[0-9]*")
+        if p.joinpath("comm").exists()
+    }
+)
+print("uid:", os.getuid())
+print("processes:", ", ".join(procs))
+
+
+def listening(table):
+    for line in Path(table).read_text().splitlines()[1:]:
+        cols = line.split()
+        if cols[3] != "0A":  # LISTEN
+            continue
+        host, port = cols[1].split(":")
+        yield host, int(port, 16)
+
+
+for host, port in sorted(set(listening("/proc/net/tcp"))):
+    addr = ".".join(str(int(host[i : i + 2], 16)) for i in (6, 4, 2, 0))
+    print(f"listen: {addr}:{port}")
+
+try:
+    Path("/etc/spike-write-test").write_text("x")
+    print("rootfs: WRITABLE")
+except OSError:
+    print("rootfs: read-only")
+
+exit_file = Path("/tmp/exit")
+code = exit_file.read_text().strip() if exit_file.exists() else "(running)"
+print("login exit:", code)
+log_file = Path("/tmp/login.log")
+text = log_file.read_text(errors="replace") if log_file.exists() else ""
+lines = [line.strip() for line in text.splitlines() if line.strip()]
+print("login log last line:", lines[-1] if lines else "(empty)")
+
+# 파일 이름만 보인다. 내용은 자격증명이다.
+profile = Path("/data/notebooklm/profiles/default")
+names = sorted(p.name for p in profile.iterdir()) if profile.exists() else []
+print("profile files:", ", ".join(names) or "(none)")
+EOF
+}
+
+down() {
+  local data
+  data="$(data_dir "${1:-}")"
+  "$DOCKER" rm -f "$NAME" >/dev/null 2>&1 || true
+  # 1000 소유 파일을 sudo 없이 지운다. find 로 /data 자체는 남긴다.
+  "$DOCKER" run --rm --user 0:0 -v "$data:/data" "$IMAGE" \
+    sh -c 'find /data -mindepth 1 -delete && ls -A /data'
+  echo "스파이크 컨테이너와 자격증명을 지웠습니다."
+}
+
+case "${1:-}" in
+  up) up "${2:-}" ;;
+  check) check ;;
+  down) down "${2:-}" ;;
+  *) usage ;;
+esac
+```
+
+- [ ] **Step 5: 이미지 자체를 확인한다 (에이전트)**
+
+스파이크 데이터는 **저장소 밖** 세션 scratchpad 아래 `spike-data` 에 둔다(아래 `$SPIKE`). 저장소의 `data/` 는 `.gitignore` 에 없어 크로미움 프로필이 커밋될 수 있다.
+
+Run: `"$DOCKER" build -f deploy/login-browser/Dockerfile -t notebooklm-st-login-browser:spike .`
+Expected: 성공
+
+Run: `"$DOCKER" run --rm notebooklm-st-login-browser:spike python -c "import importlib.metadata as m; print(m.version('notebooklm-py'))"`
 Expected: `0.8.1`
 
-Run: `docker run --rm notebooklm-st-login-browser:spike python -c "import streamlit"`
+Run: `"$DOCKER" run --rm notebooklm-st-login-browser:spike python -c "import streamlit"`
 Expected: `ModuleNotFoundError: No module named 'streamlit'`
 
-- [ ] **Step 5: 커밋**
+- [ ] **Step 6: 세션을 띄우고 기동 조건을 확인한다 (에이전트 — D)**
 
-```bash
-git add pyproject.toml uv.lock deploy/login-browser/Dockerfile
-git commit   # 📦️ build(login-browser): 원격 로그인 사이드카 기반 이미지 추가
-```
+Run: `DOCKER="$DOCKER" deploy/login-browser/spike.sh up "$SPIKE"`
+출력된 뷰어 주소를 기록한다. 비밀번호가 담겨 있으므로 보고에서는 비밀번호를 가린다.
 
-- [ ] **Step 6: 사람에게 스파이크를 요청하고 멈춘다**
+5초 뒤 Run: `DOCKER="$DOCKER" deploy/login-browser/spike.sh check`
+Expected:
+- `uid: 1000`, `rootfs: read-only`
+- `processes:` 에 `Xvfb`·`x11vnc`·websockify(`websockify` 또는 `python3`)·크로미움(`chrome`)
+- `listen: 127.0.0.1:5900`(x11vnc 는 밖에 열리지 않는다), `listen: 0.0.0.0:6080`
+- `login exit: (running)` — CLI 가 사람의 로그인을 기다리는 중
 
-사용자에게 아래 절차를 그대로 전달하고 **결과를 받을 때까지 멈춘다.** 운영 프로필을 덮지 않도록 `data/spike` 를 따로 쓴다.
+크로미움이 없거나 CLI 가 곧바로 끝났으면 `login log last line` 을 보고 원인을 찾는다. 추가 옵션(예: 크로미움 샌드박스, `/dev/shm`)이 필요하면 **그 옵션과 이유를 기록**하고 `spike.sh` 에 넣어 다시 띄운다. Step 9 에서 쓴다.
 
-홈서버, 저장소 루트에서:
+- [ ] **Step 7: 해시 비밀번호와 거부를 확인한다 (에이전트 — A)**
 
-```bash
-git pull
-docker build -f deploy/login-browser/Dockerfile -t notebooklm-st-login-browser:spike .
-mkdir -p data/spike && sudo chown 1000:1000 data/spike
-docker run --rm -it -p 9005:6080 -v "$PWD/data/spike:/data" \
-  --shm-size=1g --read-only --tmpfs /tmp --user 1000:1000 \
-  notebooklm-st-login-browser:spike bash -c '
-    Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &
-    sleep 1
-    printf "spiketst\n" > /tmp/vncpass
-    x11vnc -display :99 -localhost -rfbport 5900 \
-      -passwdfile rm:/tmp/vncpass -forever -shared -quiet &
-    websockify --web /usr/share/novnc 6080 localhost:5900 &
-    DISPLAY=:99 python -m notebooklm login --fresh --browser-timeout 900
-    echo "exit=$?"
-    ls -la /data/notebooklm/profiles/default/'
-```
+Playwright MCP 브라우저로 한다.
 
-다른 기기(PC 한 번, 가능하면 휴대폰 한 번)의 브라우저에서:
+1. `browser_navigate` → Step 6 의 뷰어 주소(해시에 올바른 비밀번호).
+2. `browser_wait_for` 3초 → `browser_take_screenshot`.
+   Expected: 비밀번호 대화상자 없이 크로미움 화면(구글 로그인 페이지)이 보인다.
+   `browser_evaluate`: `() => document.querySelector('#noVNC_credentials_dlg')?.classList.contains('noVNC_open') ?? false` → `false`
+3. 같은 주소에서 `password=` 값만 `wrongpw1` 로 바꿔 다시 연다.
+   Expected: 화면이 붙지 않는다(인증 실패 문구 또는 비밀번호 대화상자).
+4. `browser_close`.
 
-```
-http://<홈서버IP>:9005/vnc.html#autoconnect=1&resize=scale&password=spiketst
-```
+2 가 실패하면 `#&autoconnect=1&resize=scale&password=...`(해시 바로 뒤에 `&`) 형태로 한 번 더 시도하고 결과를 기록한다. noVNC 판에 따라 `[?&]` 뒤의 값만 읽을 수 있다.
 
-확인할 것:
+**구글 로그인 화면에서 아무것도 입력하지 않는다.** 이메일 입력도 사람의 몫이다.
 
-| # | 질문 | 기록 |
-|---|---|---|
-| A | 비밀번호를 묻지 않고 바로 화면이 붙는가(해시의 `password` 를 읽는가) | 예/아니오 |
-| B | 구글 로그인이 "안전하지 않은 브라우저" 없이 끝까지 되는가 | 예/아니오(막히면 화면 문구) |
-| C | 터미널에 `exit=0` 이 찍히고 `storage_state.json` 이 생겼는가 | 예/아니오 |
-| D | 크로미움이 비root·read_only 로 떴는가(추가 옵션 필요했는가) | 예/아니오 |
-| E | 휴대폰에서 로그인까지 마칠 수 있었는가 | 예/아니오/미시도 |
+- [ ] **Step 8: 사람에게 로그인을 요청하고 멈춘다 (사람 — B·C·E)**
 
-끝나면 **스파이크 자격증명을 지운다.** 계정 동등 자격증명이다.
+세션을 띄워 둔 채, 사용자에게 아래를 전달하고 **결과를 받을 때까지 멈춘다.**
 
-```bash
-sudo rm -rf data/spike
-```
+> 이 PC 브라우저에서 아래 주소를 열어 구글 로그인을 끝까지 해 주세요. 5분 안에 끝내 주시면 됩니다.
+> `<Step 6 의 뷰어 주소>`
+> (선택) 휴대폰으로도 보시려면 같은 Wi-Fi 에서 `localhost` 를 이 PC 의 LAN 주소로 바꿔 여세요. 로그인은 한 번이면 되므로 휴대폰은 화면이 붙고 입력이 되는지만 봐도 됩니다. Windows 방화벽이 막으면 E 는 Task 9 로 미룹니다.
+> 끝나면 "끝" 이라고, 막히면 화면에 나온 문구를 알려 주세요.
 
-- [ ] **Step 7: 결과를 설계서에 반영한다**
+답을 받으면 Run: `DOCKER="$DOCKER" deploy/login-browser/spike.sh check`
+Expected(성공): `login exit: 0`, `profile files:` 에 `storage_state.json` 이 있다.
 
-- **B 또는 C 가 "아니오"** → 멈추고 사용자에게 보고한다. 이 설계는 성립하지 않는다. 이후 태스크를 진행하지 않는다.
-- **A 가 "아니오"** → 설계서 §7.3·§10 을 "비밀번호를 쿼리 문자열로 넘기고, websockify 요청 로그를 끈다(`--log-file /dev/null`)" 로 다시 쓰고, Task 3 의 `viewer_link()` 와 Task 4 의 websockify 명령을 그에 맞춰 바꾼다.
+| # | 질문 | 확인 주체 | 기록 |
+|---|---|---|---|
+| A | 해시 비밀번호로 바로 붙는가 | 에이전트(Step 7) | 예/아니오/`#&` 형태만 |
+| B | 구글 로그인이 차단 없이 끝나는가 | 사람 | 예/아니오(문구) |
+| C | `exit 0` 이고 `storage_state.json` 이 생겼는가 | 에이전트(check) | 예/아니오 |
+| D | 비root·read_only 로 추가 옵션 없이 떴는가 | 에이전트(Step 6) | 예/아니오(옵션) |
+| E | 휴대폰에서 화면이 붙고 입력이 되는가 | 사람 | 예/아니오/미시도 |
+
+그 뒤 **반드시** Run: `DOCKER="$DOCKER" deploy/login-browser/spike.sh down "$SPIKE"`
+Expected: `ls -A /data` 가 아무것도 출력하지 않고 "지웠습니다" 가 찍힌다. 스파이크 자격증명(쿠키·크로미움 프로필)이 남지 않았음을 사용자에게 알린다. 이 단계는 B·C 결과와 무관하게 한다.
+
+- [ ] **Step 9: 결과를 반영하고 커밋한다**
+
+- **B 또는 C 가 "아니오"** → 멈추고 사용자에게 보고한다. 이 설계는 성립하지 않는다. 이후 태스크를 진행하지 않으며, 이미지·스크립트를 커밋할지도 사용자에게 묻는다.
+- **A 가 `#&` 형태로만 됐으면** → Task 3 의 `viewer_link()` 와 그 테스트 기대값, Task 7 의 iframe 기대값을 `#&autoconnect=...` 로 바꾸고 설계서 §7.3 을 다시 쓴다.
+- **A 가 "아니오"** → 설계서 §7.3·§10 을 "비밀번호를 쿼리 문자열로 넘기고 websockify 요청 로그를 끈다(`--log-file /dev/null`)" 로 다시 쓰고, Task 3 의 `viewer_link()` 와 Task 4 의 websockify 명령을 그에 맞춰 바꾼다.
 - **D 에서 옵션이 필요했으면** → 그 옵션을 Task 4 의 명령과 Task 5 의 compose 에 넣고 설계서 §6·§9.2 에 반영한다.
-- 확인된 항목은 설계서 §13(미검증 가정)에서 §2(확인한 사실)로 옮겨 **그 절을 다시 쓴다.** 수정 이력은 남기지 않는다.
+- 확인된 항목은 설계서 §13(미검증 가정)에서 §2(확인한 사실)로 옮겨 **그 절을 다시 쓴다.** 확인 환경이 데스크톱 Docker Desktop 이었음을 적고, 홈서버 확인은 Task 9 로 남긴다. 수정 이력은 남기지 않는다.
 
 ```bash
-git add docs/superpowers/specs/2026-09-26-remote-login-design.md
-git commit   # 📝 docs(spec): 원격 로그인 스파이크 결과 반영
+git add pyproject.toml uv.lock deploy/login-browser/Dockerfile deploy/login-browser/spike.sh docs/superpowers/specs/2026-09-26-remote-login-design.md
+git commit   # 📦️ build(login-browser): 원격 로그인 사이드카 이미지와 스파이크 추가
 ```
 
 ---
