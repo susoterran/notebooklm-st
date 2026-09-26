@@ -41,9 +41,58 @@ Tailscale IP·이름). 로그인 화면은 앱을 연 브라우저가 이 주소
 
 ## 2. 띄우기
 
+앱과 사이드카 두 이미지를 GHCR 에서 받아 띄운다. 릴리스마다 CI 가
+취약점 스캔과 동작 게이트를 통과시킨 뒤 올린 이미지다.
+
 ```bash
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
+
+받기가 실패하면 `pull` 이 0 이 아닌 값으로 끝나 `up` 은 돌지 않는다.
+소스에서 직접 굽고 싶을 때만 `docker compose up -d --build` 를 쓴다
+(사이드카는 크로미움을 담아 몇 분 걸린다). 구운 이미지도 GHCR 과
+같은 이름을 얻으므로, 다시 GHCR 이미지로 돌아가려면 `pull` 부터 한다.
+
+### 2.1 이미지 태그 고정
+
+compose 는 두 이미지를 태그 변수 `NOTEBOOKLM_ST_TAG` 하나로 받는다.
+비우면 `latest`(최신 정식 릴리스)다. 두 이미지가 늘 같은 릴리스를
+가리켜야 앱과 사이드카의 notebooklm-py 버전이 맞는다 — 한쪽만 따로
+바꾸지 않는다. 특정 릴리스에 묶으려면 `.env` 에 적는다.
+
+```bash
+echo 'NOTEBOOKLM_ST_TAG=v1.2.0' >> .env
+```
+
+| 태그 | 언제 생기나 |
+|---|---|
+| `latest` | 정식 릴리스 |
+| `v…` | 그 릴리스 태그 |
+| `devel` | 워크플로를 수동 실행했을 때(테스트용) |
+| `sha-…` | 모든 게시. 커밋 단위로 되돌릴 때 |
+
+### 2.2 업데이트
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+태그를 고정했다면 `.env` 의 값을 새 릴리스로 바꾼 뒤 같은 명령을
+돈다. 되돌릴 때도 값만 이전 태그로 바꾼다.
+
+### 2.3 GHCR 패키지 공개 범위
+
+GHCR 에 새로 생긴 패키지는 **비공개**로 시작한다. 비공개면 홈서버의
+`pull` 이 `denied` 로 실패한다. 둘 중 하나를 고른다.
+
+- 패키지를 **공개**로 둔다(GitHub → Packages → 패키지 → Package
+  settings → Change visibility). 받는 쪽에 로그인이 필요 없다.
+- 비공개로 두고 홈서버에서 한 번 로그인한다.
+  `read:packages` 권한만 준 PAT 를 만들어
+  `docker login ghcr.io -u <GitHub 사용자>` 에 비밀번호로 넣는다.
+
+사이드카 패키지(`notebooklm-st-login-browser`)는 첫 게시 뒤에 생기므로
+그때 사람이 GitHub 웹에서 공개 여부를 정한다.
 
 상태 확인.
 
@@ -59,7 +108,8 @@ docker compose logs -f   # 기동 로그
 | `notebooklm-st` | **http://<홈서버IP>:9004** | 앱. 컨테이너 안 8611 |
 | `notebooklm-st-login-browser` | `http://<홈서버IP>:9005` | 원격 로그인 화면 중계. 로그인 세션 중에만 이 포트를 듣는다. 사람이 직접 열 일은 없다 — 앱의 인증 페이지가 끼워 보여 준다 |
 
-사이드카 이미지는 크로미움을 담아 처음 빌드가 몇 분 걸린다.
+사이드카 이미지는 크로미움을 담아 앱보다 크다. 처음 받을 때 시간이
+더 걸린다.
 
 ## 3. 자격증명 넣기
 
@@ -191,13 +241,13 @@ docker compose up -d
 
 ## 5. 검증
 
-배포 뒤 한 번 돈다. 1~4 번은 이미지를 굽는 워크플로
-(`.github/workflows/build.yml`)가 게시 전에 자동으로 하지만, 5~8 번은
-실제 홈서버와 계정이 있어야 해서 사람이 한다.
+배포 뒤 한 번 돈다. 2~4·7b 번은 이미지를 굽는 워크플로
+(`.github/workflows/build.yml`)가 게시 전에 같은 이미지로 자동으로
+하지만, 1 번과 5~9 번은 실제 홈서버와 계정이 있어야 해서 사람이 한다.
 
 | # | 확인 | 통과 기준 |
 |---|---|---|
-| 1 | `docker compose build` | 성공 |
+| 1 | `docker compose pull` | 두 이미지를 받는다(`denied` 면 2.3 절) |
 | 2 | `docker compose run --rm app python -c "import playwright"` | **실패해야 정상** |
 | 3 | `docker compose run --rm app python -c "import datetime; print(datetime.datetime.now().astimezone())"` | `+09:00` |
 | 4 | `docker compose ps` | `healthy` |
@@ -225,8 +275,8 @@ docker compose up -d
 - **실행 중일 때 재시작하지 않는다.** 질의는 백그라운드 스레드에서
   돌고 이력은 끝난 뒤에 저장된다. 진행 중에 내리면 그 실행은 결과를
   남기지 못한다. **실행 현황** 화면이 비었을 때 내린다.
-- **UID 가 1000 이 아니면 `PUID`/`PGID` 로 덮는다.** 재빌드는 필요
-  없다.
+- **UID 가 1000 이 아니면 `PUID`/`PGID` 로 덮는다.** 이미지를 다시
+  받거나 구울 필요는 없다.
 
 ## 인증이 만료되면
 
