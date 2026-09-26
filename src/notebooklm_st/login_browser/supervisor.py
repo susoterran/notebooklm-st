@@ -200,98 +200,131 @@ class Supervisor:
             self._finish(login_protocol.State.CANCELLED, None)
 
     def _start(self, request_id: str) -> None:
-        """가상 화면·화면 중계·CLI 를 차례로 띄운다."""
+        """세션을 연다. 도중에 실패하면 띄운 것을 내리고 실패를 쓴다.
+
+        띄우지 못한 단계(``_StartError``)뿐 아니라 비밀번호 파일·임시
+        디렉터리·상태 파일의 ``OSError`` 도 같이 정리한다. 잡지 않으면
+        상태가 ``starting`` 에 남고 띄운 프로세스가 샌다.
+        """
         self._write_status(login_protocol.State.STARTING, request_id, None)
+        processes: list[ProcessLike] = []
+        try:
+            password = self._launch_all(processes)
+            deadline = self._clock() + dt.timedelta(seconds=SESSION_SECONDS)
+            self._session = _Session(request_id, processes, deadline)
+            self._write_status(
+                login_protocol.State.RUNNING,
+                request_id,
+                None,
+                password=password,
+                deadline=deadline,
+            )
+        except _StartError as error:
+            self._abort(processes, request_id, f"({error})")
+            return
+        except OSError as error:
+            logger.warning("로그인 세션을 열지 못했습니다: %s", error)
+            self._abort(processes, request_id, "(파일 오류)")
+            return
+        logger.info("로그인 세션을 열었습니다: %s", request_id)
+
+    def _abort(
+        self, processes: list[ProcessLike], request_id: str, reason: str
+    ) -> None:
+        """열다 만 세션을 내리고 흔적을 지운 뒤 실패를 쓴다."""
+        self._session = None
+        for process in reversed(processes):
+            _stop(process)
+        self._cleanup_files()
+        self._write_status(
+            login_protocol.State.FAILED,
+            request_id,
+            f"로그인 브라우저를 띄우지 못했습니다{reason}",
+        )
+
+    def _launch_all(self, processes: list[ProcessLike]) -> str:
+        """가상 화면·화면 중계·CLI 를 차례로 띄운다.
+
+        Args:
+            processes: 띄운 프로세스를 차례로 담는다. 도중에 실패해도
+                호출자가 이미 띄운 것을 내릴 수 있다.
+
+        Returns:
+            이번 세션의 비밀번호.
+
+        Raises:
+            _StartError: 프로세스 하나를 띄우지 못했을 때.
+            OSError: 비밀번호 파일을 쓰지 못했을 때 등.
+        """
         password = self._make_password()
         self._work_dir.mkdir(parents=True, exist_ok=True)
         password_file = self._work_dir / PASSWORD_FILE
         login_protocol.write_atomic(password_file, password + "\n")
-        processes: list[ProcessLike] = []
-        try:
-            processes.append(
-                self._spawn(
+        processes.append(
+            self._spawn(
+                "Xvfb",
+                [
                     "Xvfb",
-                    [
-                        "Xvfb",
-                        DISPLAY,
-                        "-screen",
-                        "0",
-                        "1280x800x24",
-                        "-nolisten",
-                        "tcp",
-                    ],
-                    None,
-                )
+                    DISPLAY,
+                    "-screen",
+                    "0",
+                    "1280x800x24",
+                    "-nolisten",
+                    "tcp",
+                ],
+                None,
             )
-            if not self._wait_ready():
-                raise _StartError("가상 화면")
-            processes.append(
-                self._spawn(
-                    "x11vnc",
-                    [
-                        "x11vnc",
-                        "-display",
-                        DISPLAY,
-                        "-localhost",
-                        "-rfbport",
-                        str(VNC_PORT),
-                        "-passwdfile",
-                        f"rm:{password_file}",
-                        "-forever",
-                        "-shared",
-                        "-quiet",
-                    ],
-                    None,
-                )
-            )
-            processes.append(
-                self._spawn(
-                    "websockify",
-                    [
-                        "websockify",
-                        "--web",
-                        NOVNC_WEB,
-                        str(WEB_PORT),
-                        f"localhost:{VNC_PORT}",
-                    ],
-                    None,
-                )
-            )
-            processes.append(
-                self._spawn(
-                    "notebooklm login",
-                    [
-                        sys.executable,
-                        "-m",
-                        "notebooklm",
-                        "login",
-                        "--fresh",
-                        "--browser-timeout",
-                        str(CLI_BROWSER_TIMEOUT),
-                    ],
-                    self._work_dir / LOG_FILE,
-                )
-            )
-        except _StartError as error:
-            for process in reversed(processes):
-                _stop(process)
-            self._cleanup_files()
-            self._write_status(
-                login_protocol.State.FAILED,
-                request_id,
-                f"로그인 브라우저를 띄우지 못했습니다({error})",
-            )
-            return
-        deadline = self._clock() + dt.timedelta(seconds=SESSION_SECONDS)
-        self._session = _Session(request_id, processes, deadline)
-        self._write_status(
-            login_protocol.State.RUNNING,
-            request_id,
-            None,
-            password=password,
-            deadline=deadline,
         )
-        logger.info("로그인 세션을 열었습니다: %s", request_id)
+        if not self._wait_ready():
+            raise _StartError("가상 화면")
+        processes.append(
+            self._spawn(
+                "x11vnc",
+                [
+                    "x11vnc",
+                    "-display",
+                    DISPLAY,
+                    "-localhost",
+                    "-rfbport",
+                    str(VNC_PORT),
+                    "-passwdfile",
+                    f"rm:{password_file}",
+                    "-forever",
+                    "-shared",
+                    "-quiet",
+                ],
+                None,
+            )
+        )
+        processes.append(
+            self._spawn(
+                "websockify",
+                [
+                    "websockify",
+                    "--web",
+                    NOVNC_WEB,
+                    str(WEB_PORT),
+                    f"localhost:{VNC_PORT}",
+                ],
+                None,
+            )
+        )
+        processes.append(
+            self._spawn(
+                "notebooklm login",
+                [
+                    sys.executable,
+                    "-m",
+                    "notebooklm",
+                    "login",
+                    "--fresh",
+                    "--browser-timeout",
+                    str(CLI_BROWSER_TIMEOUT),
+                ],
+                self._work_dir / LOG_FILE,
+            )
+        )
+        return password
 
     def _spawn(
         self, stage: str, argv: list[str], log_path: pathlib.Path | None
@@ -340,8 +373,12 @@ class Supervisor:
         크로미움 프로필은 계정 동등 자격증명이다. 공유 볼륨에 남기지
         않는다.
         """
-        (self._work_dir / PASSWORD_FILE).unlink(missing_ok=True)
-        (self._work_dir / LOG_FILE).unlink(missing_ok=True)
+        for name in (PASSWORD_FILE, LOG_FILE):
+            try:
+                (self._work_dir / name).unlink(missing_ok=True)
+            except OSError as error:
+                # 하나를 못 지워도 크로미움 프로필은 마저 지운다.
+                logger.error("%s 를 지우지 못했습니다: %s", name, error)
         shutil.rmtree(self._browser_profile, ignore_errors=True)
         if self._browser_profile.exists():
             logger.error("브라우저 프로필을 지우지 못했습니다")

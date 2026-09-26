@@ -365,6 +365,51 @@ def test_a_display_that_never_comes_up_fails_the_session(tmp_path) -> None:
     assert rig.launcher.named("Xvfb").terminated
 
 
+def test_an_unexpected_os_error_mid_start_cleans_up(tmp_path) -> None:
+    """시작 도중의 예상 밖 OSError 도 띄운 것을 내리고 실패를 쓴다.
+
+    잡지 않으면 상태가 starting 에 남고 띄운 프로세스가 샌다.
+    """
+    rig = make_rig(tmp_path)
+
+    def broken_display() -> bool:
+        """가상 화면 소켓을 보다가 권한 오류가 난다."""
+        raise PermissionError("/tmp/.X11-unix/X99")
+
+    rig.sup._wait_ready = broken_display
+    rig.request("r1")
+
+    rig.sup.tick()
+
+    status = rig.status()
+    assert status.state is login_protocol.State.FAILED
+    assert status.request_id == "r1"
+    assert status.password is None
+    assert rig.launcher.named("Xvfb").terminated
+    assert not rig.browser_profile.exists()
+    assert not (rig.work_dir / supervisor.PASSWORD_FILE).exists()
+
+    rig.request("r2")
+    rig.sup.tick()
+
+    assert rig.status().request_id == "r2"
+
+
+def test_an_unusable_work_dir_fails_the_session(tmp_path) -> None:
+    """임시 디렉터리를 만들지 못하면 아무것도 띄우지 않고 실패를 쓴다."""
+    rig = make_rig(tmp_path)
+    rig.work_dir.write_text("not a directory", encoding="utf-8")
+    rig.request("r1")
+
+    rig.sup.tick()
+
+    status = rig.status()
+    assert status.state is login_protocol.State.FAILED
+    assert status.request_id == "r1"
+    assert rig.launcher.processes == []
+    assert not rig.browser_profile.exists()
+
+
 def test_a_stubborn_process_is_killed(rig: Rig) -> None:
     """SIGTERM 을 무시하는 자식은 SIGKILL 로 끝낸다."""
     rig.request("r1")
