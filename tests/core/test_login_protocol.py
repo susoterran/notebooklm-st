@@ -58,6 +58,40 @@ def test_a_malformed_status_raises_a_protocol_error(text: str) -> None:
         login_protocol.Status.from_json(text)
 
 
+@pytest.mark.parametrize(
+    ("parse", "text", "message"),
+    [
+        (
+            login_protocol.Request.from_json,
+            '{"id": "r1", "requested_at": "x"}',
+            "action 가 없거나 문자열이 아닙니다",
+        ),
+        (
+            login_protocol.Request.from_json,
+            '{"id": "r1", "action": "jump", "requested_at": "x"}',
+            "알 수 없는 요청입니다",
+        ),
+        (
+            login_protocol.Status.from_json,
+            "{}",
+            "state 가 없거나 문자열이 아닙니다",
+        ),
+        (
+            login_protocol.Status.from_json,
+            '{"state": "flying"}',
+            "알 수 없는 상태입니다",
+        ),
+    ],
+    ids=["no-action", "bad-action", "no-state", "bad-state"],
+)
+def test_protocol_errors_say_what_is_wrong(parse, text: str, message) -> None:
+    """필드가 없을 때와 값이 틀릴 때를 다른 문구로 알린다."""
+    with pytest.raises(login_protocol.ProtocolError) as caught:
+        parse(text)
+
+    assert str(caught.value).startswith(message)
+
+
 def test_missing_files_read_as_nothing(tmp_path) -> None:
     """아직 아무도 쓰지 않았으면 요청은 없고 상태는 idle 이다."""
     assert login_protocol.read_request(tmp_path) is None

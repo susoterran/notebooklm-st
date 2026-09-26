@@ -77,8 +77,11 @@ class Request:
             ProtocolError: 계약과 다른 내용일 때.
         """
         data = _load_object(text)
+        # 필드가 없을 때의 ProtocolError 는 ValueError 이기도 하다. try
+        # 밖에서 꺼내야 "알 수 없는 요청" 으로 뭉개지지 않는다.
+        raw = _required_str(data, "action")
         try:
-            action = Action(_required_str(data, "action"))
+            action = Action(raw)
         except ValueError as error:
             raise ProtocolError(f"알 수 없는 요청입니다: {error}") from error
         return cls(
@@ -114,8 +117,9 @@ class Status:
             ProtocolError: 계약과 다른 내용일 때.
         """
         data = _load_object(text)
+        raw = _required_str(data, "state")
         try:
-            state = State(_required_str(data, "state"))
+            state = State(raw)
         except ValueError as error:
             raise ProtocolError(f"알 수 없는 상태입니다: {error}") from error
         return cls(
