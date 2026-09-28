@@ -714,25 +714,41 @@ def test_sync_with_nothing_to_do_hides_the_apply_button(
 
 
 def test_sync_list_failure_shows_the_message(app_db, monkeypatch) -> None:
-    """목록을 못 읽으면 문구만 내고 계획을 남기지 않는다."""
+    """목록을 못 읽으면 문구만 내고 남아 있던 계획을 지운다.
+
+    실패 전에 먼저 성공하는 확인으로 계획을 만들어 둔다. 계획이
+    애초에 없으면 실패 갈래의 초기화 코드를 지나가지 않고도 이
+    테스트가 통과해 버린다.
+    """
     set_outline_env(monkeypatch)
+    monkeypatch.setattr(outline, "list_documents", fake_list([listed("new-1")]))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    assert "history_sync_apply" in [e.key for e in app.button]
+
     monkeypatch.setattr(
         outline,
         "list_documents",
         failing_list("Outline 에 연결하지 못했습니다(ConnectError)."),
     )
-
-    app = v1.AppTest.from_function(script)
-    app.run()
     app.button(key="history_sync_check").click().run()
 
     assert not app.exception
     assert "연결하지 못했습니다" in app.error[0].value
     assert "history_sync_apply" not in [e.key for e in app.button]
+    assert "history_sync_plan" not in app.session_state
 
 
 def test_sync_apply_failure_keeps_the_plan(app_db, monkeypatch) -> None:
-    """적용이 죽으면 문구를 내고 계획은 남겨 다시 적용할 수 있다."""
+    """적용이 죽으면 문구를 내고 계획은 남겨 다시 적용할 수 있다.
+
+    실패 직후의 같은 실행에는 적용 버튼이 실패 전에 이미 그려져
+    있어, 그 상태만 보면 세션에 계획이 남았는지 실제로 확인하지
+    못한다. 한 번 더 다시 그려 그 결과로 버튼이 다시 나오는지
+    본다.
+    """
     set_outline_env(monkeypatch)
     monkeypatch.setattr(outline, "list_documents", fake_list([listed("new-1")]))
 
@@ -749,31 +765,43 @@ def test_sync_apply_failure_keeps_the_plan(app_db, monkeypatch) -> None:
 
     assert not app.exception
     assert "실패" in app.error[0].value
+
+    app.run()
+
+    assert not app.exception
     assert "history_sync_apply" in [e.key for e in app.button]
+    assert "history_sync_plan" in app.session_state
 
 
 def test_sync_apply_keeps_the_selected_run(app_db, monkeypatch) -> None:
     """지워지지 않은 실행을 고르고 있었으면 적용 뒤에도 그대로다.
 
-    목록은 최신순이므로 나중에 만든 ``gone`` 이 0번, ``kept`` 가
-    1번이다. 1번을 골라 두고 0번을 지운다.
+    지워지는 실행 하나만 남기면, 무엇을 고르고 있었든 지운 뒤
+    유일하게 남는 선택지로 떨어져 버려 선택이 지켜졌다는 것을
+    증명하지 못한다. 살아남는 실행을 둘 두어, 고르고 있던 것이
+    아닌 다른 하나로 잘못 되돌아가면 드러나게 한다.
+
+    목록은 최신순이므로 나중에 만든 ``gone`` 이 0번, ``other`` 가
+    1번, 가장 먼저 만든 ``kept`` 가 2번이다. 2번을 골라 두고
+    0번만 지운다.
     """
     set_outline_env(monkeypatch)
     kept = run_history.save_run(app_db, make_result(title="남는 실행"))
+    other = run_history.save_run(app_db, make_result(title="다른 실행"))
     gone = run_history.save_run(app_db, make_result())
     export(app_db, gone)
     monkeypatch.setattr(outline, "list_documents", fake_list([]))
 
     app = v1.AppTest.from_function(script)
     app.run()
-    app.selectbox[0].select_index(1).run()
+    app.selectbox[0].select_index(2).run()
     assert app.selectbox[0].value == kept
     app.button(key="history_sync_check").click().run()
     app.button(key="history_sync_apply").click().run()
 
     assert not app.exception
     assert app.selectbox[0].value == kept
-    assert [run.id for run in run_history.list_runs(app_db)] == [kept]
+    assert [run.id for run in run_history.list_runs(app_db)] == [other, kept]
 
 
 def test_sync_preview_survives_a_rerun(app_db, monkeypatch) -> None:
