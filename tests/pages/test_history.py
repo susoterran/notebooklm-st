@@ -5,7 +5,12 @@ import sqlite3
 from streamlit.testing import v1
 
 from notebooklm_st.core import models, youtube
-from notebooklm_st.services import outline, run_history
+from notebooklm_st.services import (
+    history_sync,
+    outline,
+    run_history,
+    run_history_sync,
+)
 
 
 def script():
@@ -43,7 +48,8 @@ def test_empty_history_shows_notice(app_db) -> None:
     """저장된 실행이 없으면 안내를 보여 준다."""
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    assert len(app.info) == 1
+    notices = [element.value for element in app.info]
+    assert "아직 저장된 실행이 없습니다." in notices
 
 
 def test_saved_run_is_selectable(app_db) -> None:
@@ -164,7 +170,8 @@ def test_delete_removes_the_run_after_confirming(app_db) -> None:
 
     assert not app.exception
     assert run_history.list_runs(app_db) == []
-    assert len(app.info) == 1
+    notices = [element.value for element in app.info]
+    assert "아직 저장된 실행이 없습니다." in notices
 
 
 def test_delete_can_be_cancelled(app_db) -> None:
@@ -549,3 +556,236 @@ def test_export_does_not_swallow_a_programming_error(
 
     assert len(app.exception) == 1
     assert "둘이 됩니다" not in " ".join(element.value for element in app.error)
+
+
+SYNC_BODY = (
+    "- 제목: 되살릴 문서\n"
+    "- 영상 URL: https://www.youtube.com/watch?v=aaaaaaaaaaa\n"
+    "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
+)
+
+
+def listed(doc_id: str, markdown: str = SYNC_BODY) -> models.ListedDocument:
+    """목록에서 읽어 온 문서 하나."""
+    return models.ListedDocument(
+        id=doc_id,
+        title=f"문서 {doc_id}",
+        url=f"http://192.168.0.10:3000/doc/{doc_id}",
+        created_at="2026-09-25T10:00:00",
+        markdown=markdown,
+    )
+
+
+def fake_list(documents):
+    """list_documents 를 대신해 준비된 목록을 돌려준다."""
+
+    def list_documents(config, **kwargs):
+        """준비된 목록을 돌려준다."""
+        return list(documents)
+
+    return list_documents
+
+
+def failing_list(message: str):
+    """list_documents 대신 OutlineError 를 던진다."""
+
+    def list_documents(config, **kwargs):
+        """항상 실패한다."""
+        raise outline.OutlineError(message)
+
+    return list_documents
+
+
+def rendered_markdown(app) -> str:
+    """화면의 markdown 요소를 한 문자열로 잇는다."""
+    return " ".join(element.value for element in app.markdown)
+
+
+def test_sync_area_is_drawn_without_any_run(app_db) -> None:
+    """저장된 실행이 0건이어도 동기화 영역과 설정 안내가 나온다.
+
+    DB 를 막 지운 직후가 이 기능이 가장 필요한 순간이다.
+    """
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    labels = [element.label for element in app.expander]
+    assert "Outline 과 동기화" in labels
+    messages = " ".join(element.value for element in app.info)
+    assert outline.COLLECTION_ENV_VAR in messages
+    assert "history_sync_check" not in [e.key for e in app.button]
+
+
+def test_sync_check_button_appears_with_configuration(
+    app_db, monkeypatch
+) -> None:
+    """설정이 있으면 확인 버튼이 나온다."""
+    set_outline_env(monkeypatch)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert "history_sync_check" in [e.key for e in app.button]
+
+
+def test_sync_check_previews_the_counts_and_lists(app_db, monkeypatch) -> None:
+    """확인하면 개수 한 줄과 세 목록이 보이고 DB 는 그대로다."""
+    set_outline_env(monkeypatch)
+    gone = run_history.save_run(app_db, make_result())
+    export(app_db, gone)
+    monkeypatch.setattr(
+        outline,
+        "list_documents",
+        fake_list([listed("new-1"), listed("skip-1", "본문만\n")]),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+
+    assert not app.exception
+    text = rendered_markdown(app)
+    assert "지울 이력 1건 · 만들 문서 1건 · 건너뛴 문서 1건" in text
+    assert "정리한 제목" in text
+    assert "문서 new-1" in text
+    assert "문서 skip-1" in text
+    assert history_sync.SKIP_NO_SOURCE_URL in text
+    assert [run.id for run in run_history_sync.list_exported(app_db)] == [gone]
+
+
+def test_sync_apply_changes_the_db_and_reports(app_db, monkeypatch) -> None:
+    """적용하면 지우고 만든 뒤 결과 문구를 낸다."""
+    set_outline_env(monkeypatch)
+    gone = run_history.save_run(app_db, make_result())
+    export(app_db, gone)
+    monkeypatch.setattr(outline, "list_documents", fake_list([listed("new-1")]))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    app.button(key="history_sync_apply").click().run()
+
+    assert not app.exception
+    ids = [run.outline_id for run in run_history_sync.list_exported(app_db)]
+    assert ids == ["new-1"]
+    assert "지움 1건 · 만듦 1건" in app.success[0].value
+    assert "history_sync_apply" not in [e.key for e in app.button]
+
+
+def test_sync_cancel_drops_the_plan_only(app_db, monkeypatch) -> None:
+    """취소하면 계획만 사라지고 DB 는 그대로다."""
+    set_outline_env(monkeypatch)
+    gone = run_history.save_run(app_db, make_result())
+    export(app_db, gone)
+    monkeypatch.setattr(outline, "list_documents", fake_list([]))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    app.button(key="history_sync_cancel").click().run()
+
+    assert not app.exception
+    assert "history_sync_apply" not in [e.key for e in app.button]
+    assert [run.id for run in run_history_sync.list_exported(app_db)] == [gone]
+
+
+def test_sync_with_nothing_to_do_hides_the_apply_button(
+    app_db, monkeypatch
+) -> None:
+    """이미 맞으면 적용 버튼이 없고 건너뛴 문서만 보인다."""
+    set_outline_env(monkeypatch)
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+    monkeypatch.setattr(
+        outline,
+        "list_documents",
+        fake_list([listed("doc-1"), listed("skip-1", "본문만\n")]),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+
+    assert not app.exception
+    assert "history_sync_apply" not in [e.key for e in app.button]
+    messages = " ".join(element.value for element in app.info)
+    assert "이미 맞습니다" in messages
+    assert "문서 skip-1" in rendered_markdown(app)
+
+
+def test_sync_list_failure_shows_the_message(app_db, monkeypatch) -> None:
+    """목록을 못 읽으면 문구만 내고 계획을 남기지 않는다."""
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(
+        outline,
+        "list_documents",
+        failing_list("Outline 에 연결하지 못했습니다(ConnectError)."),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+
+    assert not app.exception
+    assert "연결하지 못했습니다" in app.error[0].value
+    assert "history_sync_apply" not in [e.key for e in app.button]
+
+
+def test_sync_apply_failure_keeps_the_plan(app_db, monkeypatch) -> None:
+    """적용이 죽으면 문구를 내고 계획은 남겨 다시 적용할 수 있다."""
+    set_outline_env(monkeypatch)
+    monkeypatch.setattr(outline, "list_documents", fake_list([listed("new-1")]))
+
+    def boom(*args, **kwargs):
+        """Apply 가 실패하는 상황을 만든다."""
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(history_sync, "apply", boom)
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    app.button(key="history_sync_apply").click().run()
+
+    assert not app.exception
+    assert "실패" in app.error[0].value
+    assert "history_sync_apply" in [e.key for e in app.button]
+
+
+def test_sync_apply_keeps_the_selected_run(app_db, monkeypatch) -> None:
+    """지워지지 않은 실행을 고르고 있었으면 적용 뒤에도 그대로다.
+
+    목록은 최신순이므로 나중에 만든 ``gone`` 이 0번, ``kept`` 가
+    1번이다. 1번을 골라 두고 0번을 지운다.
+    """
+    set_outline_env(monkeypatch)
+    kept = run_history.save_run(app_db, make_result(title="남는 실행"))
+    gone = run_history.save_run(app_db, make_result())
+    export(app_db, gone)
+    monkeypatch.setattr(outline, "list_documents", fake_list([]))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.selectbox[0].select_index(1).run()
+    assert app.selectbox[0].value == kept
+    app.button(key="history_sync_check").click().run()
+    app.button(key="history_sync_apply").click().run()
+
+    assert not app.exception
+    assert app.selectbox[0].value == kept
+    assert [run.id for run in run_history.list_runs(app_db)] == [kept]
+
+
+def test_sync_preview_survives_a_rerun(app_db, monkeypatch) -> None:
+    """확인 뒤 다른 위젯을 건드려도 미리보기가 남아 있다."""
+    set_outline_env(monkeypatch)
+    run_history.save_run(app_db, make_result())
+    monkeypatch.setattr(outline, "list_documents", fake_list([listed("new-1")]))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    app.checkbox[0].uncheck().run()
+
+    assert not app.exception
+    assert "history_sync_apply" in [e.key for e in app.button]
