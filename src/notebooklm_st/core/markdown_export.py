@@ -22,6 +22,13 @@ C0(``\\x00-\\x1f``)뿐 아니라 DEL(``\\x7f``)과 C1(``\\x80-\\x9f``)
 
 _WHITESPACE = re.compile(r"\s+")
 
+SOURCE_URL_LABEL = "영상 URL"
+"""메타데이터 리스트에서 영상 URL 줄의 라벨.
+
+``outline_import`` 가 같은 줄을 거꾸로 읽는다. 두 곳에 따로 적으면
+한쪽만 바뀌어 동기화가 조용히 모든 문서를 건너뛴다.
+"""
+
 
 def to_markdown(
     summary: models.RunSummary,
@@ -84,7 +91,7 @@ def _metadata_block(
         lines.append(f"- 채널: {one_line(metadata.channel)}")
     if metadata is not None and metadata.upload_date:
         lines.append(f"- 업로드 일자: {metadata.upload_date}")
-    lines.append(f"- 영상 URL: {_source_url(summary)}")
+    lines.append(f"- {SOURCE_URL_LABEL}: {_source_url(summary)}")
     return "\n".join(lines)
 
 
