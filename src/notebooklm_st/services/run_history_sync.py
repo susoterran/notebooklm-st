@@ -81,24 +81,34 @@ def insert_exported(
     return int(row["id"])
 
 
-def delete_runs(connection: sqlite3.Connection, run_ids: Sequence[int]) -> int:
-    """실행 여럿을 한 문장으로 지운다.
+def delete_runs(
+    connection: sqlite3.Connection, keys: Sequence[tuple[int, str]]
+) -> int:
+    """실행 여럿을 실행 ID 와 문서 ID 가 둘 다 맞을 때만 지운다.
 
     **커밋하지 않는다.** 트랜잭션은 ``history_sync.apply`` 가 소유한다.
-    없는 ID 는 무시한다. 딸린 답변은 외래키가 함께 지운다.
+    맞는 행이 없는 쌍은 무시한다. 딸린 답변은 외래키가 함께 지운다.
+
+    ID 만으로 지우지 않는 이유는 SQLite 가 ID 를 다시 쓰기 때문이다.
+    ``runs.id`` 에는 AUTOINCREMENT 가 없어, 가장 큰 ID 의 행이
+    지워지면 다음 삽입이 그 ID 를 다시 받는다. 계획은 적용·취소
+    전까지 세션에 남으므로, 그사이 사람이 그 행을 지우고 새로
+    실행하면 같은 ID 의 미저장 실행이 생긴다. 문서 ID 까지 맞춰야 그
+    실행이 지워지지 않는다 — 미저장 실행은 ``outline_id`` 가 비어
+    있어 어떤 쌍과도 맞지 않는다.
 
     Args:
         connection: 열린 커넥션.
-        run_ids: 지울 실행 ID 들. 비어 있으면 아무것도 하지 않는다.
+        keys: 지울 ``(실행 ID, 문서 ID)`` 쌍들. 비어 있으면 아무것도
+            하지 않는다.
 
     Returns:
         실제로 지운 행 수.
     """
-    if not run_ids:
+    if not keys:
         return 0
-    # 자리표시자만 이어 붙인다. 값은 전부 파라미터로 넘긴다.
-    placeholders = ", ".join("?" for _ in run_ids)
-    cursor = connection.execute(
-        f"DELETE FROM runs WHERE id IN ({placeholders})", tuple(run_ids)
+    cursor = connection.executemany(
+        "DELETE FROM runs WHERE id = ? AND outline_id = ?", keys
     )
+    # executemany 의 DML rowcount 는 sqlite3 가 문장마다 더해 준다.
     return int(cursor.rowcount)

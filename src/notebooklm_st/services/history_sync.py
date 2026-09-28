@@ -2,8 +2,8 @@
 
 ``plan`` 은 두 목록을 받아 무엇을 지우고 만들지 정하는 순수 함수이고,
 ``apply`` 는 그 계획을 DB 에 쓴다. httpx 도 Streamlit 도 모른다.
-목록을 읽는 것은 ``services.outline``, DB 를 읽는 것은
-``services.run_history`` 가 한다.
+목록을 읽는 것은 ``services.outline``, DB 를 읽고 쓰는 것은
+``services.run_history_sync`` 가 한다.
 """
 
 import dataclasses
@@ -88,6 +88,10 @@ def apply(
     전체가 함께 쓰므로 반쪽만 걸린 채 나가면 다른 곳의 commit 이
     그것을 확정해 버린다(``run_history.mark_exported`` 와 같은 이유).
 
+    삭제는 ``(실행 ID, 문서 ID)`` 쌍으로 맞춘다. 계획이 세션에 남아
+    있는 사이 SQLite 가 지워진 ID 를 새 미저장 실행에 다시 줄 수
+    있어서다. 문서 ID 까지 맞으면 그 실행은 지워지지 않는다.
+
     Args:
         connection: 열린 커넥션.
         sync_plan: ``plan`` 이 세운 계획.
@@ -100,7 +104,8 @@ def apply(
     """
     try:
         deleted = run_history_sync.delete_runs(
-            connection, [run.id for run in sync_plan.deletes]
+            connection,
+            [(run.id, run.outline_id or "") for run in sync_plan.deletes],
         )
         created = 0
         for create in sync_plan.creates:

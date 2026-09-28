@@ -47,12 +47,14 @@ def make_result(
     )
 
 
-def export(connection: sqlite3.Connection, run_id: int) -> None:
+def export(
+    connection: sqlite3.Connection, run_id: int, document_id: str = "doc-1"
+) -> None:
     """테스트용 저장 기록 한 번."""
     run_history.mark_exported(
         connection,
         run_id,
-        document_id="doc-1",
+        document_id=document_id,
         document_title="정리한 제목",
         document_url="http://192.168.0.10:3000/doc/x",
     )
@@ -148,12 +150,17 @@ def test_insert_exported_does_not_commit(connection) -> None:
 
 
 def test_delete_runs_removes_several_at_once(connection) -> None:
-    """여러 ID 를 한 문장으로 지우고 개수를 돌려준다."""
+    """여러 쌍을 한 번에 지우고 개수를 돌려준다."""
     first = run_history.save_run(connection, make_result())
     second = run_history.save_run(connection, make_result())
     third = run_history.save_run(connection, make_result())
+    export(connection, first, "doc-1")
+    export(connection, second, "doc-2")
+    export(connection, third, "doc-3")
 
-    deleted = run_history_sync.delete_runs(connection, [first, third])
+    deleted = run_history_sync.delete_runs(
+        connection, [(first, "doc-1"), (third, "doc-3")]
+    )
     connection.commit()
 
     assert deleted == 2
@@ -163,11 +170,33 @@ def test_delete_runs_removes_several_at_once(connection) -> None:
 def test_delete_runs_ignores_unknown_ids(connection) -> None:
     """없는 ID 는 세지 않는다. 다른 탭이 먼저 지웠을 수 있다."""
     run_id = run_history.save_run(connection, make_result())
+    export(connection, run_id)
 
-    deleted = run_history_sync.delete_runs(connection, [run_id, 999])
+    deleted = run_history_sync.delete_runs(
+        connection, [(run_id, "doc-1"), (999, "doc-9")]
+    )
     connection.commit()
 
     assert deleted == 1
+
+
+def test_delete_runs_needs_the_document_id_to_match(connection) -> None:
+    """ID 가 같아도 문서 ID 가 다르면 지우지 않는다.
+
+    SQLite 는 지워진 가장 큰 ID 를 다음 삽입에 다시 준다. ID 만
+    맞으면 지우면 그 ID 를 받은 다른 실행이 지워진다.
+    """
+    exported = run_history.save_run(connection, make_result())
+    export(connection, exported, "doc-1")
+    unexported = run_history.save_run(connection, make_result())
+
+    deleted = run_history_sync.delete_runs(
+        connection, [(exported, "doc-other"), (unexported, "doc-1")]
+    )
+    connection.commit()
+
+    assert deleted == 0
+    assert len(run_history.list_runs(connection)) == 2
 
 
 def test_delete_runs_with_nothing_is_a_no_op(connection) -> None:
@@ -181,8 +210,9 @@ def test_delete_runs_with_nothing_is_a_no_op(connection) -> None:
 def test_delete_runs_does_not_commit(connection) -> None:
     """트랜잭션은 호출자가 소유한다."""
     run_id = run_history.save_run(connection, make_result())
+    export(connection, run_id)
 
-    run_history_sync.delete_runs(connection, [run_id])
+    run_history_sync.delete_runs(connection, [(run_id, "doc-1")])
     connection.rollback()
 
     assert len(run_history.list_runs(connection)) == 1

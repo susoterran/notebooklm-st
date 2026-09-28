@@ -220,6 +220,7 @@ def test_apply_deletes_and_creates_in_one_commit(connection) -> None:
 
     result = history_sync.apply(connection, plan)
 
+    assert not connection.in_transaction
     assert result == history_sync.SyncResult(deleted=1, created=1)
     ids = {run.outline_id for run in run_history_sync.list_exported(connection)}
     assert ids == {"kept", "new-1"}
@@ -294,6 +295,47 @@ def test_apply_does_not_count_a_run_that_is_already_gone(
     result = history_sync.apply(connection, plan)
 
     assert result.deleted == 0
+
+
+def test_apply_keeps_a_new_run_that_reused_a_deleted_id(
+    connection,
+) -> None:
+    """낡은 계획은 같은 ID 를 다시 받은 미저장 실행을 지우지 않는다.
+
+    ``runs.id`` 에는 AUTOINCREMENT 가 없어, 가장 큰 ID 의 행을 지우면
+    다음 삽입이 그 ID 를 다시 받는다. 계획은 적용·취소 전까지 세션에
+    남으므로, 그사이 사람이 그 행을 손으로 지우고 새로 실행할 수
+    있다. 미저장 실행은 어떤 경우에도 지워지면 안 된다.
+    """
+    gone = save_exported(connection, "gone")
+    stale = history_sync.plan(run_history_sync.list_exported(connection), [])
+    assert [run.id for run in stale.deletes] == [gone]
+    run_history.delete_run(connection, gone)
+    reused = run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            title="새 실행",
+            items=(
+                models.AnswerItem(
+                    question_title="핵심 주장",
+                    question_text="핵심 주장은?",
+                    answer="세 가지다.",
+                    citations=(),
+                    error=None,
+                ),
+            ),
+        ),
+    )
+    assert reused == gone
+
+    result = history_sync.apply(connection, stale)
+
+    assert result.deleted == 0
+    assert [run.id for run in run_history.list_runs(connection)] == [reused]
+    items = run_history.load_run_items(connection, reused)
+    assert [item.answer for item in items] == ["세 가지다."]
 
 
 def test_apply_with_an_empty_plan_changes_nothing(connection) -> None:
