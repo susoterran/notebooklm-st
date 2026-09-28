@@ -55,10 +55,12 @@ def _check(
     """목록을 읽어 계획을 세우고 세션에 담는다.
 
     실패하면 문구만 내고 계획은 남기지 않는다. 지난 계획이 남아 있으면
-    실패한 뒤에도 적용 버튼이 보이게 되므로 함께 지운다.
+    실패한 뒤에도 적용 버튼이 보이게 되므로 함께 지운다. 목록은 여러
+    페이지를 이어 부를 수 있어 읽는 동안 스피너를 띄운다.
     """
     try:
-        documents = outline.list_documents(config)
+        with st.spinner("Outline 문서 목록을 읽는 중"):
+            documents = outline.list_documents(config)
     except outline.OutlineError as error:
         st.session_state.pop(_PLAN_KEY, None)
         st.error(str(error))
