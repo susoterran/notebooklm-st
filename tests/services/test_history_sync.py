@@ -1,7 +1,17 @@
 """이력 동기화 계획·적용 테스트."""
 
+import sqlite3
+from collections.abc import Iterator
+
+import pytest
+
 from notebooklm_st.core import models
-from notebooklm_st.services import history_sync
+from notebooklm_st.services import (
+    history_sync,
+    run_history,
+    run_history_sync,
+    store,
+)
 
 SUMMARY_BODY = (
     "- 제목: 밸류에이션 강의\n"
@@ -158,3 +168,140 @@ def test_an_empty_plan_says_so() -> None:
     )
 
     assert plan.is_empty
+
+
+@pytest.fixture
+def connection(tmp_path) -> Iterator[sqlite3.Connection]:
+    """임시 파일 DB 커넥션을 열고 테스트 후 닫는다."""
+    conn = store.connect(tmp_path / "test.db")
+    yield conn
+    conn.close()
+
+
+def save_exported(connection: sqlite3.Connection, doc_id: str) -> int:
+    """저장된 실행 하나를 DB 에 만든다."""
+    run_id = run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            title="원래 제목",
+            items=(),
+        ),
+    )
+    run_history.mark_exported(
+        connection,
+        run_id,
+        document_id=doc_id,
+        document_title="정리한 제목",
+        document_url=f"https://wiki.example.com/doc/{doc_id}",
+    )
+    return run_id
+
+
+def create_for(doc_id: str) -> models.SyncCreate:
+    """문서 하나를 만들 계획 항목."""
+    return models.SyncCreate(
+        document=make_document(doc_id),
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        video_id="dQw4w9WgXcQ",
+    )
+
+
+def test_apply_deletes_and_creates_in_one_commit(connection) -> None:
+    """삭제와 삽입이 함께 확정된다."""
+    gone = save_exported(connection, "gone")
+    kept = save_exported(connection, "kept")
+    plan = models.SyncPlan(
+        deletes=(make_run(gone, "gone"),),
+        creates=(create_for("new-1"),),
+        skips=(),
+    )
+
+    result = history_sync.apply(connection, plan)
+
+    assert result == history_sync.SyncResult(deleted=1, created=1)
+    ids = {run.outline_id for run in run_history_sync.list_exported(connection)}
+    assert ids == {"kept", "new-1"}
+    assert kept in [
+        run.id for run in run_history_sync.list_exported(connection)
+    ]
+
+
+class FailingRunInsert:
+    """실행 삽입 문장에서만 터지는 커넥션 대역.
+
+    나머지 호출은 진짜 커넥션이 그대로 처리한다. 삭제는 됐는데 삽입이
+    죽는 상황을 재현한다.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """감쌀 진짜 커넥션을 받는다."""
+        self._connection = connection
+
+    def execute(self, sql, *args):
+        """실행을 넣는 문장만 실패시킨다."""
+        if "INSERT INTO runs" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self._connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        """나머지 속성은 진짜 커넥션에 맡긴다."""
+        return getattr(self._connection, name)
+
+
+def test_apply_rolls_back_the_deletes_when_an_insert_fails(
+    connection,
+) -> None:
+    """삽입이 죽으면 삭제도 되돌린다. 반쪽짜리 동기화는 없다."""
+    gone = save_exported(connection, "gone")
+    plan = models.SyncPlan(
+        deletes=(make_run(gone, "gone"),),
+        creates=(create_for("new-1"),),
+        skips=(),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        # FailingRunInsert 는 진짜 Connection 이 아니라 일부 호출만
+        # 가로채는 대역이다. 구조적으로는 호환되지만 nominal 타입은
+        # 아니므로 억제한다.
+        failing = FailingRunInsert(connection)
+        history_sync.apply(failing, plan)  # type: ignore[arg-type]
+
+    ids = [run.outline_id for run in run_history_sync.list_exported(connection)]
+    assert ids == ["gone"]
+
+
+def test_apply_skips_a_document_that_is_already_linked(connection) -> None:
+    """다른 탭이 먼저 저장한 문서는 만들지 않고 세지도 않는다."""
+    save_exported(connection, "doc-1")
+    plan = models.SyncPlan(deletes=(), creates=(create_for("doc-1"),), skips=())
+
+    result = history_sync.apply(connection, plan)
+
+    assert result.created == 0
+    assert len(run_history_sync.list_exported(connection)) == 1
+
+
+def test_apply_does_not_count_a_run_that_is_already_gone(
+    connection,
+) -> None:
+    """다른 탭이 먼저 지운 행은 개수에 들어가지 않는다."""
+    plan = models.SyncPlan(
+        deletes=(make_run(999, "gone"),), creates=(), skips=()
+    )
+
+    result = history_sync.apply(connection, plan)
+
+    assert result.deleted == 0
+
+
+def test_apply_with_an_empty_plan_changes_nothing(connection) -> None:
+    """빈 계획은 0·0 이다."""
+    save_exported(connection, "doc-1")
+    plan = models.SyncPlan(deletes=(), creates=(), skips=())
+
+    result = history_sync.apply(connection, plan)
+
+    assert result == history_sync.SyncResult(deleted=0, created=0)
+    assert len(run_history_sync.list_exported(connection)) == 1

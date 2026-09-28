@@ -1,14 +1,17 @@
 """저장된 이력과 Outline 문서 목록을 맞춘다.
 
-``plan`` 은 두 목록을 받아 무엇을 지우고 만들지 정하는
-순수 함수다. httpx 도 Streamlit 도 모른다. 목록을 읽는
-것은 ``services.outline``, DB 를 읽는 것은
+``plan`` 은 두 목록을 받아 무엇을 지우고 만들지 정하는 순수 함수이고,
+``apply`` 는 그 계획을 DB 에 쓴다. httpx 도 Streamlit 도 모른다.
+목록을 읽는 것은 ``services.outline``, DB 를 읽는 것은
 ``services.run_history`` 가 한다.
 """
 
+import dataclasses
+import sqlite3
 from collections.abc import Sequence
 
 from notebooklm_st.core import models, outline_import, youtube
+from notebooklm_st.services import run_history_sync
 
 SKIP_NO_SOURCE_URL = "영상 URL 없음"
 """정리본이나 손으로 쓴 문서. 이력 문서가 아니다."""
@@ -62,3 +65,50 @@ def plan(
     return models.SyncPlan(
         deletes=deletes, creates=tuple(creates), skips=tuple(skips)
     )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncResult:
+    """적용이 실제로 바꾼 개수.
+
+    계획의 개수와 다를 수 있다. 미리보기와 적용 사이에 다른 탭이
+    먼저 지우거나 저장했을 수 있다.
+    """
+
+    deleted: int
+    created: int
+
+
+def apply(
+    connection: sqlite3.Connection, sync_plan: models.SyncPlan
+) -> SyncResult:
+    """계획을 DB 에 쓴다. 삭제와 삽입을 커밋 하나로 묶는다.
+
+    어느 쪽이든 실패하면 전부 되돌리고 다시 던진다. 커넥션은 앱
+    전체가 함께 쓰므로 반쪽만 걸린 채 나가면 다른 곳의 commit 이
+    그것을 확정해 버린다(``run_history.mark_exported`` 와 같은 이유).
+
+    Args:
+        connection: 열린 커넥션.
+        sync_plan: ``plan`` 이 세운 계획.
+
+    Returns:
+        실제로 지운 개수와 만든 개수.
+
+    Raises:
+        sqlite3.Error: 삭제나 삽입이 실패한 경우. 되돌린 뒤 던진다.
+    """
+    try:
+        deleted = run_history_sync.delete_runs(
+            connection, [run.id for run in sync_plan.deletes]
+        )
+        created = 0
+        for create in sync_plan.creates:
+            inserted = run_history_sync.insert_exported(connection, create)
+            if inserted is not None:
+                created += 1
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    return SyncResult(deleted=deleted, created=created)
