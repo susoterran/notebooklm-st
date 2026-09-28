@@ -131,6 +131,40 @@ def read_status_message(status: int) -> str:
     return f"Outline 이 오류를 냈습니다(HTTP {status})."
 
 
+def list_status_message(status: int) -> str:
+    """목록 조회 실패를 "무엇부터 확인하라" 는 안내로 옮긴다.
+
+    ``read_status_message`` 와 같은 순서로 scope 를 먼저 짚되, 이름이
+    ``documents.list`` 다. 429 를 따로 두는 이유는 목록이 여러 페이지를
+    연달아 부르기 때문이다 — 요청 한도에 걸릴 수 있는 유일한 경로다.
+
+    Args:
+        status: HTTP 상태 코드.
+
+    Returns:
+        화면에 그대로 나갈 한국어 문장.
+    """
+    if status == 401:
+        return (
+            "Outline 이 목록 요청을 인증하지 못했습니다."
+            " API 키 scope 에 documents.list 가 있는지 먼저"
+            " 확인하세요 — 저장·조회만 하던 키에는 없고, 그때 403 이"
+            " 아니라 이 오류로 옵니다."
+            " 그다음 토큰이 맞는지, 만료되지 않았는지 봅니다."
+        )
+    if status == 403:
+        return (
+            "Outline 이 문서 목록을 거부했습니다."
+            " API 키 scope 에 documents.list 가 있는지 확인하세요 —"
+            " 저장·조회만 하던 키에는 없습니다."
+        )
+    if status == 404:
+        return "Outline 이 대상을 찾지 못했습니다. 주소를 확인하세요."
+    if status == 429:
+        return "Outline 이 요청 한도에 걸렸습니다. 잠시 뒤 다시 시도하세요."
+    return f"Outline 이 오류를 냈습니다(HTTP {status})."
+
+
 def detail(response: httpx.Response, token: str) -> str:
     """응답 본문에서 사람에게 보여 줄 한 줄을 뽑는다.
 

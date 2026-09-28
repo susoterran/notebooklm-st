@@ -290,9 +290,11 @@ def list_documents(
 ```
 
 - `_LIST_PATH = "/api/documents.list"` 를 `filters` 컬렉션 조건과
-  `limit: LIST_PAGE_SIZE`, `sort: "createdAt"`, `direction: "DESC"` 로
-  부른다. 응답 `pagination.nextPath` 가 있으면 `base_url` 에 붙여 계속
-  부른다.
+  `limit: LIST_PAGE_SIZE`, `sort: "createdAt"`, `direction: "DESC"`,
+  `offset` 으로 부른다. `offset` 을 `LIST_PAGE_SIZE` 씩 올리며 이어
+  부르고, 한 페이지가 그보다 짧게 오면 끝으로 본다. 응답의
+  `pagination.nextPath` 는 쓰지 않는다 — 마지막 페이지에도 실려 올 수
+  있어 끝을 알려 주지 못한다.
 - `LIST_PAGE_LIMIT` 페이지를 넘기면 `OutlineError` 다. 잘못된 `nextPath`
   로 무한히 돌지 않게 한다.
 - 어느 페이지든 실패하면 지금까지 모은 것을 버리고 `OutlineError` 다.
@@ -501,10 +503,6 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
   실제 배포판이 목록 응답에서 본문을 비운다면 문서마다
   `documents.info` 를 다시 불러야 한다. 구현 중 첫 실측에서 확인하고,
   다르면 그 자리에서 보고한다.
-- **`nextPath` 의 모양.** 명세 예시는
-  `/api/documents.list?limit=25&offset=25` 다. `base_url` 에 그대로 붙여
-  `POST` 하되, 원래 요청 본문(`filters`·`sort`·`direction`)을 함께 다시
-  보낸다. 쿼리 문자열만으로 필터가 유지되지 않을 수 있기 때문이다.
 - **`createdAt` 의 시간대.** UTC ISO(`Z` 접미)로 온다고 본다. 접미가 없으면
   UTC 로 간주한다.
 - **목록이 휴지통·보관 문서를 빼는가.** `documents.deleted` 와

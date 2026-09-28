@@ -1,5 +1,8 @@
 """Outline 클라이언트 테스트."""
 
+import datetime
+import typing
+
 import httpx
 import pytest
 
@@ -584,3 +587,275 @@ def test_fetch_document_drops_a_detail_holding_the_token() -> None:
         )
 
     assert TOKEN not in str(error.value)
+
+
+def listed_item(doc_id: str, text: str = "- 영상 URL: x\n") -> dict:
+    """documents.list 응답의 문서 하나."""
+    return {
+        "id": doc_id,
+        "title": f"제목 {doc_id}",
+        "url": f"/doc/{doc_id}",
+        "createdAt": "2026-09-25T01:00:00.000Z",
+        "text": text,
+    }
+
+
+def page(items: list[dict]) -> httpx.Response:
+    """documents.list 가 돌려주는 200 응답."""
+    return httpx.Response(
+        200,
+        json={
+            "data": items,
+            "pagination": {"limit": 100, "offset": 0, "nextPath": "/x"},
+        },
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.list"),
+    )
+
+
+def paged_poster(responses, calls):
+    """호출마다 준비된 응답을 차례로 돌려주는 poster 를 만든다."""
+    queue = list(responses)
+
+    def post(url, **kwargs):
+        """httpx.post 를 대신한다."""
+        calls.append((url, kwargs))
+        response = queue.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    return post
+
+
+def test_list_documents_posts_the_collection_filter() -> None:
+    """주소·헤더·본문이 API 계약대로 나간다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    outline.list_documents(make_config(), poster=fake_poster(page([]), calls))
+
+    url, kwargs = calls[0]
+    assert url == f"{BASE_URL}/api/documents.list"
+    assert kwargs["headers"] == {"Authorization": f"Bearer {TOKEN}"}
+    assert kwargs["json"] == {
+        "filters": [
+            {"field": "collectionId", "operator": "eq", "value": COLLECTION}
+        ],
+        "sort": "createdAt",
+        "direction": "DESC",
+        "limit": outline.LIST_PAGE_SIZE,
+        "offset": 0,
+    }
+    assert kwargs["timeout"] == outline.FETCH_TIMEOUT
+
+
+def test_list_documents_returns_listed_documents() -> None:
+    """응답의 다섯 값을 꺼내 온다. URL 은 공개 주소로 절대화한다."""
+    documents = outline.list_documents(
+        make_config(public_url=PUBLIC_URL),
+        poster=fake_poster(page([listed_item("doc-1", "본문\n")]), []),
+    )
+
+    assert len(documents) == 1
+    document = documents[0]
+    assert document.id == "doc-1"
+    assert document.title == "제목 doc-1"
+    assert document.url == f"{PUBLIC_URL}/doc/doc-1"
+    assert document.markdown == "본문\n"
+
+
+def test_list_documents_converts_created_at_to_local_time() -> None:
+    """``createdAt`` 이 ``store.now()`` 와 같은 로컬 초 단위 ISO 가 된다."""
+    documents = outline.list_documents(
+        make_config(), poster=fake_poster(page([listed_item("doc-1")]), [])
+    )
+
+    expected = (
+        datetime.datetime(2026, 9, 25, 1, 0, 0, tzinfo=datetime.UTC)
+        .astimezone()
+        .replace(tzinfo=None)
+        .isoformat(timespec="seconds")
+    )
+    assert documents[0].created_at == expected
+    assert "+" not in documents[0].created_at
+    assert "Z" not in documents[0].created_at
+
+
+def test_list_documents_follows_offsets_until_a_short_page() -> None:
+    """가득 찬 페이지 뒤에는 다음 offset 으로 다시 부른다."""
+    full = [listed_item(f"doc-{i}") for i in range(outline.LIST_PAGE_SIZE)]
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    documents = outline.list_documents(
+        make_config(),
+        poster=paged_poster([page(full), page([listed_item("last")])], calls),
+    )
+
+    assert len(documents) == outline.LIST_PAGE_SIZE + 1
+    assert documents[-1].id == "last"
+    offsets = [
+        typing.cast("dict[str, object]", c[1]["json"])["offset"] for c in calls
+    ]
+    assert offsets == [0, outline.LIST_PAGE_SIZE]
+
+
+def test_list_documents_stops_after_an_empty_page() -> None:
+    """빈 페이지가 오면 더 부르지 않는다."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    documents = outline.list_documents(
+        make_config(), poster=paged_poster([page([])], calls)
+    )
+
+    assert documents == []
+    assert len(calls) == 1
+
+
+def test_list_documents_gives_up_past_the_page_limit() -> None:
+    """가득 찬 페이지가 상한만큼 이어지면 오류다. 무한히 돌지 않는다."""
+    full = [listed_item(f"doc-{i}") for i in range(outline.LIST_PAGE_SIZE)]
+    responses = [page(full)] * (outline.LIST_PAGE_LIMIT + 1)
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(
+            make_config(), poster=paged_poster(responses, [])
+        )
+
+    assert "너무" in str(excinfo.value)
+
+
+def test_list_documents_drops_a_partial_list_when_a_page_fails() -> None:
+    """두 번째 페이지가 죽으면 첫 페이지도 버린다.
+
+    반쪽 목록으로 지우지 않는다.
+    """
+    full = [listed_item(f"doc-{i}") for i in range(outline.LIST_PAGE_SIZE)]
+    failure = httpx.Response(
+        500,
+        json={"message": "boom"},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.list"),
+    )
+
+    with pytest.raises(outline.OutlineError):
+        outline.list_documents(
+            make_config(), poster=paged_poster([page(full), failure], [])
+        )
+
+
+def test_list_documents_rejects_a_response_without_data() -> None:
+    """``data`` 가 없으면 이해하지 못한 것이다."""
+    response = httpx.Response(
+        200,
+        json={"ok": True},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.list"),
+    )
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(make_config(), poster=fake_poster(response, []))
+
+    assert "이해하지 못했습니다" in str(excinfo.value)
+
+
+def test_list_documents_rejects_an_item_without_text() -> None:
+    """본문이 빠진 문서가 하나라도 있으면 목록 전체가 실패다."""
+    item = listed_item("doc-1")
+    del item["text"]
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(
+            make_config(), poster=fake_poster(page([item]), [])
+        )
+
+    assert "이해하지 못했습니다" in str(excinfo.value)
+
+
+def test_list_documents_rejects_an_unreadable_created_at() -> None:
+    """날짜로 읽히지 않는 ``createdAt`` 도 목록 전체를 실패시킨다.
+
+    그 문서만 조용히 빠지면 다음 동기화가 그 행을 지운다.
+    """
+    item = listed_item("doc-1")
+    item["createdAt"] = "어제"
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(
+            make_config(), poster=fake_poster(page([item]), [])
+        )
+
+    assert "이해하지 못했습니다" in str(excinfo.value)
+
+
+def test_list_documents_accepts_a_created_at_without_a_zone() -> None:
+    """접미가 없으면 UTC 로 본다."""
+    item = listed_item("doc-1")
+    item["createdAt"] = "2026-09-25T01:00:00"
+
+    documents = outline.list_documents(
+        make_config(), poster=fake_poster(page([item]), [])
+    )
+
+    assert documents[0].created_at.startswith("2026-09-2")
+
+
+def test_list_documents_reports_a_connection_failure() -> None:
+    """연결 실패는 사람이 읽을 문장으로 온다."""
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(
+            make_config(),
+            poster=fake_poster(httpx.ConnectError("refused"), []),
+        )
+
+    assert "연결하지 못했습니다" in str(excinfo.value)
+
+
+def list_with(status: int) -> str:
+    """오류 상태 코드로 목록을 시도하고 문구를 돌려준다."""
+    response = httpx.Response(
+        status,
+        json={},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.list"),
+    )
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(make_config(), poster=fake_poster(response, []))
+    return str(excinfo.value)
+
+
+def test_list_documents_401_points_at_the_list_scope() -> None:
+    """저장·조회만 하던 키에는 목록 scope 가 없다."""
+    message = list_with(401)
+
+    assert "documents.list" in message
+    assert "documents.info" not in message
+
+
+def test_list_documents_403_points_at_the_list_scope() -> None:
+    """403 도 scope 를 짚는다."""
+    assert "documents.list" in list_with(403)
+
+
+def test_list_documents_404_points_at_the_address() -> None:
+    """목록 엔드포인트의 404 는 주소 문제다."""
+    assert "주소" in list_with(404)
+
+
+def test_list_documents_429_asks_to_wait() -> None:
+    """요청 한도는 잠시 뒤 다시 시도하라고 한다."""
+    assert "잠시" in list_with(429)
+
+
+def test_list_documents_5xx_carries_the_status() -> None:
+    """나머지는 상태 코드를 그대로 보여 준다."""
+    assert "502" in list_with(502)
+
+
+def test_list_documents_never_leaks_the_token() -> None:
+    """토큰이 어떤 문구에도 실리지 않는다."""
+    response = httpx.Response(
+        403,
+        json={"message": f"bad token {TOKEN}"},
+        request=httpx.Request("POST", f"{BASE_URL}/api/documents.list"),
+    )
+
+    with pytest.raises(outline.OutlineError) as excinfo:
+        outline.list_documents(make_config(), poster=fake_poster(response, []))
+
+    assert TOKEN not in str(excinfo.value)
