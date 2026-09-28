@@ -5,6 +5,7 @@
 """
 
 import sqlite3
+from collections.abc import Sequence
 
 from notebooklm_st.core import models
 from notebooklm_st.services import store
@@ -28,6 +29,32 @@ def list_video_ids(connection: sqlite3.Connection) -> set[str]:
         "SELECT DISTINCT video_id FROM runs WHERE video_id <> ''"
     ).fetchall()
     return {row["video_id"] for row in rows}
+
+
+_SUMMARY_SELECT = (
+    "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
+    " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
+    " COUNT(a.id) AS answer_count"
+    " FROM runs AS r"
+    " LEFT JOIN answers AS a ON a.run_id = r.id"
+)
+"""``list_runs`` 와 ``list_exported`` 가 함께 쓰는 SELECT 머리."""
+
+
+def _summary(row: sqlite3.Row) -> models.RunSummary:
+    """``_SUMMARY_SELECT`` 의 행 하나를 요약으로 바꾼다."""
+    return models.RunSummary(
+        id=int(row["id"]),
+        url=row["url"],
+        video_id=row["video_id"],
+        title=row["title"],
+        created_at=row["created_at"],
+        answer_count=int(row["answer_count"]),
+        outline_id=row["outline_id"],
+        outline_url=row["outline_url"],
+        outline_title=row["outline_title"],
+        exported_at=row["exported_at"],
+    )
 
 
 def save_run(
@@ -99,31 +126,30 @@ def list_runs(
         오며 ``answer_count`` 가 0 이다.
     """
     rows = connection.execute(
-        "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
-        " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
-        " COUNT(a.id) AS answer_count"
-        " FROM runs AS r"
-        " LEFT JOIN answers AS a ON a.run_id = r.id"
-        " GROUP BY r.id"
-        " ORDER BY r.id DESC"
-        " LIMIT ?",
+        _SUMMARY_SELECT + " GROUP BY r.id ORDER BY r.id DESC LIMIT ?",
         (limit,),
     ).fetchall()
-    return [
-        models.RunSummary(
-            id=int(row["id"]),
-            url=row["url"],
-            video_id=row["video_id"],
-            title=row["title"],
-            created_at=row["created_at"],
-            answer_count=int(row["answer_count"]),
-            outline_id=row["outline_id"],
-            outline_url=row["outline_url"],
-            outline_title=row["outline_title"],
-            exported_at=row["exported_at"],
-        )
-        for row in rows
-    ]
+    return [_summary(row) for row in rows]
+
+
+def list_exported(connection: sqlite3.Connection) -> list[models.RunSummary]:
+    """Outline 에 저장된 실행을 전부, 새 것부터 돌려준다.
+
+    상한을 두지 않는다. 동기화는 목록 전체를 봐야 한다.
+
+    Args:
+        connection: 열린 커넥션.
+
+    Returns:
+        ``exported_at`` 이 있는 실행 요약 목록.
+    """
+    rows = connection.execute(
+        _SUMMARY_SELECT
+        + " WHERE r.exported_at IS NOT NULL"
+        + " GROUP BY r.id"
+        + " ORDER BY r.id DESC"
+    ).fetchall()
+    return [_summary(row) for row in rows]
 
 
 def load_run_items(
@@ -248,3 +274,69 @@ def delete_run(connection: sqlite3.Connection, run_id: int) -> None:
     """
     connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
     connection.commit()
+
+
+def insert_exported(
+    connection: sqlite3.Connection, create: models.SyncCreate
+) -> int | None:
+    """Outline 문서에서 되살린 저장된 행을 넣는다.
+
+    **커밋하지 않는다.** 트랜잭션은 ``history_sync.apply`` 가 소유한다.
+    같은 문서를 가리키는 행이 이미 있으면 넣지 않는다 — 미리보기와
+    적용 사이에 다른 탭이 먼저 저장했을 수 있다.
+
+    ``answers``·``run_metadata`` 행은 만들지 않는다. 저장된 실행은
+    원래 본문이 없다.
+
+    Args:
+        connection: 열린 커넥션.
+        create: 만들 행의 값들.
+
+    Returns:
+        새 행의 ID. 이미 있어 넣지 않았으면 ``None``.
+    """
+    existing = connection.execute(
+        "SELECT id FROM runs WHERE outline_id = ?", (create.document.id,)
+    ).fetchone()
+    if existing is not None:
+        return None
+    row = connection.execute(
+        "INSERT INTO runs (url, video_id, title, created_at,"
+        " outline_id, outline_url, outline_title, exported_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        " RETURNING id",
+        (
+            create.url,
+            create.video_id,
+            create.document.title,
+            create.document.created_at,
+            create.document.id,
+            create.document.url,
+            create.document.title,
+            create.document.created_at,
+        ),
+    ).fetchone()
+    return int(row["id"])
+
+
+def delete_runs(connection: sqlite3.Connection, run_ids: Sequence[int]) -> int:
+    """실행 여럿을 한 문장으로 지운다.
+
+    **커밋하지 않는다.** 트랜잭션은 ``history_sync.apply`` 가 소유한다.
+    없는 ID 는 무시한다. 딸린 답변은 외래키가 함께 지운다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_ids: 지울 실행 ID 들. 비어 있으면 아무것도 하지 않는다.
+
+    Returns:
+        실제로 지운 행 수.
+    """
+    if not run_ids:
+        return 0
+    # 자리표시자만 이어 붙인다. 값은 전부 파라미터로 넘긴다.
+    placeholders = ", ".join("?" for _ in run_ids)
+    cursor = connection.execute(
+        f"DELETE FROM runs WHERE id IN ({placeholders})", tuple(run_ids)
+    )
+    return int(cursor.rowcount)
