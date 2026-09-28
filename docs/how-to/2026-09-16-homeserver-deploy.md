@@ -139,21 +139,25 @@ docker compose logs -f   # 기동 로그
 
 Outline 웹에서 **프로필 → Settings → API Keys → New API Key**.
 
-- **Scopes** 칸에 둘을 **공백으로 구분해 한 줄로** 적는다.
+- **Scopes** 칸에 셋을 **공백으로 구분해 한 줄로** 적는다.
 
   ```
-  documents.create documents.info
+  documents.create documents.info documents.list
   ```
 
-  앱은 요약본을 올릴 때 앞의 것을, 정리본의 재료를 읽을 때 뒤의 것을
-  쓴다. 둘뿐이라 키가 새더라도 삭제·사용자 조회는 막힌다.
+  앱은 요약본을 올릴 때 `documents.create` 를, 정리본의 재료를 읽을
+  때 `documents.info` 를 쓴다. 이력 화면의 **Outline 과 동기화**는
+  컬렉션의 문서 목록을 읽을 때 `documents.list` 를 쓴다. 셋뿐이라
+  키가 새더라도 삭제·사용자 조회는 막힌다. 다만 `documents.list` 가
+  있으면 새어 나간 키로 그 사용자가 볼 수 있는 문서를 훑을 수 있다.
   **비워 두면 전체 권한**이 되니 비우지 않는다.
-- **지금까지 요약본 저장만 하던 키로는 정리본이 돌지 않는다.** 정리를
-  시작하면 **401** 이 나고 본문은 `Authentication required` 다(실측).
-  권한 오류가 아니라 인증 오류로 오므로 토큰이 죽은 것처럼 보이지만,
-  저장이 되고 있다면 토큰은 멀쩡하고 scope 가 문제다. 화면이 scope
-  부터 짚는다. 키를 새로 만들어 `NOTEBOOKLM_ST_OUTLINE_TOKEN` 을
-  바꾸면 된다.
+- **지금까지 쓰던 키에 빠진 scope 가 있으면 그 기능만 돌지 않는다.**
+  요약본 저장만 하던 키로 정리를 시작하면 **401** 이 나고 본문은
+  `Authentication required` 다(실측). 권한 오류가 아니라 인증 오류로
+  오므로 토큰이 죽은 것처럼 보이지만, 저장이 되고 있다면 토큰은
+  멀쩡하고 scope 가 문제다. 동기화의 **확인**도 `documents.list` 가
+  없으면 막힌다. 화면은 401·403 어느 쪽이든 빠진 scope 부터 짚는다.
+  키를 새로 만들어 `NOTEBOOKLM_ST_OUTLINE_TOKEN` 을 바꾸면 된다.
 - 키 값은 만든 직후 한 번만 보인다. 바로 복사한다.
 
 키는 **만든 사용자의 권한을 상속한다.** "이 컬렉션에만" 이라는 범위
