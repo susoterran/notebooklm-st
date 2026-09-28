@@ -84,3 +84,84 @@ def test_takes_the_first_source_line() -> None:
 def test_returns_none_for_an_empty_value() -> None:
     """라벨만 있고 값이 없으면 없는 것이다."""
     assert outline_import.find_source_url("- 영상 URL:\n") is None
+
+
+WATCH_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+def test_accepts_a_star_bullet() -> None:
+    """Outline 이 글머리표를 ``*`` 로 다시 쓸 수 있다."""
+    text = f"* 제목: 글\n* 영상 URL: {WATCH_URL}\n\n---\n"
+
+    assert outline_import.find_source_url(text) == WATCH_URL
+
+
+def test_accepts_a_plus_bullet() -> None:
+    """``+`` 글머리표도 같은 리스트 항목이다."""
+    text = f"+ 영상 URL: {WATCH_URL}\n"
+
+    assert outline_import.find_source_url(text) == WATCH_URL
+
+
+def test_takes_the_inside_of_an_autolink() -> None:
+    """``<URL>`` 자동 링크면 괄호 안을 쓴다."""
+    text = f"- 영상 URL: <{WATCH_URL}>\n"
+
+    assert outline_import.find_source_url(text) == WATCH_URL
+
+
+def test_takes_the_href_of_a_link_to_itself() -> None:
+    """``[URL](URL)`` 링크면 주소 쪽을 쓴다."""
+    text = f"- 영상 URL: [{WATCH_URL}]({WATCH_URL})\n"
+
+    assert outline_import.find_source_url(text) == WATCH_URL
+
+
+def test_takes_the_href_of_a_named_link() -> None:
+    """글자가 URL 이 아닌 링크도 주소 쪽을 쓴다."""
+    text = f"- 영상 URL: [영상 보기]({WATCH_URL})\n"
+
+    assert outline_import.find_source_url(text) == WATCH_URL
+
+
+ESCAPED_ID_URL = r"https://www.youtube.com/watch?v=ab\_cd\-ef\_gh"
+"""직렬화기가 밑줄과 하이픈 앞에 역슬래시를 넣은 영상 URL."""
+
+
+def test_unescapes_an_underscore_inside_the_id() -> None:
+    """직렬화기가 영상 ID 안에 넣은 밑줄·하이픈 이스케이프를 걷는다."""
+    text = f"- 영상 URL: {ESCAPED_ID_URL}\n"
+
+    assert (
+        outline_import.find_source_url(text)
+        == "https://www.youtube.com/watch?v=ab_cd-ef_gh"
+    )
+
+
+def test_unescapes_a_star_and_a_hash() -> None:
+    """별표·샵 이스케이프도 걷는다. 옛 이력은 원문 URL 을 적었다."""
+    escaped = r"https://youtu.be/dQw4w9WgXcQ?x=\*\#t=1"
+    text = f"- 영상 URL: {escaped}\n"
+
+    assert (
+        outline_import.find_source_url(text)
+        == "https://youtu.be/dQw4w9WgXcQ?x=*#t=1"
+    )
+
+
+def test_accepts_all_the_variants_at_once() -> None:
+    """글머리표·링크·이스케이프가 한 줄에 겹쳐도 읽는다."""
+    escaped = ESCAPED_ID_URL
+    text = f"* 제목: 글\n* 영상 URL: [{escaped}]({escaped})\n\n---\n"
+
+    assert (
+        outline_import.find_source_url(text)
+        == "https://www.youtube.com/watch?v=ab_cd-ef_gh"
+    )
+
+
+def test_a_variant_after_the_rule_is_still_ignored() -> None:
+    """변형을 받아도 머리 블록 밖의 줄은 보지 않는다."""
+    text = f"- 제목: 글\n\n---\n\n* 영상 URL: <{WATCH_URL}>\n"
+
+    assert outline_import.find_source_url(text) is None
