@@ -26,12 +26,21 @@ ENV PATH=/app/.venv/bin:$PATH
 # playwright install --with-deps 는 apt 로 크로미움의 공유 라이브러리를
 # 받으므로 root 인 이 단계에서 돈다. 브라우저는 /ms-playwright 에 두어
 # 비root 사용자도 읽게 한다.
+#
+# 베이스 이미지의 pip·setuptools 는 앱 이미지와 같은 이유로 지운다.
+# 감시 루프는 /app/.venv 를, websockify 는 Debian 의 /usr/bin/python3
+# 를 쓰므로 /usr/local 의 pip 은 아무도 쓰지 않는다. 남겨 두면 pip 이
+# vendoring 한 msgpack·pkg_resources 가 취약점 스캔에만 걸린다.
 RUN apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
         xvfb x11vnc novnc websockify tzdata \
  && playwright install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+           /usr/local/lib/python3.*/site-packages/setuptools* \
+           /usr/local/lib/python3.*/site-packages/pkg_resources \
+           /usr/local/bin/pip* \
  && groupadd -g 1000 app \
  && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin app
 # HOME 은 tmpfs(/tmp)다. 루트 파일시스템이 read_only 라 크로미움과

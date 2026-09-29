@@ -119,6 +119,60 @@ class RunSummary:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class ListedDocument:
+    """Outline 목록에서 읽어 온 문서 하나.
+
+    정리본이 쓰는 ``services.outline.OutlineDocument`` 와
+    다르다. 동기화는 링크와 생성 시각도 필요하다.
+    """
+
+    id: str
+    title: str
+    url: str
+    """절대 URL. 상대 경로는 ``services.outline`` 이 붙여서 넘긴다."""
+    created_at: str
+    """로컬 시각의 초 단위 ISO 문자열. ``store.now()`` 와
+    같은 형식."""
+    markdown: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncCreate:
+    """동기화가 새로 만들 이력 한 건."""
+
+    document: ListedDocument
+    url: str
+    """본문에서 읽은 영상 URL."""
+    video_id: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncSkip:
+    """동기화가 건너뛴 문서 한 건과 그 사유."""
+
+    document: ListedDocument
+    reason: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncPlan:
+    """미리보기와 적용이 함께 쓰는 동기화 계획.
+
+    기존 행 중 손대지 않는 것은 담지 않는다. 화면이
+    보여 줄 것은 바뀌는 것뿐이다.
+    """
+
+    deletes: tuple[RunSummary, ...]
+    creates: tuple[SyncCreate, ...]
+    skips: tuple[SyncSkip, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        """지울 것도 만들 것도 없다."""
+        return not self.deletes and not self.creates
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class VideoMetadata:
     """영상에서 뽑아 온 메타데이터.
 

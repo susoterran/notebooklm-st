@@ -169,6 +169,10 @@ idle ──start──► starting ──► running ──┬─► succeeded
   로 `notebooklm-py[browser]` 를 **앱과 같은 락 버전으로** 설치한다(9.1).
 - `playwright install --with-deps chromium`, 그리고 apt 로 `xvfb`·`x11vnc`·
   `novnc`·`websockify` 를 넣는다.
+- 베이스 이미지의 pip·setuptools(`/usr/local`)는 앱 이미지처럼 지운다.
+  런타임에 아무도 쓰지 않는데, pip 이 vendoring 한 msgpack·pkg_resources
+  가 취약점 게이트(9.3)에 걸린다. websockify 는 Debian 의
+  `/usr/bin/python3` 를 쓰므로 영향이 없다.
 - `src/notebooklm_st/__init__.py`, `core/__init__.py`, `core/login_protocol.py`,
   `login_browser/` 만 복사한다(4.1). 두 `__init__.py` 는 docstring 뿐이라
   다른 모듈을 끌어오지 않는다.

@@ -8,6 +8,7 @@ import streamlit as st
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
 from notebooklm_st.core import answer_text, labels, markdown_export, models
+from notebooklm_st.pages import _history_sync
 from notebooklm_st.services import outline, run_history
 
 _SELECTED_KEY = "history_selected"
@@ -28,6 +29,9 @@ def render() -> None:
     """
     st.title("이력")
     connection = session.get_connection()
+    # 동기화는 "아직 저장된 실행이 없습니다" 보다 앞에 둔다. DB 를 막
+    # 지운 직후가 이 기능이 가장 필요한 순간이다.
+    _history_sync.render(connection)
     runs = run_history.list_runs(connection)
     if not runs:
         st.info("아직 저장된 실행이 없습니다.")

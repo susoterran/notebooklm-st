@@ -30,6 +30,37 @@ def list_video_ids(connection: sqlite3.Connection) -> set[str]:
     return {row["video_id"] for row in rows}
 
 
+SUMMARY_SELECT = (
+    "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
+    " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
+    " COUNT(a.id) AS answer_count"
+    " FROM runs AS r"
+    " LEFT JOIN answers AS a ON a.run_id = r.id"
+)
+"""``list_runs`` 와 ``run_history_sync.list_exported`` 가 함께 쓰는
+SELECT 머리."""
+
+
+def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
+    """``SUMMARY_SELECT`` 의 행 하나를 요약으로 바꾼다.
+
+    ``run_history_sync`` 도 이 함수를 그대로 가져다 쓴다. SQL 을
+    두 모듈에 중복해 두지 않으려는 것이다.
+    """
+    return models.RunSummary(
+        id=int(row["id"]),
+        url=row["url"],
+        video_id=row["video_id"],
+        title=row["title"],
+        created_at=row["created_at"],
+        answer_count=int(row["answer_count"]),
+        outline_id=row["outline_id"],
+        outline_url=row["outline_url"],
+        outline_title=row["outline_title"],
+        exported_at=row["exported_at"],
+    )
+
+
 def save_run(
     connection: sqlite3.Connection,
     result: models.RunResult,
@@ -99,31 +130,10 @@ def list_runs(
         오며 ``answer_count`` 가 0 이다.
     """
     rows = connection.execute(
-        "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
-        " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
-        " COUNT(a.id) AS answer_count"
-        " FROM runs AS r"
-        " LEFT JOIN answers AS a ON a.run_id = r.id"
-        " GROUP BY r.id"
-        " ORDER BY r.id DESC"
-        " LIMIT ?",
+        SUMMARY_SELECT + " GROUP BY r.id ORDER BY r.id DESC LIMIT ?",
         (limit,),
     ).fetchall()
-    return [
-        models.RunSummary(
-            id=int(row["id"]),
-            url=row["url"],
-            video_id=row["video_id"],
-            title=row["title"],
-            created_at=row["created_at"],
-            answer_count=int(row["answer_count"]),
-            outline_id=row["outline_id"],
-            outline_url=row["outline_url"],
-            outline_title=row["outline_title"],
-            exported_at=row["exported_at"],
-        )
-        for row in rows
-    ]
+    return [row_to_summary(row) for row in rows]
 
 
 def load_run_items(
