@@ -23,6 +23,7 @@ URL 하나와 질문 목록을 넣으면 다음을 대신 처리합니다.
 | 주요 의존성 | `notebooklm-py==0.8.1` (+ 브라우저 로그인용 `[browser]` 는 dev 그룹), `streamlit>=1.63.0` | `pyproject.toml` |
 | 계정 | 구글 계정 (NotebookLM 접근 권한) | 첫 로그인은 사람이 CLI 로 한 번 |
 | 컨테이너 | Docker Engine + Compose v2 | 홈서버 배포 시에만. `docker-compose.yml` |
+| Outline | 1.10.0 이상 | Outline 에 저장할 때만. 이력 동기화가 쓰는 컬렉션 조건(`filters`)이 1.10.0 에 생겼고, 그 아래 버전은 조건을 버리고 모든 컬렉션의 문서를 돌려줍니다 |
 
 `[browser]` extras 는 dev 그룹에 있습니다. `uv sync` 하면 따라오고,
 컨테이너 이미지는 `uv sync --no-dev` 로 뺍니다.
@@ -164,7 +165,7 @@ documents.create documents.info documents.list
 - **비워 두면 전체 권한**이 됩니다 — 키를 만든 사용자가 할 수 있는 모든 것이 열립니다. 비우지 마세요.
 - 키 값은 만든 직후 **한 번만** 보입니다. 바로 복사해 `NOTEBOOKLM_ST_OUTLINE_TOKEN` 에 넣으세요.
 
-> **저장은 되는데 정리본이나 동기화만 안 된다면 scope 입니다.** 저장만 하던 키(`documents.create` 하나)로 정리를 시작하면 권한 오류(403)가 아니라 **인증 오류(401)** 와 `Authentication required` 가 옵니다. 토큰이 죽은 것처럼 보이지만, 저장이 되고 있다면 토큰은 멀쩡하고 `documents.info` 가 빠진 것입니다. 동기화의 **확인**이 인증 오류나 권한 오류로 막히면 `documents.list` 가 빠진 것입니다. 어느 쪽이든 키를 새로 만들어 바꾸면 됩니다.
+> **저장은 되는데 정리본이나 동기화만 안 된다면 scope 입니다.** 키에 없는 scope 의 API 를 부르면 Outline 은 **권한 오류(403)** 와 `API key does not have access to this resource` 를 돌려줍니다. 저장이 되고 있다면 토큰은 멀쩡합니다. 정리본이 막히면 `documents.info` 가, 동기화의 **확인**이 막히면 `documents.list` 가 빠진 것입니다. 어느 쪽이든 키를 새로 만들어 바꾸면 됩니다. **인증 오류(401)** 는 토큰 자체가 틀렸거나 만료됐을 때 옵니다.
 
 **공개 주소는 언제 필요한가.** 앱은 저장할 때 API 를 한 번 부르고, 문서
 링크를 문자열로 적어 둡니다. 나중에 그 링크를 여는 것은 **브라우저**이지
