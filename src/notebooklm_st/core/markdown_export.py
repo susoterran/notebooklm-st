@@ -38,7 +38,8 @@ def to_markdown(
 ) -> str:
     """실행 하나를 Outline 문서 본문으로 만든다.
 
-    메타데이터 리스트, 구분선, 답변들 순으로 쌓는다.
+    메타데이터 리스트 뒤에 답변마다 구분선과 본문을 붙인다. 첫
+    구분선은 메타데이터와 본문을, 나머지는 답변과 답변을 가른다.
 
     ``# 제목`` 머리글을 넣지 않는다. Outline 이 문서 제목을 따로
     가지므로 넣으면 제목이 두 번 보인다.
@@ -56,8 +57,9 @@ def to_markdown(
         메타데이터 리스트로 시작하고 줄바꿈 하나로 끝나는 마크다운
         문서.
     """
-    blocks = [_metadata_block(summary, title, metadata), "---"]
-    blocks.extend(_item_block(item) for item in items)
+    blocks = [_metadata_block(summary, title, metadata)]
+    for item in items:
+        blocks += ["---", _item_block(item)]
     return "\n\n".join(blocks) + "\n"
 
 
@@ -127,20 +129,21 @@ def one_line(value: str) -> str:
 
 
 def _item_block(item: models.AnswerItem) -> str:
-    """답변 하나를 제목, 본문, 인용 순으로 적는다.
+    """답변 하나를 본문, 인용 순으로 적는다.
 
-    질문 원문은 싣지 않는다. 위키에 남길 것은 답변이지 무엇을
-    물었는지의 기록이 아니다. 원문은 이력 화면의 접은 영역에 그대로
-    남는다.
+    질문 제목도 원문도 싣지 않는다. 위키에 남길 것은 답변이지 무엇을
+    물었는지의 기록이 아니다. 원문이 빠진 자리에 제목만 머리글로
+    남기면 덩그러니 놓일 뿐이다. 둘 다 이력 화면에 그대로 남는다.
+
+    인용 목록에도 머리글을 달지 않는다. 항목마다 ``[n]`` 번호가 있어
+    인용이라는 것이 이미 드러난다.
     """
-    parts = [f"## {item.question_title}"]
     if item.error is not None:
-        parts.append(f"**답변을 받지 못했습니다:** {item.error}")
-        return "\n\n".join(parts)
+        return f"**답변을 받지 못했습니다:** {item.error}"
+    parts: list[str] = []
     if item.answer:
         parts.append(item.answer)
     if item.citations:
-        parts.append(f"### 인용 {len(item.citations)}건")
         parts.append(
             "\n".join(
                 f"- **[{citation.number}]** {citation.text}"

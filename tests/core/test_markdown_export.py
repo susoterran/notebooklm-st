@@ -75,7 +75,7 @@ def test_to_markdown_separates_metadata_from_the_body() -> None:
 
     assert lines[rule - 1] == ""
     assert lines[rule + 1] == ""
-    assert lines[rule + 2].startswith("## ")
+    assert lines[rule + 2] == "세 가지다."
 
 
 def test_to_markdown_writes_the_confirmed_title() -> None:
@@ -93,12 +93,36 @@ def test_to_markdown_writes_no_heading_for_the_document_title() -> None:
     assert "# 어떻게 AI는 생각하는가" not in export()
 
 
-def test_to_markdown_writes_the_question_title_and_answer() -> None:
-    """질문 제목은 머리글로, 답변 본문은 그대로 쓴다."""
+def test_to_markdown_leaves_the_question_title_out() -> None:
+    """질문 제목은 싣지 않고 답변 본문만 그대로 쓴다.
+
+    원문이 빠진 문서에 제목만 머리글로 남으면 덩그러니 보인다.
+    """
     text = export()
 
-    assert "## 핵심 주장" in text
+    assert "핵심 주장" not in text
     assert "세 가지다." in text
+
+
+def test_to_markdown_writes_no_headings() -> None:
+    """본문에 머리글을 두지 않는다. 인용 목록에도 달지 않는다."""
+    item = make_item(
+        citations=(models.Citation(number=1, text="근거 구절", score=0.9),)
+    )
+
+    lines = export(items=[item]).splitlines()
+
+    assert not any(line.startswith("#") for line in lines)
+
+
+def test_to_markdown_separates_answers_with_a_rule() -> None:
+    """답변과 답변 사이에 구분선을 둔다. 마지막 답변 뒤에는 없다."""
+    items = [make_item(answer="첫 답이다."), make_item(answer="둘째 답이다.")]
+
+    text = export(items=items)
+
+    assert "첫 답이다.\n\n---\n\n둘째 답이다." in text
+    assert text.endswith("둘째 답이다.\n")
 
 
 def test_to_markdown_leaves_the_question_text_out() -> None:
@@ -131,20 +155,23 @@ def test_to_markdown_writes_no_source_block() -> None:
 
 
 def test_to_markdown_lists_citations() -> None:
-    """인용이 있으면 건수를 단 절로 모아 적는다."""
+    """인용이 있으면 답변 본문 바로 뒤에 목록으로 적는다.
+
+    건수 표기는 달지 않는다.
+    """
     item = make_item(
         citations=(models.Citation(number=1, text="근거 구절", score=0.9),)
     )
 
     text = export(items=[item])
 
-    assert "### 인용 1건" in text
-    assert "- **[1]** 근거 구절" in text
+    assert "인용 1건" not in text
+    assert "세 가지다.\n\n- **[1]** 근거 구절" in text
 
 
-def test_to_markdown_omits_the_citation_section_when_empty() -> None:
-    """인용이 없으면 인용 절 자체를 쓰지 않는다."""
-    assert "인용" not in export()
+def test_to_markdown_omits_the_citation_list_when_empty() -> None:
+    """인용이 없으면 인용 목록을 쓰지 않는다."""
+    assert "- **[" not in export()
 
 
 def test_to_markdown_marks_a_failed_item() -> None:
