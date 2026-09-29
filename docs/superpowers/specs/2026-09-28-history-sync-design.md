@@ -13,6 +13,7 @@
   (`docker-compose.yml`·`Dockerfile`·`pyproject.toml`)은 건드리지 않는다.
 - **범위**: 이력 화면의 "Outline 과 동기화" 한 기능. 기존 저장·삭제 흐름은
   동작이 바뀌지 않는다.
+- **전제**: Outline 1.10.0 이상. 목록의 컬렉션 조건이 이 버전에 생겼다(2.2).
 
 ---
 
@@ -58,6 +59,10 @@ Outline 이고, 로컬 `runs` 에는 문서 ID·URL·제목·저장 시각만 �
 - Outline API 의 `Document` 객체는 `id`·`title`·`text`·`url`·`createdAt`
   을 싣는다. `url` 은 상대 경로이며, `services/outline_parse.py` 의
   `absolute` 가 이를 `public_url` 에 붙인다.
+- **목록 응답에도 `text` 가 실린다.** 문서마다 `documents.info` 를 다시
+  부를 필요가 없다. 운영 서버(1.5.0·1.10.1)에서 확인을 눌러 목록을 받아
+  보았다. `parse_listed_page` 는 `text` 가 빠진 항목이 하나라도 있으면
+  목록 전체를 실패로 돌리는데, 두 버전 모두 계획까지 세워졌다.
 - Outline 은 본문을 ProseMirror 편집기에 담아 두었다가 읽을 때 마크다운으로
   **다시 직렬화**한다. 그래서 우리가 쓴 줄이 글자 그대로 돌아온다고 보지
   않는다. 글머리표가 `*`·`+` 로 바뀌거나, 값이 `<URL>` 자동 링크나
@@ -67,12 +72,28 @@ Outline 이고, 로컬 `runs` 에는 문서 ID·URL·제목·저장 시각만 �
   불가"가 된다. 다만 실제 Outline 배포판이 머리 블록을 어떤 모양으로
   돌려주는지는 **아직 실측하지 않았다**(13장).
 
-### 2.2 목록 호출은 컬렉션 필터와 페이지네이션을 지원한다
+### 2.2 목록 호출은 Outline 1.10.0 부터 컬렉션을 거른다
 
 `POST /api/documents.list` 는 `filters: [{field: "collectionId",
 operator: "eq", value: ...}]` 로 컬렉션을 거르고, `sort`·`direction` 으로
-정렬하며, `limit`·`offset` 으로 넘긴다. 휴지통과 보관 문서는 이 목록에
-나오지 않는다(각각 `documents.deleted`·`documents.archived` 가 따로 있다).
+정렬하며, `limit`·`offset` 으로 넘긴다. `limit` 의 상한은 100 이다.
+휴지통과 보관 문서는 이 목록에 나오지 않는다(각각 `documents.deleted`·
+`documents.archived` 가 따로 있다).
+
+**`filters` 는 Outline 1.10.0 에 생겼다.** 그 아래 버전의 요청 스키마에는
+이 키가 없고, 스키마가 모르는 키를 오류 없이 버린다. 컬렉션 조건이 빠진
+요청에 서버는 사용자가 접근할 수 있는 **모든 컬렉션**의 문서를
+돌려준다. 1.5.0 운영 서버에서 실제로 다른 컬렉션 문서가 "건너뛴 문서"
+목록에 섞여 나왔다.
+
+- 최상위 `collectionId` 하나만 보내면 1.5.0 과 1.10 모두 컬렉션을
+  거른다. 다만 1.10 에서 deprecated 이고, `filters` 와 함께 보내면
+  400 이다.
+- 이 기능은 `filters` 를 쓰고 **Outline 1.10.0 이상**을 전제한다(3장).
+- 앱은 응답 문서가 어느 컬렉션에 속하는지 다시 확인하지 않는다. 1.10.0
+  미만 서버에 붙으면 오류 없이 다른 컬렉션 문서가 계획에 섞인다. 배포
+  how-to(`docs/how-to/2026-09-16-homeserver-deploy.md`)의 검증 표가
+  실제 서버에서 이것을 본다.
 
 ### 2.3 같은 컬렉션에 이력 문서가 아닌 것이 섞여 있다
 
@@ -120,6 +141,7 @@ operator: "eq", value: ...}]` 로 컬렉션을 거르고, `sort`·`direction` �
 |---|---|---|
 | 실행 시점 | **사람이 버튼을 눌렀을 때만** | "앱은 Outline 을 읽지 않는다" 원칙의 취지는 Outline 장애가 이력 화면을 막지 않는 것이다. 사람이 누를 때만 읽으면 그 취지가 유지된다. 자동·주기 실행은 두지 않는다 |
 | 적용 방식 | **미리보기 후 적용** | 무엇이 지워지는지 먼저 본다. 기존 삭제 UI 의 2단계와 같다 |
+| 컬렉션 조건 | **`filters` 로 보내고 Outline 1.10.0 이상을 요구한다** | 1.10 이 권하는 방식이다. 최상위 `collectionId` 는 두 버전에서 모두 동작하지만 1.10 에서 deprecated 다. 1.10.0 미만은 `filters` 를 조용히 버리므로(2.2) 지원하지 않는다 |
 | 기존 행 | **손대지 않는다** | 전부 지우고 재구축하면 ID 가 바뀌어 다른 탭의 선택이 풀리고 원래 실행 시각이 덮인다. 차이만 적용한다 |
 | 미저장 실행 | **입력에서 뺀다** | `exported_at` 이 없는 행은 아직 올리지 않은 것이다. 삭제될 수 없어야 한다 |
 | 삭제 기준 | **실행 ID 와 문서 ID 가 둘 다 맞을 때만** | 계획은 적용·취소 전까지 세션에 남고, 그사이 ID 가 다른 실행에 다시 쓰일 수 있다(2.6). 문서 ID 까지 맞춰야 미저장 실행이 지워지지 않는다 |
@@ -334,7 +356,7 @@ def list_documents(
 - **목록은 offset 으로 넘긴다.** `list_documents` 는 `_list_page(config,
   offset, timeout, poster)` 를 `offset` 0, `LIST_PAGE_SIZE`,
   `2 × LIST_PAGE_SIZE` … 로 이어 부른다. `_list_page` 는
-  `_LIST_PATH = "/api/documents.list"` 에 `filters` 컬렉션 조건,
+  `_LIST_PATH = "/api/documents.list"` 에 `filters` 컬렉션 조건(2.2),
   `sort: "createdAt"`, `direction: "DESC"`, `limit: LIST_PAGE_SIZE`,
   `offset` 을 싣는다. 한 페이지가 `LIST_PAGE_SIZE` 보다 짧게 오면(빈
   페이지 포함) 끝으로 본다. 응답의 `pagination.nextPath` 는 쓰지 않는다 —
@@ -355,9 +377,12 @@ def list_documents(
 - **상태 문구는 `outline_messages.list_status_message` 다.** 401·403 은
   "documents.list" scope 를 먼저 짚고, 404 는 "주소를 확인하라", 429 는
   "잠시 뒤 다시 시도" 다. 나머지는 `read_status_message` 와 같이 상태
-  코드를 그대로 보여 준다. 429 를 따로 두는 것은 목록이 여러 페이지를
-  연달아 부르는 유일한 경로이기 때문이다. 응답 설명을 붙이고 토큰을
-  가리는 일은 기존 `outline_messages.failure_message` 를 그대로 쓴다.
+  코드를 그대로 보여 준다. scope 밖 호출에 Outline 1.10 은 403 을,
+  1.5.0 은 401 을 준다. 그래서 두 코드 모두 scope 를 짚는다. 429 를 따로
+  두는 것은 목록이 여러 페이지를 연달아 부르는 유일한 경로이기
+  때문이다. 1.10 은 rate limiter 가 기본으로 켜져 있고 목록은 분당
+  100회까지다. 응답 설명을 붙이고 토큰을 가리는 일은 기존
+  `outline_messages.failure_message` 를 그대로 쓴다.
 - **모듈은 셋으로 나뉜다.** 300줄 규칙 때문이다.
   - `services/outline.py` — `config_from_env`·`_post`·`create_document`·
     `fetch_document`·`list_documents`·`_list_page`. 호출과 상태 코드
@@ -525,6 +550,7 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 | 페이지네이션 도중 실패 | 부분 목록 없이 `OutlineError`. 위와 같이 처리 |
 | 페이지 상한 초과 | `OutlineError`. "Outline 문서 목록이 너무 길거나 목록 응답이 이상합니다(페이지 상한 50)." |
 | 응답이 기대한 모양이 아님(JSON 깨짐·`data` 없음·항목의 키 없음·시각 못 읽음) | `OutlineError`. `outline_parse.parse_listed_page` 가 페이지째 거부한다 |
+| Outline 이 1.10.0 미만 | 오류가 나지 않는다. 다른 컬렉션 문서가 계획에 섞인다(2.2). 앱은 막지 않고, 배포 검증이 잡는다 |
 | 적용 중 SQLite 오류 | 롤백 후 `st.error`("적용에 실패했습니다(오류 이름). 다시 적용할 수 있습니다."). 세션의 plan 은 **남겨** 다시 적용할 수 있게 한다 |
 | 적용 중 다른 탭이 먼저 바꿈 | 오류 아님. 실제 개수를 결과 문구에 적는다 |
 | 지울 행의 ID 가 다른 실행에 다시 쓰임 | 오류 아님. 문서 ID 가 맞지 않아 지우지 않고 개수에도 들지 않는다 |
@@ -550,6 +576,10 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 `plan` 과 `apply` 는 가짜 `poster` 없이 돈다. 화면 테스트는
 `monkeypatch.setattr(outline, "list_documents", ...)` 로 바꿔 끼운다.
 기존 `app_db` fixture 를 그대로 쓴다.
+
+가짜 `poster` 는 우리가 보낸 본문만 본다. 서버가 그 컬렉션 조건을
+받아들이는지는 확인하지 못한다. 그것은 배포 how-to 의 검증 표가 실제
+서버에서 본다(2.2).
 
 작업을 끝내기 전 `.claude/rules/streamlit-implement.md` 의 4종 검사를
 순서대로 통과해야 한다: `ruff format` → `ruff check --fix` →
@@ -601,11 +631,6 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 
 ## 13. 미검증 가정
 
-- **목록 응답에 `text` 가 실리는가.** Outline OpenAPI 명세의 `Document`
-  객체는 `text` 를 갖고 `documents.list` 가 `Document[]` 를 돌려준다.
-  실제 배포판이 목록 응답에서 본문을 비운다면 문서마다
-  `documents.info` 를 다시 불러야 한다. 첫 실측에서 확인하고, 다르면 그
-  자리에서 보고한다.
 - **`createdAt` 의 시간대.** UTC ISO(`Z` 접미)로 온다고 본다. 접미가 없으면
   UTC 로 간주한다.
 - **목록이 휴지통·보관 문서를 빼는가.** `documents.deleted` 와
@@ -632,3 +657,5 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 - 질문 템플릿·채널 등록의 복구
 - Outline 쪽 문서 삭제·수정
 - 휴지통 문서의 조회(`documents.deleted`)
+- Outline 1.10.0 미만 서버 지원과, 응답 문서의 컬렉션을 앱이 다시
+  확인하는 일
