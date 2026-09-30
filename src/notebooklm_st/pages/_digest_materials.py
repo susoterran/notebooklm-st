@@ -41,6 +41,7 @@ def render(runs: Sequence[models.RunSummary]) -> list[models.RunSummary]:
         on_select="rerun",
         selection_mode="multi-row",
         hide_index=True,
+        placeholder="",
         column_config={
             "title": st.column_config.TextColumn("문서 제목"),
             "channel": st.column_config.TextColumn("채널"),

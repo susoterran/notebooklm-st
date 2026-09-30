@@ -224,6 +224,8 @@ def test_table_leaves_missing_metadata_blank(app_db, outline_env) -> None:
     table = app.dataframe[0].value
     assert table["channel"].isna().all()
     assert table["upload_date"].isna().all()
+    assert app.dataframe[0].proto.HasField("placeholder")
+    assert app.dataframe[0].proto.placeholder == ""
 
 
 def test_table_columns_come_in_order(app_db, outline_env) -> None:
