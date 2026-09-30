@@ -1,12 +1,14 @@
 """UI 조각 렌더 테스트."""
 
+import dataclasses
 import sqlite3
 
 from streamlit.testing import v1
 
 from notebooklm_st import session
-from notebooklm_st.core import errors
-from notebooklm_st.services import auth, store
+from notebooklm_st.components import run_progress
+from notebooklm_st.core import errors, models
+from notebooklm_st.services import auth, runs, store
 
 
 def test_answer_view_renders_success_and_failure() -> None:
@@ -322,6 +324,273 @@ def test_render_run_uses_error_box_for_a_real_failure() -> None:
     assert not app.exception
     assert len(app.error) == 1
     assert len(app.info) == 0
+
+
+def make_handle(**changes) -> runs.RunHandle:
+    """테스트용 실행 핸들을 만든다. 넘긴 칸만 바꾼다."""
+    return dataclasses.replace(
+        runs.RunHandle(
+            run_id="abc12345",
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            question_texts=("핵심 주장은?",),
+            started_at="2026-09-30T17:12:46",
+            status="running",
+            progress=[],
+            result=None,
+            error_message=None,
+            error_level=None,
+            finished_at=None,
+        ),
+        **changes,
+    )
+
+
+def make_item(title: str, error: str | None = None) -> models.AnswerItem:
+    """테스트용 답변 항목을 만든다. 오류가 있으면 답변을 비운다."""
+    return models.AnswerItem(
+        question_title=title,
+        question_text=f"{title}?",
+        answer=None if error else "답이다.",
+        citations=(),
+        error=error,
+    )
+
+
+def make_done(
+    *items: models.AnswerItem, title: str | None = None
+) -> runs.RunHandle:
+    """완료된 실행 핸들을 만든다."""
+    return make_handle(
+        status="done",
+        result=models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            items=items,
+            title=title,
+        ),
+        finished_at="2026-09-30T17:14:00",
+    )
+
+
+def test_status_badge_names_each_status() -> None:
+    """상태마다 배지 글자와 색이 정해져 있다."""
+    failed = make_handle(
+        status="failed", error_message="x", error_level="error"
+    )
+
+    assert run_progress.status_badge(make_handle()) == ("실행 중", "blue")
+    assert run_progress.status_badge(make_done()) == ("완료", "green")
+    assert run_progress.status_badge(failed) == ("실패", "red")
+
+
+def test_video_label_uses_the_shortened_title_once_done() -> None:
+    """완료된 실행은 제목을 40자로 줄여 쓴다."""
+    label = run_progress.video_label(make_done(title="가" * 50))
+
+    assert label == "가" * 39 + "…"
+
+
+def test_video_label_falls_back_to_the_video_id() -> None:
+    """제목이 없으면 영상 ID 를 쓴다. 진행 중에는 제목이 아직 없다."""
+    assert run_progress.video_label(make_handle()) == "dQw4w9WgXcQ"
+    assert run_progress.video_label(make_done()) == "dQw4w9WgXcQ"
+
+
+def test_video_label_falls_back_to_the_url_without_a_video_id() -> None:
+    """영상 ID 를 못 뽑은 실행은 URL 을 쓴다."""
+    label = run_progress.video_label(make_handle(video_id=""))
+
+    assert label == "https://youtu.be/dQw4w9WgXcQ"
+
+
+def test_short_time_keeps_month_day_hour_minute() -> None:
+    """ISO 시각을 ``MM-DD HH:MM`` 으로 줄인다."""
+    assert run_progress.short_time("2026-09-30T17:12:46") == "09-30 17:12"
+
+
+def test_result_shows_the_latest_progress_while_running() -> None:
+    """진행 중이면 가장 최근 진행 문구만 보인다."""
+    handle = make_handle(progress=["임시 노트북 생성 중", "자막 인덱싱 중"])
+
+    assert run_progress.result_markdown(handle) == "자막 인덱싱 중"
+
+
+def test_result_says_starting_before_any_progress() -> None:
+    """진행 문구가 아직 없으면 시작하는 중이라고 한다."""
+    assert run_progress.result_markdown(make_handle()) == "시작하는 중"
+
+
+def test_result_paints_a_real_failure_red() -> None:
+    """Error 수준의 실패는 빨간 글자다."""
+    handle = make_handle(
+        status="failed",
+        error_message="네트워크 오류가 발생했습니다.",
+        error_level="error",
+    )
+
+    assert run_progress.result_markdown(handle) == (
+        ":red[네트워크 오류가 발생했습니다.]"
+    )
+
+
+def test_result_leaves_an_info_failure_plain() -> None:
+    """자막 없음 같은 info 수준 실패는 보통 글자다."""
+    handle = make_handle(
+        status="failed",
+        error_message="자막이 없거나 소스로 쓸 수 없는 영상입니다.",
+        error_level="info",
+    )
+
+    assert run_progress.result_markdown(handle) == (
+        "자막이 없거나 소스로 쓸 수 없는 영상입니다."
+    )
+
+
+def test_result_escapes_and_flattens_an_unexpected_error() -> None:
+    """예상 못 한 오류의 대괄호·``$``·줄바꿈이 서식이 되지 않는다."""
+    handle = make_handle(
+        status="failed",
+        error_message="예상 못 한 오류(KeyError): 'a]b'\n$x$",
+        error_level="error",
+    )
+
+    assert run_progress.result_markdown(handle) == (
+        ":red[예상 못 한 오류(KeyError): 'a\\]b' \\$x\\$]"
+    )
+
+
+def test_result_says_unknown_when_a_failure_has_no_message() -> None:
+    """실패 문구가 비었으면 알 수 없는 오류라고 한다."""
+    handle = make_handle(status="failed", error_level="error")
+
+    assert run_progress.result_markdown(handle) == (
+        ":red[알 수 없는 오류로 실패했습니다.]"
+    )
+
+
+def test_result_counts_answers_when_done() -> None:
+    """완료되면 답변 수만 보인다. 본문은 이력 화면에서 본다."""
+    handle = make_done(make_item("핵심 주장"))
+
+    assert run_progress.result_markdown(handle) == "답변 1건"
+
+
+def test_result_names_failed_questions_when_done() -> None:
+    """답변 못 받은 질문이 있으면 수와 제목을 주황 글자로 붙인다."""
+    handle = make_done(
+        make_item("핵심 주장"),
+        make_item("요약*", error="응답이 비어 있습니다."),
+    )
+
+    assert run_progress.result_markdown(handle) == (
+        "답변 2건 · :orange[1건 실패: 요약\\*]"
+    )
+
+
+def test_result_warns_when_a_done_run_has_no_result() -> None:
+    """완료인데 결과가 비었으면 주황 경고 문구를 쓴다."""
+    handle = make_handle(status="done", finished_at="2026-09-30T17:14:00")
+
+    assert run_progress.result_markdown(handle) == (
+        ":orange[완료되었지만 결과가 비어 있습니다.]"
+    )
+
+
+def test_render_row_draws_a_badge_link_and_remove_button() -> None:
+    """완료된 실행 한 줄에 배지·영상 링크·지우기 버튼을 그린다."""
+
+    def script():
+        """AppTest 진입점 — 머리글과 완료된 실행 한 줄을 그린다."""
+        import streamlit as st
+
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.core import models
+        from notebooklm_st.services import runs
+
+        def remember(run_id: str) -> None:
+            """지운 실행 ID 를 세션에 적는다."""
+            st.session_state.setdefault("removed", []).append(run_id)
+
+        run_progress.render_header()
+        run_progress.render_row(
+            runs.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?",),
+                started_at="2026-09-30T17:12:46",
+                status="done",
+                progress=[],
+                result=models.RunResult(
+                    url="https://youtu.be/dQw4w9WgXcQ",
+                    video_id="dQw4w9WgXcQ",
+                    items=(),
+                    title="AI [실전] 가이드 $5",
+                ),
+                error_message=None,
+                error_level=None,
+                finished_at="2026-09-30T17:14:00",
+            ),
+            remember,
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    text = " ".join(element.value for element in app.markdown)
+    for name in ("상태", "영상", "시작", "질문", "결과", "동작"):
+        assert f"**{name}**" in text
+    assert ":green-badge[완료]" in text
+    assert "[AI \\[실전\\] 가이드 \\$5](https://youtu.be/dQw4w9WgXcQ)" in text
+    assert "09-30 17:12" in text
+    assert "1개" in text
+    button = app.button(key="dashboard_discard_abc12345")
+    assert button.label == "지우기"
+
+    button.click().run()
+
+    assert app.session_state["removed"] == ["abc12345"]
+
+
+def test_render_row_offers_hide_for_a_running_run() -> None:
+    """진행 중인 실행은 지우기 대신 숨기기를 준다."""
+
+    def script():
+        """AppTest 진입점 — 진행 중인 실행 한 줄을 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.services import runs
+
+        def ignore(run_id: str) -> None:
+            """누른 것을 무시한다."""
+
+        run_progress.render_row(
+            runs.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                question_texts=("핵심 주장은?", "요약해줘"),
+                started_at="2026-09-30T17:12:46",
+                status="running",
+                progress=["자막 인덱싱 중"],
+                result=None,
+                error_message=None,
+                error_level=None,
+                finished_at=None,
+            ),
+            ignore,
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    text = " ".join(element.value for element in app.markdown)
+    assert ":blue-badge[실행 중]" in text
+    assert "[dQw4w9WgXcQ](https://youtu.be/dQw4w9WgXcQ)" in text
+    assert "자막 인덱싱 중" in text
+    assert "2개" in text
+    button = app.button(key="dashboard_hide_abc12345")
+    assert button.label == "숨기기"
+    assert button.help == "목록에서만 치웁니다. 실행은 계속됩니다."
+    assert all(item.key != "dashboard_discard_abc12345" for item in app.button)
 
 
 def test_auth_gate_stays_quiet_when_authenticated(stub_auth_gate) -> None:
