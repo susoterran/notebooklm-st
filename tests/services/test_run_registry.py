@@ -25,8 +25,9 @@ def make_result() -> models.RunResult:
 def test_running_count_counts_only_running_runs() -> None:
     """진행 중인 실행만 센다."""
     registry = run_registry.RunRegistry()
-    first = registry.create("u1", "v1", QUESTIONS)
-    registry.create("u2", "v2", QUESTIONS)
+    first = start(registry, "v1")
+    start(registry, "v2")
+    registry.enqueue("u3", "v3", QUESTIONS)
     assert registry.running_count() == 2
     registry.finish(first.run_id, make_result())
     assert registry.running_count() == 1
@@ -44,8 +45,8 @@ def test_cancel_removes_a_queued_run() -> None:
 def test_cancel_leaves_a_started_or_finished_run() -> None:
     """이미 시작했거나 끝난 실행은 취소하지 않는다."""
     registry = run_registry.RunRegistry()
-    running = registry.create("u1", "v1", QUESTIONS)
-    done = registry.create("u2", "v2", QUESTIONS)
+    running = start(registry, "v1")
+    done = start(registry, "v2")
     registry.finish(done.run_id, make_result())
 
     assert registry.cancel(running.run_id) is False

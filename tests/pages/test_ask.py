@@ -103,11 +103,17 @@ def test_run_button_is_locked_while_another_run_is_active(app_db) -> None:
     def script():
         """AppTest 진입점 — 실행 중인 상태를 만들고 질의 화면을 그린다."""
         from notebooklm_st import session
+        from notebooklm_st.core import models
         from notebooklm_st.pages import ask
 
         registry = session.get_registry()
         if not registry.list_all():
-            registry.create("https://youtu.be/x", "x", ("질문",))
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            registry.enqueue("https://youtu.be/x", "x", (question,))
+            registry.acquire_worker()
+            registry.claim_next()
         ask.render()
 
     app = v1.AppTest.from_function(script).run()

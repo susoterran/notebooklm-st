@@ -357,9 +357,10 @@ def test_running_query_blocks_the_start(app_db, outline_env) -> None:
     question = models.Question(
         id=1, title="질문", text="질문?", created_at="", updated_at=""
     )
-    session.get_registry().create(
-        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,)
-    )
+    registry = session.get_registry()
+    registry.enqueue("https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,))
+    registry.acquire_worker()
+    registry.claim_next()
 
     app = v1.AppTest.from_function(script).run()
     select_rows(app, app_db, [0])

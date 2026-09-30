@@ -98,7 +98,9 @@ def test_busy_sees_a_running_query() -> None:
     question = models.Question(
         id=1, title="질문", text="질문?", created_at="", updated_at=""
     )
-    registry.create("https://youtu.be/x", "x", (question,))
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+    registry.acquire_worker()
+    registry.claim_next()
 
     assert login_session.busy(registry, digest_runner.DigestRegistry())
 

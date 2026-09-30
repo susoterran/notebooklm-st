@@ -25,25 +25,6 @@ class RunStore:
         self._lock = threading.Lock()
         self._handles: dict[str, runs.RunHandle] = {}
 
-    def create(
-        self,
-        url: str,
-        video_id: str,
-        questions: tuple[models.Question, ...],
-        auto_save: bool = False,
-    ) -> runs.RunHandle:
-        """새 실행을 대기열을 거치지 않고 running 으로 등록한다.
-
-        인자와 반환값은 ``enqueue`` 와 같다. 넣은 시각이 곧 시작
-        시각이다.
-        """
-        handle = self.enqueue(url, video_id, questions, auto_save)
-        with self._lock:
-            stored = self._handles[handle.run_id]
-            stored.status = "running"
-            stored.started_at = stored.queued_at
-            return _copy(stored)
-
     def enqueue(
         self,
         url: str,
