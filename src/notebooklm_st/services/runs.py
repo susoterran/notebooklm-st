@@ -11,6 +11,13 @@ from notebooklm_st.core import models
 RunStatus = Literal["running", "done", "failed"]
 MessageLevel = Literal["info", "error"]
 
+FINISHED: frozenset[RunStatus] = frozenset({"done", "failed"})
+"""끝난 실행의 상태.
+
+표의 지우기와 "끝난 항목 모두 지우기" 가 이것을 본다. 진행 중이 아닌
+것을 ``!= "running"`` 으로 가리면 나중에 상태가 늘 때 함께 지워진다.
+"""
+
 
 @dataclasses.dataclass(slots=True)
 class RunHandle:
@@ -93,15 +100,32 @@ class RunRegistry:
             return _copy(handle) if handle is not None else None
 
     def list_all(self) -> list[RunHandle]:
-        """모든 실행을 최근 것부터 돌려준다.
+        """실행 표에 그릴 순서로 모든 실행을 돌려준다.
+
+        진행 중인 실행을 넣은 순서대로 먼저 두고, 끝난 실행을 그 뒤에
+        최근에 끝난 것부터 둔다. 표를 위에서 아래로 "지금, 지난 것"
+        으로 읽게 하려는 순서다. 끝난 시각은 초 단위라 자주 겹치며,
+        겹치면 나중에 만든 실행이 앞에 온다.
 
         Returns:
             복사본 목록. 화면이 순회하는 동안 스레드가 바꿔도 안전하다.
         """
         with self._lock:
-            return [
-                _copy(handle) for handle in reversed(self._handles.values())
+            handles = list(self._handles.values())
+            running = [
+                handle for handle in handles if handle.status == "running"
             ]
+            # 만든 순서의 역순으로 모은 뒤 안정 정렬한다. 끝난 시각이
+            # 같은 실행끼리는 나중에 만든 것이 앞에 남는다.
+            finished = [
+                handle
+                for handle in reversed(handles)
+                if handle.status in FINISHED
+            ]
+            finished.sort(
+                key=lambda handle: handle.finished_at or "", reverse=True
+            )
+            return [_copy(handle) for handle in running + finished]
 
     def running_count(self) -> int:
         """진행 중인 실행 개수를 센다.
@@ -168,6 +192,25 @@ class RunRegistry:
         """
         with self._lock:
             self._handles.pop(run_id, None)
+
+    def discard_finished(self) -> int:
+        """끝난 실행을 모두 목록에서 지운다.
+
+        진행 중인 실행은 남긴다. 이력은 DB 에 남으므로 기록이 사라지지
+        않는다.
+
+        Returns:
+            지운 실행 수.
+        """
+        with self._lock:
+            finished = [
+                run_id
+                for run_id, handle in self._handles.items()
+                if handle.status in FINISHED
+            ]
+            for run_id in finished:
+                del self._handles[run_id]
+            return len(finished)
 
 
 def _copy(handle: RunHandle) -> RunHandle:
