@@ -240,8 +240,8 @@ pages/history.py          저장 버튼이 공유 저장 함수를 부른다 (�
 pages/digest.py·maintenance.py·_channel_check.py  가드 교체 (대기열)
 services/login_session.py busy 가 active_count 를 본다 (대기열)
 services/runs.py          핸들·레지스트리 — 대기·멈춤·저장 결과 (셋 다)
-services/runner.py        넣기·워커·자동 저장 (자동 저장, 대기열)
-services/run_export.py    새 파일 — Outline 저장 한 벌 (자동 저장)
+services/runner.py        넣기·워커·자동 저장 부르기 (자동 저장, 대기열)
+services/run_export.py    새 파일 — Outline 저장 한 벌과 자동 저장 한 번 (자동 저장)
 services/settings.py      새 파일 — 자동 저장 설정 읽기·쓰기 (자동 저장)
 services/store.py         settings 테이블 (자동 저장)
 services/run_history.py   한 건 조회 load_run (자동 저장)
@@ -511,8 +511,10 @@ def save(
 
 ### 7.4 러너의 자동 저장
 
-§6.5 의 3번에서 아래를 차례로 한다. 모두 스레드가 연 자기 커넥션으로
-한다.
+§6.5 의 3번에서 러너가 `run_export.save_automatically` 를 부르고, 그
+함수가 아래를 차례로 한다. 모두 러너 스레드가 연 자기 커넥션으로
+한다. 판정·읽기·저장·결과 변환을 저장 한 벌 곁에 두어, 러너는 스레드
+순서만 갖는다.
 
 1. `auto_save.skip_reason(result)` 가 문구를 주면
    `SaveOutcome("skipped", f"미저장 · {문구}", None)`.
