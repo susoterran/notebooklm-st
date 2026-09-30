@@ -217,3 +217,39 @@ def test_discard_finished_on_an_empty_registry_returns_zero() -> None:
 def test_finished_names_done_and_failed() -> None:
     """끝난 상태는 done 과 failed 둘이다."""
     assert frozenset({"done", "failed"}) == runs.FINISHED
+
+
+def test_create_records_the_auto_save_choice() -> None:
+    """넣을 때 고른 자동 저장 여부가 핸들에 남는다. 기본은 끔이다."""
+    registry = runs.RunRegistry()
+    on = registry.create("u1", "v1", ("q",), auto_save=True)
+    off = registry.create("u2", "v2", ("q",))
+
+    assert on.auto_save is True
+    assert off.auto_save is False
+    assert on.save is None
+
+
+def test_finish_keeps_the_save_outcome() -> None:
+    """완료할 때 넘긴 자동 저장 결과가 핸들에 실린다."""
+    registry = runs.RunRegistry()
+    handle = registry.create("u", "v", ("q",), auto_save=True)
+    outcome = runs.SaveOutcome("saved", "저장됨", "http://wiki/doc/x")
+
+    registry.finish(handle.run_id, make_result(), outcome)
+
+    finished = registry.get(handle.run_id)
+    assert finished is not None
+    assert finished.save == outcome
+
+
+def test_finish_without_a_save_leaves_it_empty() -> None:
+    """자동 저장을 하지 않은 실행은 저장 결과가 없다."""
+    registry = runs.RunRegistry()
+    handle = registry.create("u", "v", ("q",))
+
+    registry.finish(handle.run_id, make_result())
+
+    finished = registry.get(handle.run_id)
+    assert finished is not None
+    assert finished.save is None

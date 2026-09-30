@@ -10,6 +10,7 @@ from notebooklm_st.core import models
 
 RunStatus = Literal["running", "done", "failed"]
 MessageLevel = Literal["info", "error"]
+SaveState = Literal["saved", "skipped", "failed"]
 
 FINISHED: frozenset[RunStatus] = frozenset({"done", "failed"})
 """끝난 실행의 상태.
@@ -17,6 +18,18 @@ FINISHED: frozenset[RunStatus] = frozenset({"done", "failed"})
 표의 지우기와 "끝난 항목 모두 지우기" 가 이것을 본다. 진행 중이 아닌
 것을 ``!= "running"`` 으로 가리면 나중에 상태가 늘 때 함께 지워진다.
 """
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SaveOutcome:
+    """자동 저장 한 번의 결과."""
+
+    state: SaveState
+    message: str
+    """표의 저장 칸에 그대로 쓰는 문구."""
+
+    url: str | None
+    """만들어진 문서 URL. 못 만들었으면 ``None``."""
 
 
 @dataclasses.dataclass(slots=True)
@@ -31,10 +44,16 @@ class RunHandle:
     url: str
     video_id: str
     question_texts: tuple[str, ...]
+    auto_save: bool
+    """넣는 순간 고정한 자동 저장 여부. 설정을 바꿔도 그대로다."""
+
     started_at: str
     status: RunStatus
     progress: list[str]
     result: models.RunResult | None
+    save: SaveOutcome | None
+    """자동 저장 결과. 자동 저장을 시도했을 때만 채운다."""
+
     error_message: str | None
     error_level: MessageLevel | None
     finished_at: str | None
@@ -57,6 +76,7 @@ class RunRegistry:
         url: str,
         video_id: str,
         question_texts: tuple[str, ...],
+        auto_save: bool = False,
     ) -> RunHandle:
         """새 실행을 running 상태로 등록한다.
 
@@ -64,6 +84,8 @@ class RunRegistry:
             url: 질의할 영상 URL.
             video_id: URL 에서 뽑은 영상 ID.
             question_texts: 물어볼 질문 본문들.
+            auto_save: 답변을 받자마자 Outline 에 올릴지. 사람이
+                저장하는 입구(채널 화면)는 기본값을 쓴다.
 
         Returns:
             등록된 핸들. 레지스트리가 보관하는 것과 같은 객체가 아니라
@@ -74,10 +96,12 @@ class RunRegistry:
             url=url,
             video_id=video_id,
             question_texts=question_texts,
+            auto_save=auto_save,
             started_at=_now(),
             status="running",
             progress=[],
             result=None,
+            save=None,
             error_message=None,
             error_level=None,
             finished_at=None,
@@ -152,18 +176,25 @@ class RunRegistry:
             if handle is not None:
                 handle.progress.append(message)
 
-    def finish(self, run_id: str, result: models.RunResult) -> None:
+    def finish(
+        self,
+        run_id: str,
+        result: models.RunResult,
+        save: SaveOutcome | None = None,
+    ) -> None:
         """실행을 완료로 표시한다. 없는 ID 면 조용히 넘어간다.
 
         Args:
             run_id: 대상 실행 ID.
             result: 파이프라인이 돌려준 결과.
+            save: 자동 저장 결과. 자동 저장을 하지 않았으면 ``None``.
         """
         with self._lock:
             handle = self._handles.get(run_id)
             if handle is not None:
                 handle.status = "done"
                 handle.result = result
+                handle.save = save
                 handle.finished_at = _now()
 
     def fail(self, run_id: str, message: str, level: MessageLevel) -> None:
