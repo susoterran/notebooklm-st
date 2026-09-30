@@ -70,12 +70,12 @@ def test_run_button_starts_a_background_run(app_db, monkeypatch) -> None:
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
     started: list[str] = []
 
-    def fake_start_run(registry, url, questions, db_path, **kwargs):
+    def fake_enqueue(registry, url, questions, db_path, **kwargs):
         """스레드를 띄우지 않고 호출만 기록하는 가짜."""
         started.append(url)
-        return registry.create(url, "dQw4w9WgXcQ", ("핵심 주장은?",))
+        return registry.enqueue(url, "dQw4w9WgXcQ", tuple(questions))
 
-    monkeypatch.setattr(runner, "start_run", fake_start_run)
+    monkeypatch.setattr(runner, "enqueue", fake_enqueue)
 
     def script():
         """AppTest 진입점 — 질의 화면을 렌더한다."""
@@ -152,16 +152,16 @@ def set_outline_env(monkeypatch) -> None:
     monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
 
 
-def record_start_run(monkeypatch) -> list[bool]:
-    """``runner.start_run`` 을 막고 넘어온 자동 저장 값을 기록한다."""
+def record_enqueue(monkeypatch) -> list[bool]:
+    """``runner.enqueue`` 를 막고 넘어온 자동 저장 값을 기록한다."""
     received: list[bool] = []
 
-    def fake_start_run(registry, url, questions, db_path, **kwargs):
+    def fake_enqueue(registry, url, questions, db_path, **kwargs):
         """스레드를 띄우지 않고 자동 저장 값만 기록하는 가짜."""
         received.append(kwargs["auto_save"])
-        return registry.create(url, "dQw4w9WgXcQ", ("핵심 주장은?",))
+        return registry.enqueue(url, "dQw4w9WgXcQ", tuple(questions))
 
-    monkeypatch.setattr(runner, "start_run", fake_start_run)
+    monkeypatch.setattr(runner, "enqueue", fake_enqueue)
     return received
 
 
@@ -251,7 +251,7 @@ def test_run_hands_the_shown_auto_save_to_the_runner(
     """방금 켠 체크 값이 그대로 러너로 넘어간다."""
     set_outline_env(monkeypatch)
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    received = record_start_run(monkeypatch)
+    received = record_enqueue(monkeypatch)
 
     app = v1.AppTest.from_function(ask_page).run()
     app.checkbox(key="ask_auto_save").check().run()
@@ -265,7 +265,7 @@ def test_run_without_outline_hands_no_auto_save(app_db, monkeypatch) -> None:
     """Outline 설정이 없으면 DB 에 켜 두었어도 자동 저장 없이 넣는다."""
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
     settings.set_auto_save(app_db, True)
-    received = record_start_run(monkeypatch)
+    received = record_enqueue(monkeypatch)
 
     app = v1.AppTest.from_function(ask_page).run()
     fill_and_run(app, app_db)

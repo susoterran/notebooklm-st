@@ -470,11 +470,13 @@ def test_real_background_run_reaches_the_dashboard(app_db, monkeypatch) -> None:
                     updated_at="2026-08-28T10:00:00",
                 )
             ]
-            runner.start_run(
+            runner.enqueue(
                 registry,
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 questions,
                 store.default_db_path(),
+                auto_save=False,
+                is_blocked=lambda: False,
                 pipeline=fake_pipeline,
             )
             runner.join_all(timeout=5.0)

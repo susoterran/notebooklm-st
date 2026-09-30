@@ -72,12 +72,13 @@ def render() -> None:
         key="ask_run",
         disabled=busy or digesting or not (url_ok and selected),
     ):
-        runner.start_run(
+        runner.enqueue(
             registry,
             url,
             selected,
             store.default_db_path(),
             auto_save=auto_save,
+            is_blocked=session.get_digest_registry().is_running,
         )
         st.success("실행을 시작했습니다. 실행 현황 화면에서 확인하세요.")
 

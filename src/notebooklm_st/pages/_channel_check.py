@@ -231,11 +231,13 @@ def _render_entry(
         key=f"channels_run_{entry.video_id}",
         disabled=reason is not None,
     ):
-        runner.start_run(
+        runner.enqueue(
             session.get_registry(),
             url,
             selected,
             store.default_db_path(),
+            auto_save=False,
+            is_blocked=session.get_digest_registry().is_running,
         )
         st.session_state[_STARTED_KEY] = started | {entry.video_id}
         st.rerun()

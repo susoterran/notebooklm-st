@@ -1,5 +1,6 @@
 """라이브러리 예외 → 화면 문구 변환 테스트."""
 
+import pytest
 from notebooklm import exceptions
 from notebooklm._auth import extraction as _auth_extraction
 
@@ -115,6 +116,38 @@ def test_login_hint_points_at_the_auth_page() -> None:
     """만료 안내는 언제든 닿는 인증 페이지로 보낸다. 재시작은 필요 없다."""
     assert "「인증」 페이지" in errors.LOGIN_HINT
     assert "재시작" not in errors.LOGIN_HINT
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        exceptions.AuthError("expired"),
+        exceptions.HeadlessLoginRequiredError("dead session"),
+        _auth_extraction._LoginRedirectError("Final URL: https://x"),
+        exceptions.RateLimitError("too many"),
+        exceptions.NotebookLimitError(100),
+    ],
+)
+def test_errors_that_hit_the_next_run_stop_the_queue(error) -> None:
+    """재로그인·요청 한도·노트북 상한은 다음 실행도 막으므로 멈춘다."""
+    assert errors.stops_queue(error) is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        exceptions.SourceTimeoutError("source-1", 120.0),
+        exceptions.SourceAddError("https://youtu.be/dQw4w9WgXcQ"),
+        exceptions.SourceProcessingError("source-1"),
+        exceptions.NetworkError("boom"),
+        exceptions.ChatError("bad response"),
+        exceptions.NotebookLMError("무슨 일이지"),
+        RuntimeError("예상 못 한 오류"),
+    ],
+)
+def test_errors_limited_to_one_video_do_not_stop_the_queue(error) -> None:
+    """그 영상에 한정된 오류는 대기열을 멈추지 않는다."""
+    assert errors.stops_queue(error) is False
 
 
 def test_probe_failed_text_shows_only_the_exception_type() -> None:

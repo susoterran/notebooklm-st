@@ -394,7 +394,7 @@ def test_summary_hands_the_video_to_the_runner(app_db, monkeypatch) -> None:
         received["questions"] = [item.title for item in question_list]
         return None
 
-    monkeypatch.setattr(_channel_check.runner, "start_run", fake_start)
+    monkeypatch.setattr(_channel_check.runner, "enqueue", fake_start)
 
     app = v1.AppTest.from_function(script)
     app.run()
@@ -423,7 +423,7 @@ def test_summary_never_auto_saves(app_db, monkeypatch) -> None:
         """넘어온 키워드 인자를 기록한다."""
         calls.append(kwargs)
 
-    monkeypatch.setattr(_channel_check.runner, "start_run", fake_start)
+    monkeypatch.setattr(_channel_check.runner, "enqueue", fake_start)
 
     app = v1.AppTest.from_function(script)
     app.run()
@@ -432,7 +432,7 @@ def test_summary_never_auto_saves(app_db, monkeypatch) -> None:
     button_by(app, "요약").click().run()
 
     assert len(calls) == 1
-    assert calls[0].get("auto_save", False) is False
+    assert calls[0]["auto_save"] is False
 
 
 def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
