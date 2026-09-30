@@ -186,8 +186,10 @@ def save_automatically(
     except SaveConflictError:
         return runs.SaveOutcome("skipped", "이미 저장했거나 저장 중", None)
     except outline.OutlineError as error:
+        logger.warning("이력 %s 자동 저장 실패: %s", history_id, error)
         return runs.SaveOutcome("failed", f"미저장 · 저장 실패: {error}", None)
     except RecordError as error:
+        logger.warning("이력 %s 자동 저장 실패: %s", history_id, error)
         return runs.SaveOutcome("failed", str(error), error.document.url)
     except Exception as error:
         # 러너 스레드 최상위와 같은 이유로 넓게 잡는다. 여기서 예외가
