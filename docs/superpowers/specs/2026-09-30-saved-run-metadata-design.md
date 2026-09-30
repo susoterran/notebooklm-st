@@ -1,7 +1,7 @@
 # 저장된 이력의 채널·업로드일 설계 — 정리본 재료 표에 두 열 더하기
 
 - **작성일**: 2026-09-30
-- **상태**: 설계
+- **상태**: 구현 완료 (2026-09-30)
 - **대상**: 수정 `core/markdown_export.py`·`core/outline_import.py`·
   `core/models.py`·`services/run_history.py`·
   `services/run_history_sync.py`·`services/history_sync.py`·
