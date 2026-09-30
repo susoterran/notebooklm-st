@@ -484,6 +484,13 @@ class RecordError(Exception):
     #  ({원인 타입}). 다시 저장하면 문서가 둘이 됩니다."
 
 
+class SaveConflictError(Exception):
+    """같은 실행을 이미 저장했거나 다른 길이 저장하고 있다."""
+
+    # str(error): "이미 Outline 에 저장했거나 저장 중인 실행입니다.
+    #  화면을 새로 고쳐 확인하세요."
+
+
 def save(
     connection: sqlite3.Connection,
     config: outline.OutlineConfig,
@@ -495,6 +502,8 @@ def save(
     """문서를 만들고 로컬에 링크를 적는다.
 
     Raises:
+        SaveConflictError: 이미 저장했거나 다른 길이 저장하고 있다.
+            문서를 만들지 않는다.
         outline.OutlineError: 문서를 만들지 못했다. 로컬은 그대로다.
         RecordError: 문서는 만들었는데 mark_exported 가 실패했다.
     """
@@ -504,8 +513,10 @@ def save(
   이다. `mark_exported` 에서 `ValueError`·`sqlite3.Error` 만 잡아
   `RecordError` 로 바꾼다. 지금 이력 화면이 잡는 범위와 같다.
 - 이력 화면의 `_export` 는 이 함수를 부르고 세 예외(`OutlineError`·
-  `RecordError`·`SaveConflictError`)를 `st.error` 로 보인다. 화면에
-  보이는 문구와 동작은 바뀌지 않는다.
+  `RecordError`·`SaveConflictError`)를 `st.error` 로 보인다.
+  `OutlineError` 는 연결·거부 사유를 옮긴 문구를, `RecordError` 는
+  위 문구를 그대로 보인다. `SaveConflictError` 는 같은 실행을 겹쳐
+  저장하려 할 때만 보인다(→ 11).
 - `run_history.load_run(connection, run_id) -> RunSummary | None` 을
   더한다. `list_runs` 와 같은 SELECT 에 `WHERE r.id = ?` 를 붙인다.
   러너가 `to_markdown` 에 넘길 요약을 여기서 얻는다(→ 2.5).

@@ -166,7 +166,8 @@ services/run_export.save()                   저장 한 벌
 - **`services/run_history.py` 는 Outline 을 모른다.** 문서 ID·제목·URL
   이라는 문자열 셋을 받을 뿐이다.
 - 둘을 잇는 것은 `services/run_export.py` 이고, 그것이 아는 것은
-  "만들고 → 기록한다" 는 순서뿐이다. 이력 화면은 `save` 를, 러너는
+  "같은 실행을 겹쳐 올리지 않게 선점하고 → 만들고 → 기록한다" 는
+  순서뿐이다. 이력 화면은 `save` 를, 러너는
   `save_automatically` 를 부른다. 실패는 이력 화면이 빨간 줄로, 자동
   저장이 실행 현황 표의 저장 칸으로 보인다.
 
