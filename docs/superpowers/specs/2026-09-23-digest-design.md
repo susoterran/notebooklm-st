@@ -14,7 +14,8 @@
   (`services/video_metadata.py`), 질문 저장소
   (`services/questions.py`)는 건드리지 않는다. 재료 목록은 이력
   동기화가 둔 `services/run_history_sync.list_exported` 를 가져다
-  쓴다.
+  쓴다. 정리본이 도는 동안 질의 대기열이 기다리는 일은
+  `2026-09-30-run-queue-and-auto-save-design.md` 가 다룬다.
 - **범위**: 릴리스 R5. 기획 문서
   `docs/requests/2026-09-16-summary-pipeline-v2.md` 의 **요구 4**.
   선행 조건인 R1(무인 갱신 인증)·R2(컨테이너 배포)·R3(영상
@@ -126,7 +127,8 @@ NotebookLM 은 본문에 `[1]` `[2, 3]` 같은 번호를 박고, 끝에 수평�
 
 같은 이유로 질의와 정리를 **동시에 돌리지 않는다.** 둘 다 같은 쿠키
 파일로 NotebookLM 에 붙는데, 동시 접근은 이 프로젝트에서 검증된 적이
-없다. 양쪽 화면이 서로를 보고 막는다(→ 10.5).
+없다. 정리본 화면은 질의가 실행·대기 중이면 시작을 막고, 정리 중에
+넣은 질의는 정리본이 끝난 뒤 시작한다(→ 10.5).
 
 ### 2.6 선택지가 사라진 selectbox 는 Streamlit 이 되돌린다
 
@@ -424,7 +426,8 @@ def build(
 ### 9.1 핸들과 레지스트리
 
 핸들·레지스트리·스레드 시작을 한 파일에 둔다. 정리는 한 번에 한
-건이라 `runs.py` + `runner.py` 처럼 둘로 나눌 만큼 크지 않다.
+건이라 `runs.py`·`run_store.py`·`run_registry.py`·`runner.py` 처럼
+나눌 만큼 크지 않다.
 
 ```python
 @dataclasses.dataclass(slots=True)
@@ -472,7 +475,7 @@ Streamlit API 를 부르지 않는다.
 ├ 재료 선택     표 · 저장된 실행 전부 · 행 체크 · 고른 재료 N/10
 ├ 정리 지시     selectbox · 질문 관리의 질문 · 본문은 접어서 보여 준다
 │              [질문 없음] "질문 관리 화면에서 먼저 등록하세요"
-├ [정리 시작]   질의 중이면 비활성 + 이유
+├ [정리 시작]   질의가 실행·대기 중이면 비활성 + 이유
 ├ 진행 중       fragment(run_every="1s") — 레지스트리를 읽기만 한다
 └ 완료          미리보기 · 제목 입력 · [Outline 에 저장] [버리기]
 ```
@@ -554,12 +557,15 @@ def widget_key(runs: Sequence[models.RunSummary]) -> str
 네비게이션에 `st.Page(digest.render, title="정리본",
 url_path="digest")` 를 이력 다음 자리에 둔다.
 
-### 10.5 가드 두 곳
+### 10.5 다른 화면과의 순서
 
 - `pages/maintenance.py` — 삭제 버튼이 **정리 실행 중에도** 잠긴다.
   진행 중인 정리본의 `tmp-` 노트북을 지우는 사고를 막는다(→ 2.5)
-- `pages/ask.py` — 정리 중이면 실행을 막고 이유를 말한다. 반대
-  방향은 정리본 화면이 막는다
+- `pages/ask.py` — 정리 중에도 질의를 막지 않는다. 넣은 질의는
+  대기열에 서서 정리본이 끝난 뒤 시작하고, 화면이 그 사실을 알린다
+  (`2026-09-30-run-queue-and-auto-save-design.md` §8.3·§10). 반대
+  방향은 정리본 화면이 막는다 — 질의가 실행·대기 중이면 정리 시작이
+  잠긴다
 
 ---
 
@@ -646,7 +652,7 @@ DB 삭제를 요구했지만 R5 는 요구하지 않는다. 배포는 이미지�
 | `services/digest_runner` | 스레드 종료 후 상태 전이 · 인증 만료가 재로그인 안내로 매핑됨 · 이미 돌고 있으면 거절 |
 | `pages/digest` | 설정 없음 · 재료 없음 · **질문 없음** · 상한 초과 · 질의 중 각 상태에서 버튼이 잠기거나 그려지지 않고 이유가 보임 · 고른 질문의 본문이 지시로 넘어감 · 지워진 질문이 화면을 깨뜨리지 않음 · 제목 기본값이 주제 또는 날짜 · 저장 성공과 실패 |
 | 재료 표(`pages/digest` 테스트 안) | 저장된 실행이 문서 제목·링크로 새 것부터 나오고 미저장은 빠짐 · **최근 실행 50건 밖의 요약본도 나옴** · 고른 행의 실행이 러너로 넘어감 · 고른 재료가 표 아래에 개수와 함께 나옴 · 채널·업로드일 열과 빈칸 · 열 순서 · 표 key 가 같은 목록엔 같고 바뀐 목록엔 다름 · 메타데이터만 다른 목록의 key 가 같음 |
-| `pages/maintenance`·`pages/ask` | 정리 중일 때 각각의 버튼이 잠김 |
+| `pages/maintenance`·`pages/ask` | 정리 중일 때 임시 노트북 삭제 버튼은 잠기고, 질의 실행 버튼은 열린 채 안내가 보임 |
 
 `AppTest` 의 selectbox 는 `select()` 에 **원본 옵션 객체**를 받는다.
 라벨 문자열을 주면 `format_func` 을 한 번 더 먹여 찾으므로 실패한다.
@@ -698,6 +704,9 @@ Streamlit 이 검증해 받아들인다. 선택을 되돌려 보낼 브라우저
 `services/runs.py`, `services/runner.py`, `services/auth.py`,
 `services/video_metadata.py`, `pages/question_admin.py`,
 `docker-compose.yml`, `Dockerfile`, `pyproject.toml`.
+
+정리 중에 넣은 질의가 기다리게 하는 변경(`services/runner.py`·
+`pages/ask.py`)은 `2026-09-30-run-queue-and-auto-save-design.md` §13 이 적는다.
 
 ---
 
