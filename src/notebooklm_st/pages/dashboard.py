@@ -4,7 +4,7 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import run_progress
-from notebooklm_st.services import runs
+from notebooklm_st.services import run_registry, runs
 
 _POLL_INTERVAL = "1s"
 
@@ -49,7 +49,7 @@ def _render_runs() -> None:
         run_progress.render_row(handle, registry.discard)
 
 
-def _discard_finished(registry: runs.RunRegistry) -> None:
+def _discard_finished(registry: run_registry.RunRegistry) -> None:
     """끝난 실행을 모두 지운다.
 
     버튼 콜백으로 쓴다. ``discard_finished`` 가 돌려주는 지운 수는

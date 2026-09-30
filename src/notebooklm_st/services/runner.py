@@ -12,6 +12,7 @@ from notebooklm_st.services import (
     nlm,
     run_export,
     run_history,
+    run_registry,
     runs,
     store,
     video_metadata,
@@ -26,7 +27,7 @@ _threads: list[threading.Thread] = []
 
 
 def start_run(
-    registry: runs.RunRegistry,
+    registry: run_registry.RunRegistry,
     url: str,
     questions: Sequence[models.Question],
     db_path: pathlib.Path,
@@ -94,7 +95,7 @@ def join_all(timeout: float = 5.0) -> None:
 
 
 def _work(
-    registry: runs.RunRegistry,
+    registry: run_registry.RunRegistry,
     run_id: str,
     url: str,
     questions: list[models.Question],
@@ -159,7 +160,7 @@ def _work(
 
 
 def _save_history(
-    registry: runs.RunRegistry,
+    registry: run_registry.RunRegistry,
     run_id: str,
     result: models.RunResult,
     metadata: models.VideoMetadata | None,
@@ -190,7 +191,7 @@ def _save_history(
 
 
 def _fetch_metadata(
-    registry: runs.RunRegistry, run_id: str, url: str
+    registry: run_registry.RunRegistry, run_id: str, url: str
 ) -> models.VideoMetadata | None:
     """영상 메타데이터를 조회하고 진행 문구를 남긴다.
 

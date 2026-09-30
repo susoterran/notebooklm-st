@@ -14,7 +14,7 @@ import urllib.parse
 import uuid
 
 from notebooklm_st.core import login_protocol
-from notebooklm_st.services import digest_runner, runs
+from notebooklm_st.services import digest_runner, run_registry
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ def request_cancel(directory: pathlib.Path) -> str:
 
 
 def busy(
-    registry: runs.RunRegistry, digests: digest_runner.DigestRegistry
+    registry: run_registry.RunRegistry, digests: digest_runner.DigestRegistry
 ) -> bool:
     """질의나 정리본이 돌고 있는지.
 

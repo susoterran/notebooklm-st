@@ -5,7 +5,7 @@ import logging
 import os
 
 from notebooklm_st.core import login_protocol
-from notebooklm_st.services import digest_runner, login_session, runs
+from notebooklm_st.services import digest_runner, login_session, run_registry
 
 
 def test_viewer_url_is_none_when_unset() -> None:
@@ -94,7 +94,7 @@ def test_pending_request_ignores_a_broken_file(tmp_path) -> None:
 
 def test_busy_sees_a_running_query() -> None:
     """질의가 돌고 있으면 바쁘다."""
-    registry = runs.RunRegistry()
+    registry = run_registry.RunRegistry()
     registry.create("https://youtu.be/x", "x", ("q",))
 
     assert login_session.busy(registry, digest_runner.DigestRegistry())
@@ -105,13 +105,13 @@ def test_busy_sees_a_running_digest() -> None:
     digests = digest_runner.DigestRegistry()
     digests.start()
 
-    assert login_session.busy(runs.RunRegistry(), digests)
+    assert login_session.busy(run_registry.RunRegistry(), digests)
 
 
 def test_not_busy_when_nothing_runs() -> None:
     """아무것도 돌지 않으면 한가하다."""
     assert not login_session.busy(
-        runs.RunRegistry(), digest_runner.DigestRegistry()
+        run_registry.RunRegistry(), digest_runner.DigestRegistry()
     )
 
 
