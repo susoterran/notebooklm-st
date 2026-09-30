@@ -71,8 +71,8 @@ finally:
 
 세 가지가 핵심이다.
 
-1. **질의 페이지는 실행을 시작만 하고 즉시 반환한다.** 더 이상 페이지가
-   파이프라인에 묶이지 않으므로, 이동해도 작업이 중단되지 않는다.
+1. **질의 페이지는 실행을 대기열에 넣기만 하고 즉시 반환한다.** 더 이상
+   페이지가 파이프라인에 묶이지 않으므로, 이동해도 작업이 중단되지 않는다.
 2. **진행 상황과 결과는 `st.session_state` 가 아니라 레지스트리에 둔다.**
    `session_state` 는 브라우저 탭마다 별개이고 위젯 상태는 페이지를 떠나면
    버려지지만, 레지스트리는 그렇지 않다.
@@ -115,15 +115,18 @@ finally:
 
 | 파일 | 작업 | 계층 |
 |---|---|---|
-| `services/runner.py` | **신규** — 실행 핸들·레지스트리·스레드 | services (Streamlit 미의존) |
+| `services/runs.py` | **신규** — 실행 핸들 같은 값 | services (Streamlit 미의존) |
+| `services/run_store.py` | **신규** — 핸들을 락 안에서 보관 | services (Streamlit 미의존) |
+| `services/run_registry.py` | **신규** — 레지스트리(보관소 + 대기열 규칙) | services (Streamlit 미의존) |
+| `services/runner.py` | **신규** — 넣기·워커 스레드 | services (Streamlit 미의존) |
 | `session.py` | 레지스트리를 `@st.cache_resource` 로 감싸는 접근자 추가 | UI |
 | `pages/ask.py` | 트리거 전용으로 **단순화** | UI |
 | `pages/dashboard.py` | **신규** — 실행 현황 | UI |
 | `components/run_progress.py` | **폐기 후 재작성** — 컨텍스트 매니저 → 핸들 렌더러 | UI |
 | `app.py` | 대시보드 페이지 등록 | UI |
 
-**중요한 경계**: 레지스트리 클래스 자체는 `services/runner.py` 에 두고
-Streamlit 을 import 하지 않는다. `@st.cache_resource` 로 감싸는 것은
+**중요한 경계**: 레지스트리 클래스 자체는 `services/run_registry.py` 에
+두고 Streamlit 을 import 하지 않는다. `@st.cache_resource` 로 감싸는 것은
 `session.py` 의 몫이다. 이래야 runner 를 Streamlit 없이 테스트할 수 있다.
 
 ---
@@ -140,11 +143,14 @@ class RunHandle:
     run_id: str  # uuid4().hex[:8]
     url: str
     video_id: str
-    question_texts: tuple[str, ...]
-    started_at: str
-    status: Literal["running", "done", "failed"]
+    questions: tuple[models.Question, ...]
+    auto_save: bool  # 넣는 순간 고정한 자동 저장 여부
+    queued_at: str
+    started_at: str | None  # 대기 중이면 None
+    status: Literal["queued", "running", "done", "failed"]
     progress: list[str]  # 진행 문구 누적
     result: models.RunResult | None
+    save: SaveOutcome | None  # 자동 저장을 시도했을 때만
     error_message: str | None  # errors.to_message() 로 변환한 사용자 문구
     error_level: Literal["info", "error"] | None
     finished_at: str | None
@@ -156,6 +162,11 @@ class RunHandle:
 `error_message` 를 사용자 문구로 저장하는 이유: `core/errors.to_message` 는
 순수 함수이고 스레드에서 부를 수 있다. 화면은 문구만 그리면 된다.
 
+`questions` 는 워커가 나중에 파이프라인에 넘기므로 제목까지 든
+`Question` 을 쥔다. 대기(`queued`·`queued_at`)와 자동 저장
+(`auto_save`·`save`)의 뜻은 `2026-09-30-run-queue-and-auto-save-design.md`
+§6.1 이 적는다.
+
 ### 4.2 레지스트리
 
 ```python
@@ -166,48 +177,83 @@ class RunRegistry:
         self._lock = threading.Lock()
         self._handles: dict[str, RunHandle] = {}
 
-    def create(self, url, video_id, question_texts) -> RunHandle: ...
+    def enqueue(self, url, video_id, questions, auto_save=False) -> RunHandle: ...
+    def acquire_worker(self) -> bool: ...
+    def claim_next(self) -> RunHandle | None: ...
+    def release_worker(self) -> None: ...
+    def pause(self, reason) -> None: ...
+    def resume(self) -> bool: ...
+    def paused_reason(self) -> str | None: ...
+    def cancel(self, run_id) -> bool: ...  # 대기 중일 때만
     def get(self, run_id) -> RunHandle | None: ...
-    def list_all(self) -> list[RunHandle]: ...  # 최신순 복사본
-    def running_count(self) -> int: ...
+    def list_all(self) -> list[RunHandle]: ...  # 실행 중 → 대기 → 끝난 것
+    def active_count(self) -> int: ...  # running + 멈추지 않았으면 queued
+    def is_pending(self, video_id) -> bool: ...
     def append_progress(self, run_id, message) -> None: ...
-    def finish(self, run_id, result) -> None: ...
+    def finish(self, run_id, result, save=None) -> None: ...
     def fail(self, run_id, message, level) -> None: ...
+    def discard(self, run_id) -> None: ...
+    def discard_finished(self) -> int: ...
 ```
 
 **모든 공개 메서드가 락 안에서 동작한다.** `list_all` 은 화면이 순회하는
 동안 스레드가 바꾸지 못하도록 **복사본**을 돌려준다.
 
+핸들을 넣고 읽고 고치는 일(락과 dict 포함)은 `services/run_store.py` 의
+`RunStore` 가 하고, `RunRegistry` 는 그것을 물려받아 워커 자리·멈춤·취소의
+규칙을 더한다. 그 규칙은 `2026-09-30-run-queue-and-auto-save-design.md` §6.2·§8 이 적는다.
+
 ---
 
 ## 5. 동작 흐름
 
-### 5.1 실행 시작 (질의 페이지)
+### 5.1 실행 넣기 (질의 페이지)
 
 ```
 [실행] 클릭
-  → runner.start_run(registry, url, questions, db_path)
-      ├─ registry.create(...) 로 핸들 생성 (status="running")
-      ├─ threading.Thread(target=_worker, daemon=True).start()
-      └─ run_id 반환
-  → st.info("실행을 시작했습니다. 대시보드에서 확인하세요.")
+  → runner.enqueue(registry, url, questions, db_path, auto_save, is_blocked)
+      ├─ registry.enqueue(...) 로 핸들 생성 (status="queued")
+      ├─ registry.acquire_worker() 가 참이면
+      │    threading.Thread(target=_drain, daemon=True).start()
+      └─ 핸들 반환
+  → URL 칸을 비우고 결과 문구를 보인다
   → 페이지 렌더 종료 (묶이지 않음)
 ```
+
+워커가 이미 돌고 있으면 스레드를 새로 띄우지 않는다. 넣은 항목은 앞
+항목이 끝난 뒤 그 워커가 가져간다. `is_blocked` 는 정리본이 도는지를
+묻는 함수다(→ 5.2).
 
 ### 5.2 스레드가 하는 일
 
 ```python
-def _worker(registry, handle, questions, db_path) -> None:
+def _drain(registry, db_path, is_blocked, pipeline) -> None:
+    try:
+        while True:
+            while is_blocked():  # 정리본이 NotebookLM 을 쓰는 동안
+                time.sleep(_BLOCKED_POLL_SECONDS)
+            handle = registry.claim_next()  # queued → running
+            if handle is None:
+                return  # 비었거나 멈췄다. 워커 자리도 비었다
+            _work(registry, handle, db_path, pipeline)
+    except BaseException:
+        registry.release_worker()
+        raise
+
+
+def _work(registry, handle, db_path, pipeline) -> None:
     def on_progress(message: str) -> None:
         registry.append_progress(handle.run_id, message)
 
     try:
         result = asyncio.run(
-            nlm.run_pipeline(handle.url, questions, on_progress)
+            pipeline(handle.url, handle.questions, on_progress)
         )
     except exceptions.NotebookLMError as error:
         message = errors.to_message(error)
         registry.fail(handle.run_id, message.text, message.level)
+        if errors.stops_queue(error):
+            registry.pause(message.text)  # 남은 항목은 대기로 남는다
         return
 
     connection = store.connect(db_path)  # 스레드 전용 커넥션
@@ -217,6 +263,11 @@ def _worker(registry, handle, questions, db_path) -> None:
         connection.close()
     registry.finish(handle.run_id, result)
 ```
+
+워커는 대기열이 비거나 멈출 때까지 한 건씩 돌고 스스로 끝난다. 다음
+실행도 같은 이유로 실패할 오류(인증 만료·요청 한도·노트북 상한)면
+대기열을 멈춘다. 워커 자리를 잡고 비우는 규칙은
+`2026-09-30-run-queue-and-auto-save-design.md` §6.4·§8.2 가 적는다.
 
 세 가지가 지켜져야 한다.
 
@@ -243,7 +294,7 @@ def render_runs() -> None:
 
 | 규칙 | 이유 |
 |---|---|
-| 동시 실행은 **1개**로 제한한다 | NotebookLM 노트북 상한·요청 한도. 실행 중이면 [실행] 버튼을 비활성화한다 |
+| 동시 실행은 **1개**로 제한한다 | NotebookLM 노트북 상한·요청 한도. 실행 중에 넣은 질의는 대기열에 서고, 워커 하나가 차례로 돌린다(`2026-09-30-run-queue-and-auto-save-design.md` §8) |
 | 레지스트리 접근은 전부 락 안에서 | 여러 탭이 동시에 읽고 스레드가 동시에 쓴다 |
 | `list_all()` 은 복사본 반환 | 화면이 순회하는 중에 스레드가 바꾸면 깨진다 |
 | 스레드는 `daemon=True` | 서버 종료 시 프로세스가 매달리지 않는다 |
@@ -258,25 +309,34 @@ def render_runs() -> None:
 
 - YouTube URL 입력 (그대로)
 - 질문 다중 선택 (그대로)
-- **[실행] — 시작만 하고 즉시 반환.** 이미 실행 중이면 비활성 + 안내
-- **진행 표시·답변 렌더를 제거한다.** 대시보드로 옮긴다
-- 실행 직후 "대시보드에서 확인하세요" 안내
+- **[실행] — 대기열에 넣고 즉시 반환.** 실행 중이거나 대기 중이어도
+  넣는다. 같은 영상이 대기·실행 중일 때만 비활성 + 안내
+- **진행 표시·답변 렌더를 제거한다.** 진행은 대시보드에서, 답변은
+  이력 화면에서 본다
+- 넣은 직후 URL 칸을 비우고 결과를 안내한다. 앞에 선 질의가 있으면
+  그 수를, 대기열이 멈췄으면 그 사실을 함께 적는다
+  (`2026-09-30-run-queue-and-auto-save-design.md` §10)
 
 페이지가 82줄에서 **더 짧아진다.**
 
 ### 7.2 대시보드 (신규)
 
 - `@st.fragment(run_every="1s")` 로 1초마다 갱신
-- 실행별로 한 블록:
+- 실행 하나가 한 줄인 표(`st.columns`). 칸은 상태·영상·시작·질문·결과·
+  저장·동작이고, 순서는 실행 중 → 대기(넣은 순) → 끝난 것(최근 끝난
+  것부터)이다(`2026-09-30-run-queue-and-auto-save-design.md` §9)
 
-| 상태 | 표시 |
-|---|---|
-| `running` | 영상 URL, 경과 시간, **진행 문구 최신 것**, 질문 수 |
-| `done` | 영상 URL, 소요 시간, `answer_view.render_items(result.items)` |
-| `failed` | 영상 URL, `error_level` 에 따라 `st.info` / `st.error` |
+| 상태 | 결과 칸 | 동작 칸 |
+|---|---|---|
+| `queued` | 비움 | [취소] |
+| `running` | **진행 문구 최신 것** | [숨기기] — 목록에서만 치운다 |
+| `done` | `답변 {n}건`, 실패 항목이 있으면 그 수와 제목 | [지우기] |
+| `failed` | 오류 문구. `error_level` 이 error 면 빨간 글자 | [지우기] |
 
-- 완료·실패 항목을 목록에서 지우는 [지우기] 버튼 (레지스트리에서만 제거,
-  이력은 DB 에 남는다)
+- 답변 본문은 그리지 않는다. 완료된 실행은 이력 화면에서 읽는다
+- [지우기] 와 표 위의 [끝난 항목 모두 지우기] 는 레지스트리에서만
+  지운다. 이력은 DB 에 남는다
+- 대기열이 멈추면 표 위에 이유와 [재개] 버튼을 보인다
 
 ### 7.3 이력·질문 관리·정리
 
@@ -303,9 +363,10 @@ Streamlit 을 모르므로 일반 단위 테스트가 가능하다. **여기에 
 띄우지 않으므로 타이밍 의존이 없다.
 
 - 실행 중 핸들 → 진행 문구가 화면에 보이는가
-- 완료 핸들 → 답변과 인용이 보이는가
+- 완료 핸들 → 결과 칸에 답변 수와 실패 항목이 보이는가
 - 실패 핸들 → `info`/`error` 수준이 맞는가
-- 질의 페이지: 실행 중이면 버튼이 비활성인가
+- 질의 페이지: 실행 중에도 버튼이 열려 있고, 같은 영상이 대기·실행
+  중이면 비활성인가
 
 ### 8.3 착수 전 확인할 것
 
