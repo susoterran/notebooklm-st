@@ -20,8 +20,9 @@
 ## 1. 왜 바꾸는가
 
 R4(`2026-09-22-outline-storage-design.md`) 이후 요약본의 진실 원천은
-Outline 이고, 로컬 `runs` 에는 문서 ID·URL·제목·저장 시각만 남는다. 이
-링크 장부는 세 가지 일을 한다.
+Outline 이고, 로컬 `runs` 에는 문서 ID·URL·제목·저장 시각이 남고
+`run_metadata` 에 채널·업로드일이 캐시로 남는다. 이 링크 장부는 세 가지
+일을 한다.
 
 - 이력 화면의 목록을 Outline 호출 없이 그린다.
 - 정리본 화면이 재료 후보를 고르고 `outline_id` 로 문서를 다시 읽는다.
@@ -123,8 +124,9 @@ operator: "eq", value: ...}]` 로 컬렉션을 거르고, `sort`·`direction` �
 ### 2.5 실행 선택은 ID 기준이다
 
 `pages/history.py` 의 selectbox 는 `RunSummary` 객체가 아니라 `run.id`
-를 값으로 쓴다. 동기화가 기존 행을 건드리지 않으면 적용 뒤에도 선택이
-살아남는다. 지워진 행을 고르고 있었다면 Streamlit 이 첫 항목으로 되돌린다
+를 값으로 쓴다. 동기화는 `runs` 행의 ID 를 바꾸지 않으므로(메타데이터
+갱신도 ID·시각을 바꾸지 않는다) 적용 뒤에도 선택이 살아남는다. 지워진
+행을 고르고 있었다면 Streamlit 이 첫 항목으로 되돌린다
 (기존 삭제에서 AppTest 로 확인한 동작).
 
 ### 2.6 실행 ID 는 다시 쓰인다
@@ -142,7 +144,7 @@ operator: "eq", value: ...}]` 로 컬렉션을 거르고, `sort`·`direction` �
 | 실행 시점 | **사람이 버튼을 눌렀을 때만** | "앱은 Outline 을 읽지 않는다" 원칙의 취지는 Outline 장애가 이력 화면을 막지 않는 것이다. 사람이 누를 때만 읽으면 그 취지가 유지된다. 자동·주기 실행은 두지 않는다 |
 | 적용 방식 | **미리보기 후 적용** | 무엇이 지워지는지 먼저 본다. 기존 삭제 UI 의 2단계와 같다 |
 | 컬렉션 조건 | **`filters` 로 보내고 Outline 1.10.0 이상을 요구한다** | 1.10 이 권하는 방식이다. 최상위 `collectionId` 는 두 버전에서 모두 동작하지만 1.10 에서 deprecated 다. 1.10.0 미만은 `filters` 를 조용히 버리므로(2.2) 지원하지 않는다 |
-| 기존 행 | **손대지 않는다** | 전부 지우고 재구축하면 ID 가 바뀌어 다른 탭의 선택이 풀리고 원래 실행 시각이 덮인다. 차이만 적용한다 |
+| 기존 행 | **`runs` 행은 손대지 않는다. 메타데이터만 문서 값으로 갱신한다** | 전부 지우고 재구축하면 ID 가 바뀌어 다른 탭의 선택이 풀리고 원래 실행 시각이 덮인다. 차이만 적용한다. 메타데이터를 쓰는 것은 ID 도 실행 시각도 바꾸지 않는다(`2026-09-30-saved-run-metadata-design.md`) |
 | 미저장 실행 | **입력에서 뺀다** | `exported_at` 이 없는 행은 아직 올리지 않은 것이다. 삭제될 수 없어야 한다 |
 | 삭제 기준 | **실행 ID 와 문서 ID 가 둘 다 맞을 때만** | 계획은 적용·취소 전까지 세션에 남고, 그사이 ID 가 다른 실행에 다시 쓰일 수 있다(2.6). 문서 ID 까지 맞춰야 미저장 실행이 지워지지 않는다 |
 | 미저장 실행과 같은 영상의 문서 | **새 행을 만들고 미저장은 그대로** | 그 문서가 정말 그 실행에서 나왔는지 확인할 길이 없다. 본문을 지우는 판단은 사람이 한다 |
@@ -163,10 +165,11 @@ pages/_history_sync.py           버튼·미리보기·적용 (Streamlit 만 안
    ├─► services/outline.list_documents(config)          컬렉션 문서 전부
    ├─► services/run_history_sync.list_exported(conn)    exported_at 이 있는 행
    ├─► services/history_sync.plan(exported, docs)       순수 비교 → SyncPlan
-   └─► services/history_sync.apply(conn, plan)          삭제 + 삽입, 커밋 하나
+   └─► services/history_sync.apply(conn, plan)          삭제 + 삽입 + 갱신, 커밋 하나
              ├─► run_history_sync.delete_runs           (id, outline_id) 쌍
-             └─► run_history_sync.insert_exported
-core/outline_import.py           문서 본문 → 영상 URL (순수 함수)
+             ├─► run_history_sync.insert_exported
+             └─► run_history_sync.write_metadata        (id, outline_id) 쌍
+core/outline_import.py           문서 본문 → 영상 URL·채널·업로드일 (순수 함수)
 ```
 
 경계는 이렇다.
@@ -177,7 +180,7 @@ core/outline_import.py           문서 본문 → 영상 URL (순수 함수)
   뿐이다.** httpx 도 Streamlit 도 모른다. `plan` 은 두 목록을 받아
   `SyncPlan` 을 돌려주는 순수 함수이고, `apply` 는 그것을 DB 에 쓴다. DB 를
   직접 읽고 쓰는 일은 `services/run_history_sync.py` 에 맡긴다.
-- **`services/run_history_sync.py` 는 동기화만 쓰는 저장소 함수 셋이다.**
+- **`services/run_history_sync.py` 는 동기화만 쓰는 저장소 함수 넷이다.**
   `run_history.py` 에 두면 300줄을 넘고, 커밋 규약도 다르다 — 이쪽은
   커밋하지 않고 트랜잭션을 `apply` 에 맡긴다. SELECT 머리와 행 변환은
   `run_history` 의 것을 함께 쓴다(7.2).
@@ -220,7 +223,12 @@ plan(list_exported(conn), documents) → 세션 history_sync_plan
 | 문서를 가리키는 행이 없고, 본문에 영상 URL 줄이 있고 ID 가 뽑힘 | 이력에 없음 | **생성 대상** |
 | 문서를 가리키는 행이 없고, 영상 URL 줄이 없음 | 이력 문서가 아님 | **건너뜀** — 사유 "영상 URL 없음" |
 | 문서를 가리키는 행이 없고, 영상 URL 줄은 있으나 ID 를 못 뽑음 | 손상된 메타데이터 | **건너뜀** — 사유 "영상 URL 인식 불가" |
-| 행과 문서가 모두 있음 | 정상 | 손대지 않음 |
+| 행과 문서가 모두 있고, 문서 머리 값을 합친 결과가 로컬과 다름 | 메타데이터가 어긋남 | **갱신 대상** — `runs` 행은 그대로 두고 메타데이터만 쓴다 |
+| 행과 문서가 모두 있고, 합친 결과가 로컬과 같거나 두 값을 못 읽음 | 정상 | 손대지 않음 |
+
+합치는 규칙과 지우지 않는 이유는
+`2026-09-30-saved-run-metadata-design.md` 9.1 에 있다. 문서가 준 칸은 문서 값을
+쓰고, 문서가 주지 않은 칸은 로컬 값을 남긴다.
 
 엣지 케이스는 이렇게 다룬다.
 
@@ -230,8 +238,8 @@ plan(list_exported(conn), documents) → 세션 history_sync_plan
   지우거나 다시 저장한다.
 - **같은 영상의 문서 둘**은 둘 다 생성 대상이다.
 - **같은 문서를 가리키는 행 둘**(저장 도중 동기화가 돈 경합의 결과)은 둘 다
-  정상으로 두고 손대지 않는다. 동기화는 중복을 만들지 않을 뿐 정리하지
-  않는다.
+  정상으로 두고 `runs` 행을 손대지 않는다. 메타데이터는 행마다 따로
+  판정한다. 동기화는 중복을 만들지 않을 뿐 정리하지 않는다.
 - **휴지통·보관 문서**는 목록에 없으므로 그 행은 삭제 대상이다. 사람이
   복원하면 다음 동기화가 다시 만든다. README 에 적는다.
 - **영상 URL 줄은 첫 `---` 구분선 앞에서만 찾는다.** 답변 본문에 같은
@@ -242,8 +250,9 @@ plan(list_exported(conn), documents) → 세션 history_sync_plan
   ID 가 둘 다 맞는 행만** 지운다. 다른 탭이 지울 행을 먼저 지웠으면 그
   쌍은 0건일 뿐이다. 사람이 그 행을 손으로 지운 뒤 새로 실행해 같은 ID
   가 다시 쓰였어도(2.6), 새 실행은 `outline_id` 가 비어 있어 쌍과 맞지
-  않으므로 지워지지 않는다. 만들 문서의 `outline_id` 가 이미 있으면 그
-  항목만 건너뛴다. 결과 문구에는 실제 개수를 적는다.
+  않으므로 지워지지 않는다. 메타데이터 갱신도 같은 쌍으로 맞추고, 쌍이
+  맞지 않거나 값이 이미 같으면 쓰지 않는다. 만들 문서의 `outline_id` 가
+  이미 있으면 그 항목만 건너뛴다. 결과 문구에는 실제 개수를 적는다.
 
 생성 행의 값은 이렇다.
 
@@ -258,8 +267,8 @@ plan(list_exported(conn), documents) → 세션 history_sync_plan
 | `outline_title` | 문서 제목 |
 | `outline_url` | 상대 URL 을 `public_url` 에 붙인 절대 URL (`outline_parse.absolute` 재사용) |
 
-`answers`·`run_metadata` 행은 만들지 않는다. 저장된 실행은 원래 본문이
-없다.
+`answers` 행은 만들지 않는다. 저장된 실행은 본문이 없다. 문서 머리에서
+채널·업로드 일자를 읽었으면 `run_metadata` 행을 함께 만든다(8장).
 
 `created_at` 에 문서 생성 시각을 쓰는 이유는 목록 정렬이다. 목록은 `id`
 내림차순이므로 되살린 행은 어차피 맨 위에 오지만, 라벨에 찍히는 시각이
@@ -270,7 +279,7 @@ plan(list_exported(conn), documents) → 세션 history_sync_plan
 
 ## 6. 데이터 모델
 
-스키마는 바꾸지 않는다. `core/models.py` 에 값 객체 넷을 더한다. 전부
+스키마는 바꾸지 않는다. `core/models.py` 에 값 객체 다섯을 더한다. 전부
 `frozen=True, slots=True` 다.
 
 ```python
@@ -295,6 +304,8 @@ class SyncCreate:
     url: str
     """본문에서 읽은 영상 URL."""
     video_id: str
+    metadata: VideoMetadata | None = None
+    """본문 머리에서 읽은 채널·업로드일. 못 읽었으면 ``None``."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -303,6 +314,15 @@ class SyncSkip:
 
     document: ListedDocument
     reason: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncUpdate:
+    """동기화가 메타데이터를 갱신할 기존 행 한 건."""
+
+    run: RunSummary
+    metadata: VideoMetadata
+    """쓸 값. 문서가 준 칸과 로컬에 남길 칸을 합친 결과다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -315,12 +335,17 @@ class SyncPlan:
     deletes: tuple[RunSummary, ...]
     creates: tuple[SyncCreate, ...]
     skips: tuple[SyncSkip, ...]
+    updates: tuple[SyncUpdate, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        """지울 것도 만들 것도 없다."""
-        return not self.deletes and not self.creates
+        """지울 것도 만들 것도 갱신할 것도 없다."""
+        return not self.deletes and not self.creates and not self.updates
 ```
+
+`VideoMetadata` 는 `RunSummary` 와 `SyncCreate` 가 주석에 쓰므로 그 위에
+정의한다. `core/models.py` 는 `from __future__ import annotations` 를
+쓰지 않는다.
 
 `ListedDocument` 는 기존 `OutlineDocument`(정리본이 쓴다.
 `services/outline_parse.py` 에 정의하고 `services/outline.py` 가 같은
@@ -411,22 +436,35 @@ def insert_exported(
 def delete_runs(
     connection: sqlite3.Connection, keys: Sequence[tuple[int, str]]
 ) -> int
+def write_metadata(
+    connection: sqlite3.Connection,
+    run_id: int,
+    outline_id: str,
+    metadata: models.VideoMetadata,
+) -> bool
 ```
 
-- `list_exported` 는 `run_history.SUMMARY_SELECT` 에 `WHERE r.exported_at
+- `list_exported` 는 `run_history.SUMMARY_SELECT`(`run_metadata` 를 LEFT
+  JOIN 한다)에 `WHERE r.exported_at
   IS NOT NULL`·`GROUP BY r.id`·`ORDER BY r.id DESC` 를 붙이고 `LIMIT` 을
   두지 않는다. 동기화는 전부 봐야 한다. 행은 `run_history.row_to_summary`
   로 요약이 된다. 두 이름은 `list_runs` 와 이 모듈이 함께 쓰도록
   `run_history` 가 공개한다 — 같은 SQL 을 두 모듈에 두지 않는다.
 - `insert_exported` 는 여덟 컬럼을 채운 `runs` 행 하나를 넣고 ID 를
   돌려준다. 같은 `outline_id` 를 가진 행이 이미 있으면 넣지 않고 `None`
-  을 돌려준다. **커밋하지 않는다.**
+  을 돌려준다. `create.metadata` 가 있으면 새 행의 ID 로 `run_metadata`
+  행도 넣고, 없으면 넣지 않는다. **커밋하지 않는다.**
 - `delete_runs` 는 `(실행 ID, 문서 ID)` 쌍을 받아 `DELETE FROM runs WHERE
   id = ? AND outline_id = ?` 를 `executemany` 로 돌리고 `rowcount` 를
   돌려준다. sqlite3 는 `executemany` 의 DML `rowcount` 를 문장마다
   더해 준다. 맞는 행이 없는 쌍은 무시하고, 빈 입력은 SQL 없이 0 이다.
   딸린 답변은 외래키의 `ON DELETE CASCADE` 가 지운다. **커밋하지 않는다.**
   ID 만으로 지우지 않는 이유는 2.6 과 5장에 있다.
+- `write_metadata` 는 실행 ID 와 문서 ID 가 **둘 다 맞는 `runs` 행이 있을
+  때만** 그 행의 `run_metadata` 를 넣거나 덮는다. 문장 하나(`INSERT …
+  SELECT … ON CONFLICT DO UPDATE`)로 쓰고, 값이 이미 같으면 덮지 않는다.
+  새로 넣었거나 값을 바꿨으면 `True`, 맞는 행이 없거나 값이 같으면
+  `False` 다. **커밋하지 않는다.**
 - 트랜잭션은 `history_sync.apply` 가 소유한다. 기존 `save_run`·
   `mark_exported`·`delete_run` 은 `run_history` 에 남아 각자 커밋한다.
   규약이 갈리는 것을 모듈 독스트링에 적는다.
@@ -448,6 +486,7 @@ def plan(
 class SyncResult:
     deleted: int
     created: int
+    updated: int = 0
 
 
 def apply(
@@ -456,13 +495,19 @@ def apply(
 ```
 
 - `plan` 은 5장의 규칙을 그대로 옮긴다. 순서는 입력 순서를 유지한다.
+  생성 대상에는 `outline_import.find_metadata` 의 결과를 싣고, 행과 문서가
+  모두 있는 경우에는 문서가 준 칸과 로컬 값을 합쳐 로컬과 다르면
+  `SyncUpdate` 로 계획에 넣는다(
+  `2026-09-30-saved-run-metadata-design.md` 9.1).
 - `apply` 는 `delete_runs` 에 `[(run.id, run.outline_id or "") for run in
-  sync_plan.deletes]` 를 넘긴 뒤 각 `insert_exported` 를 돌리고 커밋한다.
-  어떤 예외든 롤백하고 다시 던진다. `mark_exported` 와 같은 모양이다.
+  sync_plan.deletes]` 를 넘긴 뒤 각 `insert_exported` 와 `write_metadata`
+  를 돌리고 커밋한다. 삭제 → 삽입 → 갱신 순이며 커밋은 하나다. 어떤
+  예외든 롤백하고 다시 던진다. `mark_exported` 와 같은 모양이다.
   저장된 행은 `outline_id` 가 늘 있으므로 `or ""` 는 타입을 맞출 뿐이고,
   빈 문자열은 어떤 행과도 맞지 않는다.
 - `SyncResult` 는 **실제로** 지운 개수(`delete_runs` 의 `rowcount`)와
-  **실제로** 만든 개수(`insert_exported` 가 `None` 이 아닌 수)다. 계획의
+  **실제로** 만든 개수(`insert_exported` 가 `None` 이 아닌 수), **실제로**
+  바꾼 개수(`write_metadata` 가 `True` 인 수)다. 계획의
   개수와 다를 수 있다 — 미리보기와 적용 사이에 다른 탭이 먼저 지우거나
   저장했을 수 있다.
 - `SyncResult` 는 화면이 문구 하나 만드는 데만 쓰므로 `core/models.py`
@@ -476,6 +521,7 @@ Streamlit 을 import 하지 않는 순수 함수 모듈이다.
 
 ```python
 def find_source_url(markdown: str) -> str | None
+def find_metadata(markdown: str) -> models.VideoMetadata | None
 ```
 
 - 첫 `^\s*---\s*$` 줄 앞까지를 머리 블록으로 본다. 구분선이 없으면 전체가
@@ -488,12 +534,19 @@ def find_source_url(markdown: str) -> str | None
     자동 링크면 괄호 안을, 링크면 글이 URL 이든 아니든 주소 쪽을 쓴다.
     주소는 공백이 없는 한 덩어리다.
   - 꺼낸 값에서 `\_`·`\-`·`\*`·`\#` 의 역슬래시를 걷는다.
+- `find_metadata` 는 같은 머리 블록(줄을 내주는 내부 함수를 함께 쓴다)에서
+  `채널`·`업로드 일자` 줄을 읽는다. 라벨마다 **라벨이 맞는 첫 줄만** 본다.
+  값에서 ASCII 문장부호 앞의 역슬래시를 걷고, 업로드 일자는 `YYYY-MM-DD`
+  로 읽히는 값만 받는다. 못 읽은 칸은 `None` 이고 두 칸 모두 못 읽으면
+  `None` 을 돌려준다(`2026-09-30-saved-run-metadata-design.md` 6).
 - `video_id` 는 여기서 뽑지 않는다. `youtube.extract_video_id` 가 이미
   있고, `plan` 이 그 결과로 "인식 불가"를 판정한다.
 
 `markdown_export._metadata_block` 이 쓰는 라벨 문자열 `영상 URL` 을 두
 곳에 따로 적지 않는다. `markdown_export` 에 `SOURCE_URL_LABEL = "영상
 URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다.
+`채널`·`업로드 일자` 도 `CHANNEL_LABEL`·`UPLOAD_DATE_LABEL` 상수로 같게
+한다.
 
 ---
 
@@ -511,10 +564,11 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 ▸ Outline 과 동기화
     Outline 컬렉션의 문서 목록과 저장된 이력을 맞춥니다.
     Outline 에 없는 이력은 지우고, 이력에 없는 문서는 새로 만듭니다.
+    채널·업로드일은 문서 머리에서 읽어 채웁니다.
     [ 확인 ]
 
     ── 확인 후 ──
-    지울 이력 2건 · 만들 문서 3건 · 건너뛴 문서 1건
+    지울 이력 2건 · 만들 문서 3건 · 채널·업로드일 갱신 40건 · 건너뛴 문서 1건
     지울 이력      - 제목 · 실행 시각
     만들 문서      - 제목 · 문서 생성 시각 · 영상 URL
     건너뛴 문서    - 제목 · 사유
@@ -529,9 +583,12 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 - 확인 결과는 세션 키 `history_sync_plan` 에 둔다. 위젯 키가 아니라 우리가
   소유한 키다. 적용·취소 후 지운다. 목록 읽기가 실패해도 지운다 — 지난
   계획이 남으면 실패한 뒤에도 적용 버튼이 보인다.
-- 지울 것도 만들 것도 없으면 "이미 맞습니다. 건너뛴 문서 N건." 만 내고 적용
-  버튼을 그리지 않는다. 건너뛴 목록은 그린다.
-- 적용 후 결과 문구("동기화 완료 · 지움 N건 · 만듦 M건")는 세션 키
+- 개수 한 줄의 `채널·업로드일 갱신 K건` 은 `만들 문서` 와 `건너뛴 문서`
+  사이에 둔다. 갱신 대상은 **개수만** 보이고 목록은 그리지 않는다.
+- 지울 것도 만들 것도 갱신할 것도 없으면 "이미 맞습니다. 건너뛴 문서
+  N건." 만 내고 적용 버튼을 그리지 않는다. 건너뛴 목록은 그린다. 갱신만
+  있어도 적용 버튼이 나온다.
+- 적용 후 결과 문구("동기화 완료 · 지움 N건 · 만듦 M건 · 갱신 K건")는 세션 키
   `history_sync_result` 에 담고 `st.rerun()` 한다. 다시 그릴 때 영역 위에
   `st.success` 로 한 번 내고 지운다.
 - 세 목록은 굵은 제목 아래 `st.markdown` 리스트로 그린다. expander 는
@@ -567,11 +624,12 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 
 | 파일 | 확인할 것 |
 |---|---|
-| `tests/core/test_outline_import.py` (신규) | 영상 URL 줄에서 URL 추출 / 줄이 없으면 `None` / 첫 `---` 뒤의 같은 문구는 무시 / 구분선이 없으면 전체에서 찾음 / 정리본 본문(만든 날·정리 지시)은 `None` / 앞 공백·뒤 공백 허용 / 같은 줄이 둘이면 첫 줄 / 값 없는 라벨은 `None` / 재직렬화 변형: `*` 글머리표 · `+` 글머리표 · `<URL>` 자동 링크 · `[URL](URL)` 링크 · `[글](URL)` 링크 · 영상 ID 안의 `\_`·`\-` · `\*`·`\#` · 글머리표·링크·이스케이프가 겹친 줄 · 구분선 뒤의 변형 줄은 무시 |
+| `tests/core/test_outline_import.py` (신규) | 영상 URL 줄에서 URL 추출 / 줄이 없으면 `None` / 첫 `---` 뒤의 같은 문구는 무시 / 구분선이 없으면 전체에서 찾음 / 정리본 본문(만든 날·정리 지시)은 `None` / 앞 공백·뒤 공백 허용 / 같은 줄이 둘이면 첫 줄 / 값 없는 라벨은 `None` / 재직렬화 변형: `*` 글머리표 · `+` 글머리표 · `<URL>` 자동 링크 · `[URL](URL)` 링크 · `[글](URL)` 링크 · 영상 ID 안의 `\_`·`\-` · `\*`·`\#` · 글머리표·링크·이스케이프가 겹친 줄 · 구분선 뒤의 변형 줄은 무시 / `find_metadata`: 두 줄 다 읽음 · 한 줄만 있으면 다른 칸은 `None` · 둘 다 없으면 `None` · 첫 `---` 뒤의 줄은 무시 · `*`·`+` 글머리표 · 문장부호 이스케이프를 걷음 · `YYYY-MM-DD` 가 아니거나 없는 날짜는 그 칸만 `None` · 같은 라벨이 둘이면 첫 줄 · `markdown_export.to_markdown` 이 쓴 문서를 같은 값으로 읽는 왕복 |
 | `tests/services/test_outline.py` | `list_documents`: 주소·헤더·본문(컬렉션 필터·정렬·`limit`·`offset`)이 API 계약대로 나감 · 다섯 값을 꺼내고 URL 을 공개 주소로 절대화 · `createdAt` 이 로컬 초 단위 ISO 로 바뀜 · 접미 없는 `createdAt` 은 UTC · 가득 찬 페이지 뒤에는 다음 `offset` 으로 다시 부르고 짧은 페이지에서 멈춤 · 빈 페이지에서 멈춤 · 상한 초과 시 `OutlineError` · 두 번째 페이지 실패 시 부분 목록 없이 `OutlineError` · `data` 없음·`text` 없음·읽히지 않는 `createdAt` 은 목록 전체 실패 · 연결 실패 문구 · 401/403/404/429/5xx 가 각자 문구 · 토큰이 메시지에 안 샘 / 기존 테스트가 `outline_parse`·`outline_messages` 분리 뒤에도 그대로 통과 |
-| `tests/services/test_run_history_sync.py` (신규) | `list_exported` 가 `exported_at` 없는 행을 빼고 상한이 없음 / `insert_exported` 가 여덟 컬럼을 채우고 `answers`·`run_metadata` 를 만들지 않으며 커밋하지 않음 · 같은 `outline_id` 는 `None` / `delete_runs` 가 여러 쌍을 지우고 개수를 돌려줌 · 없는 ID 는 세지 않음 · ID 가 같아도 문서 ID 가 다르면(미저장 실행 포함) 지우지 않음 · 빈 입력은 0 · 커밋하지 않음 / `list_video_ids` 가 되살린 행의 ID 도 돌려줌 |
-| `tests/services/test_history_sync.py` (신규) | `plan`: 5장의 다섯 규칙 각각 · 컬렉션이 비면 저장된 행 전부 삭제 · 같은 영상 문서 둘은 둘 다 생성 · 같은 문서를 가리키는 행 둘은 손대지 않음 · 입력 순서 유지 · `is_empty` / `apply`: 삭제·삽입이 한 커밋(적용 뒤 열린 트랜잭션이 없음) · 삽입 실패 시 삭제도 롤백 · 이미 있는 `outline_id` 는 건너뛰고 개수에 안 셈 · 없는 삭제 ID 는 개수에 안 셈 · 빈 계획은 0·0 · 낡은 계획: 저장된 행을 손으로 지우고 같은 ID 를 받은 미저장 실행을 만든 뒤 적용해도 그 실행과 답변이 남고 `deleted` 가 0 |
-| `tests/pages/test_history.py` | AppTest: 저장된 실행이 0건이어도 영역이 그려지고 설정 없으면 안내만 · 설정 있으면 확인 버튼 · 확인 후 개수 한 줄과 세 목록, DB 는 그대로 · 적용이 DB 를 바꾸고 결과 문구, 적용 버튼 사라짐 · 취소가 plan 만 비움 · 맞을 때 적용 버튼 없고 건너뛴 문서는 보임 · 목록 실패 시 `st.error` 와 함께, 먼저 성공한 확인으로 만든 실제 plan 이 지워짐 · 적용 실패 시 문구를 내고, 한 번 더 다시 그려도 적용 버튼과 plan 이 남음 · 적용 뒤 선택 유지(살아남는 실행 둘 중 고른 쪽이 그대로) · 다른 위젯을 건드려도 미리보기가 남음 |
+| `tests/services/test_run_history_sync.py` (신규) | `list_exported` 가 `exported_at` 없는 행을 빼고 상한이 없으며 메타데이터를 싣고 옴 / `insert_exported` 가 여덟 컬럼을 채우고 `answers` 를 만들지 않고 메타데이터가 있으면 `run_metadata` 를 만들며 커밋하지 않음 · 같은 `outline_id` 는 `None` 이고 아무것도 쓰지 않음 / `delete_runs` 가 여러 쌍을 지우고 개수를 돌려줌 · 없는 ID 는 세지 않음 · ID 가 같아도 문서 ID 가 다르면(미저장 실행 포함) 지우지 않음 · 빈 입력은 0 · 커밋하지 않음 / `write_metadata` 가 행이 없으면 넣고 있으면 덮음 · 값이 같으면 `False` · 문서 ID 가 다르면 `False` 이고 쓰지 않음 · 커밋하지 않음 / `list_video_ids` 가 되살린 행의 ID 도 돌려줌 |
+| `tests/services/test_history_sync.py` (신규) | `plan`: 5장의 규칙 각각(정상 행은 갱신 대상과 손대지 않음으로 나뉨) · 컬렉션이 비면 저장된 행 전부 삭제 · 같은 영상 문서 둘은 둘 다 생성 · 같은 문서를 가리키는 행 둘은 `runs` 를 손대지 않고 메타데이터는 따로 판정 · 생성 대상에 문서 메타데이터가 실림 · 칸별 합치기 · 입력 순서 유지 · `is_empty`(갱신만 있으면 거짓) / `apply`: 삭제·삽입이 한 커밋(적용 뒤 열린 트랜잭션이 없음) · 삽입 실패 시 삭제도 롤백 · 이미 있는 `outline_id` 는 건너뛰고 개수에 안 셈 · 없는 삭제 ID 는 개수에 안 셈 · 빈 계획은 0·0·0 · 갱신이 삭제·삽입과 한 커밋 · 갱신 실패 시 삭제·삽입도 롤백 · 쌍이 맞지 않는 갱신은 쓰지 않고 `updated` 에 안 셈 · 같은 계획을 두 번 적용하면 두 번째 `updated` 가 0 · 멱등: 적용 뒤 다시 계획하면 `updates == ()` · 낡은 계획: 저장된 행을 손으로 지우고 같은 ID 를 받은 미저장 실행을 만든 뒤 적용해도 그 실행과 답변이 남고 `deleted` 가 0 |
+| `tests/services/test_run_history.py` | `list_runs` 가 메타데이터 행이 있으면 싣고 없으면 `None` · 답변이 여럿이어도 `answer_count` 가 불지 않음 |
+| `tests/pages/test_history.py` | AppTest: 저장된 실행이 0건이어도 영역이 그려지고 설정 없으면 안내만 · 설정 있으면 확인 버튼 · 확인 후 개수 한 줄과 세 목록, DB 는 그대로 · 적용이 DB 를 바꾸고 결과 문구, 적용 버튼 사라짐 · 취소가 plan 만 비움 · 맞을 때 적용 버튼 없고 건너뛴 문서는 보임 · 목록 실패 시 `st.error` 와 함께, 먼저 성공한 확인으로 만든 실제 plan 이 지워짐 · 적용 실패 시 문구를 내고, 한 번 더 다시 그려도 적용 버튼과 plan 이 남음 · 적용 뒤 선택 유지(살아남는 실행 둘 중 고른 쪽이 그대로) · 다른 위젯을 건드려도 미리보기가 남음 · 개수 한 줄에 갱신 건수 · 갱신만 있어도 적용 버튼 · 적용 뒤 결과 문구의 갱신 건수와 DB 의 메타데이터 |
 
 `plan` 과 `apply` 는 가짜 `poster` 없이 돈다. 화면 테스트는
 `monkeypatch.setattr(outline, "list_documents", ...)` 로 바꿔 끼운다.
@@ -601,19 +659,21 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 - `tests/services/test_run_history_sync.py`
 - `tests/services/test_history_sync.py`
 
-**수정 8**
+**수정 9**
 
-- `src/notebooklm_st/core/models.py` — 값 객체 넷
-- `src/notebooklm_st/core/markdown_export.py` — `SOURCE_URL_LABEL` 상수
+- `src/notebooklm_st/core/models.py` — 값 객체 다섯
+- `src/notebooklm_st/core/markdown_export.py` — `SOURCE_URL_LABEL`·
+  `CHANNEL_LABEL`·`UPLOAD_DATE_LABEL` 상수
 - `src/notebooklm_st/services/outline.py` — `_post`·`list_documents`·
   `_list_page`, 값 객체·응답 해석·상태 문구를 두 모듈로 분리
 - `src/notebooklm_st/services/run_history.py` — `SUMMARY_SELECT`·
-  `row_to_summary` 공개(`run_history_sync` 와 공유)
+  `row_to_summary` 공개(`run_history_sync` 와 공유), `run_metadata` 조인
 - `src/notebooklm_st/pages/history.py` — 호출 한 줄, 분기 위치
 - `README.md` — 사용 순서에 동기화 단락, 한계(휴지통·보관함·중복·다른
   문서 무시), DB 삭제 주의 문구에 "저장된 이력은 동기화로 되살릴 수
   있다" 추가
-- `tests/services/test_outline.py`, `tests/pages/test_history.py`
+- `tests/services/test_outline.py`, `tests/services/test_run_history.py`,
+  `tests/pages/test_history.py`
 
 **변경 없음**
 

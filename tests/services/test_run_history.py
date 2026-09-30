@@ -271,6 +271,42 @@ def test_list_runs_carries_the_document_link(connection) -> None:
     assert run.exported_at == "2026-09-22T15:00:00"
 
 
+def test_list_runs_carries_the_metadata(connection) -> None:
+    """메타데이터 행이 요약에 실려 온다."""
+    metadata = models.VideoMetadata(
+        channel="안될공학", upload_date="2026-09-15"
+    )
+    run_history.save_run(connection, make_result(), metadata)
+
+    assert run_history.list_runs(connection)[0].metadata == metadata
+
+
+def test_list_runs_reports_no_metadata_without_a_row(connection) -> None:
+    """메타데이터 행이 없으면 ``None`` 이다."""
+    run_history.save_run(connection, make_result())
+
+    assert run_history.list_runs(connection)[0].metadata is None
+
+
+def test_list_runs_keeps_an_empty_metadata_row_apart(connection) -> None:
+    """두 값이 빈 행은 행이 없는 것과 다르다."""
+    empty = models.VideoMetadata(channel=None, upload_date=None)
+    run_history.save_run(connection, make_result(), empty)
+
+    assert run_history.list_runs(connection)[0].metadata == empty
+
+
+def test_metadata_join_does_not_inflate_the_answer_count(connection) -> None:
+    """메타데이터를 조인해도 답변 수가 불지 않는다."""
+    run_history.save_run(
+        connection,
+        make_result(),
+        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
+    )
+
+    assert run_history.list_runs(connection)[0].answer_count == 2
+
+
 def export(connection, run_id: int) -> None:
     """테스트용 저장 기록 한 번."""
     run_history.mark_exported(
@@ -304,17 +340,16 @@ def test_mark_exported_deletes_the_local_answers(connection) -> None:
     assert run_history.load_run_items(connection, run_id) == []
 
 
-def test_mark_exported_deletes_the_local_metadata(connection) -> None:
-    """메타데이터도 문서 frontmatter 로 옮겨 갔으므로 지운다."""
-    run_id = run_history.save_run(
-        connection,
-        make_result(),
-        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
+def test_mark_exported_keeps_the_local_metadata(connection) -> None:
+    """메타데이터는 남긴다. 정리본 재료 표가 채널·업로드일을 쓴다."""
+    metadata = models.VideoMetadata(
+        channel="안될공학", upload_date="2026-09-15"
     )
+    run_id = run_history.save_run(connection, make_result(), metadata)
 
     export(connection, run_id)
 
-    assert run_history.load_metadata(connection, run_id) is None
+    assert run_history.load_metadata(connection, run_id) == metadata
 
 
 def test_mark_exported_keeps_the_run_itself(connection) -> None:
@@ -351,7 +386,7 @@ class FailingAnswerDelete:
     """답변 삭제 문장에서만 터지는 커넥션 대역.
 
     나머지 호출은 진짜 커넥션이 그대로 처리한다. 잠긴 DB·디스크
-    오류처럼 세 문장 중 가운데에서 죽는 상황을 재현한다.
+    오류처럼 두 문장 중 뒤의 것에서 죽는 상황을 재현한다.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:

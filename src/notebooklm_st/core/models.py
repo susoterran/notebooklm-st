@@ -98,12 +98,24 @@ class RunResult:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class VideoMetadata:
+    """영상에서 뽑아 온 메타데이터.
+
+    영상명과 URL 은 담지 않는다. ``RunSummary`` 에 이미 있어
+    중복이 된다.
+    """
+
+    channel: str | None
+    upload_date: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class RunSummary:
     """이력 목록에 한 줄로 보여 줄 실행 요약.
 
     ``exported_at`` 이 채워져 있으면 이 실행은 Outline 으로 넘어갔고
-    로컬에는 링크만 남아 있다. 넷은 항상 함께 채워지거나 함께 비어
-    있다.
+    로컬에는 링크와 영상 메타데이터만 남아 있다. 링크 넷은 항상 함께
+    채워지거나 함께 비어 있다.
     """
 
     id: int
@@ -116,6 +128,9 @@ class RunSummary:
     outline_url: str | None = None
     outline_title: str | None = None
     exported_at: str | None = None
+    metadata: VideoMetadata | None = None
+    """``run_metadata`` 행. 행이 없으면 ``None`` — 두 값이 빈 행과
+    구분된다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -144,6 +159,8 @@ class SyncCreate:
     url: str
     """본문에서 읽은 영상 URL."""
     video_id: str
+    metadata: VideoMetadata | None = None
+    """문서 머리에서 읽은 채널·업로드 일자. 두 줄이 다 없으면 ``None``."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -152,6 +169,15 @@ class SyncSkip:
 
     document: ListedDocument
     reason: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SyncUpdate:
+    """동기화가 메타데이터를 갱신할 기존 행 한 건."""
+
+    run: RunSummary
+    metadata: VideoMetadata
+    """쓸 값. 문서가 준 칸과 로컬에 남길 칸을 합친 결과다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -165,23 +191,12 @@ class SyncPlan:
     deletes: tuple[RunSummary, ...]
     creates: tuple[SyncCreate, ...]
     skips: tuple[SyncSkip, ...]
+    updates: tuple[SyncUpdate, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        """지울 것도 만들 것도 없다."""
-        return not self.deletes and not self.creates
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class VideoMetadata:
-    """영상에서 뽑아 온 메타데이터.
-
-    영상명과 URL 은 담지 않는다. ``RunSummary`` 에 이미 있어
-    중복이 된다.
-    """
-
-    channel: str | None
-    upload_date: str | None
+        """지울 것도 만들 것도 갱신할 것도 없다."""
+        return not self.deletes and not self.creates and not self.updates
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

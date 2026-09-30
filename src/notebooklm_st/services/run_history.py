@@ -33,12 +33,17 @@ def list_video_ids(connection: sqlite3.Connection) -> set[str]:
 SUMMARY_SELECT = (
     "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
     " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
+    " m.run_id AS metadata_run_id, m.channel, m.upload_date,"
     " COUNT(a.id) AS answer_count"
     " FROM runs AS r"
     " LEFT JOIN answers AS a ON a.run_id = r.id"
+    " LEFT JOIN run_metadata AS m ON m.run_id = r.id"
 )
 """``list_runs`` 와 ``run_history_sync.list_exported`` 가 함께 쓰는
-SELECT 머리."""
+SELECT 머리.
+
+``run_metadata`` 는 실행 하나에 많아야 한 행이라 조인이 답변 행을
+불리지 않는다."""
 
 
 def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
@@ -47,6 +52,11 @@ def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
     ``run_history_sync`` 도 이 함수를 그대로 가져다 쓴다. SQL 을
     두 모듈에 중복해 두지 않으려는 것이다.
     """
+    metadata = None
+    if row["metadata_run_id"] is not None:
+        metadata = models.VideoMetadata(
+            channel=row["channel"], upload_date=row["upload_date"]
+        )
     return models.RunSummary(
         id=int(row["id"]),
         url=row["url"],
@@ -58,6 +68,7 @@ def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
         outline_url=row["outline_url"],
         outline_title=row["outline_title"],
         exported_at=row["exported_at"],
+        metadata=metadata,
     )
 
 
@@ -198,10 +209,15 @@ def mark_exported(
     document_title: str,
     document_url: str,
 ) -> None:
-    """문서 링크를 적고 로컬 본문을 지운다.
+    """문서 링크를 적고 로컬 답변을 지운다.
 
-    세 문장을 커밋 하나로 묶는다. 중간에 죽어도 "본문은 사라졌는데
+    두 문장을 커밋 하나로 묶는다. 중간에 죽어도 "본문은 사라졌는데
     링크는 없는" 상태가 생기지 않는다.
+
+    영상 메타데이터(``run_metadata``)는 지우지 않는다. 문서 머리에
+    적은 채널·업로드 일자와 같은 값의 캐시로 남아 정리본 재료 표가
+    쓴다. 정본은 Outline 이고, 이력 동기화가 문서에서 다시 읽어
+    맞춘다.
 
     Outline 의 자료형을 받지 않고 문자열 셋을 받는다. 저장소가 외부
     서비스를 알 이유가 없다.
@@ -236,9 +252,6 @@ def mark_exported(
         if cursor.rowcount == 0:
             raise ValueError(f"실행 {run_id} 을 찾을 수 없습니다.")
         connection.execute("DELETE FROM answers WHERE run_id = ?", (run_id,))
-        connection.execute(
-            "DELETE FROM run_metadata WHERE run_id = ?", (run_id,)
-        )
         connection.commit()
     except BaseException:
         connection.rollback()

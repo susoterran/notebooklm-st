@@ -29,7 +29,8 @@
 
 R4 는 **요약본의 집을 Outline 으로 옮긴다.** 앱은 요약을 만들어 사람에게
 확인받고 위키에 올리는 데까지만 책임지고, 그 뒤의 수정·삭제·검색·백업은
-Outline 이 한다. 앱에는 문서명과 링크만 남는다.
+Outline 이 한다. 앱에는 문서명·링크와 영상 메타데이터(채널·업로드일)만
+남는다.
 
 ### 1.1 무엇을 옮기지 않는가
 
@@ -123,7 +124,7 @@ YAML frontmatter 를 따로 알아보지 않는 렌더러에서는 피할 수 �
 |---|---|
 | 저장은 **사람이 버튼으로** 한다 | 위키는 오래 남는 자리다. 마음에 안 드는 결과가 자동으로 쌓이면 치우는 일이 사람에게 돌아온다 |
 | 실행 결과의 첫 도착지는 **계속 SQLite** | 게이트가 사람이면 결과는 디스크에 있어야 한다. 메모리에 들고 있다가 재시작하면 몇 분 걸린 요약이 사라진다 |
-| 저장에 성공하면 **본문을 지우고 링크만 남긴다** | 진실의 원천이 하나여야 한다. 양쪽에 두면 Outline 에서 고친 내용과 로컬이 영구히 어긋난다 |
+| 저장에 성공하면 **답변을 지우고 링크와 영상 메타데이터를 남긴다** | 답변은 진실의 원천이 하나여야 한다. 양쪽에 두면 Outline 에서 고친 내용과 로컬이 영구히 어긋난다. 메타데이터는 문서 머리에 적은 값과 같은 캐시이고, 로컬에서 고치는 화면이 없어 흐름이 Outline → 로컬 한 방향이며, 이력 동기화가 문서에서 다시 맞춘다(`2026-09-30-saved-run-metadata-design.md`) |
 | **옛 이력은 버린다** | 이관 도구를 만들 만큼의 가치가 없다. 스키마 가드가 이미 안내 문구를 갖고 있다 |
 | 문서는 **고정 컬렉션 하나에 평평하게** | 분류는 Outline 이 사람보다 잘하지 못하고, 앱이 부모 문서를 찾고 만드는 로직을 지면 실패 경로가 늘어난다 |
 | 메타데이터를 **마크다운 리스트로 적는다** | YAML frontmatter 는 Outline 에서 머리글 하나로 뭉친다(→ 2.5). 위키는 사람이 읽는 곳이므로 그 화면에서 읽히는 형식이 이긴다. R5 가 파싱할 자리는 리스트가 그대로 맡는다 |
@@ -162,7 +163,7 @@ pages/history.py       제목 확인 · 인용 포함 결정 · 저장 · 결과
                         ↓
    to_markdown() → outline.create_document() → 문서 ID·제목·URL
                         ↓
-     runs 행에 링크 기록 + answers·run_metadata 행 삭제 (커밋 하나)
+     runs 행에 링크 기록 + answers 행 삭제 (커밋 하나)
                         ↓
               그 실행은 목록에서 링크 한 줄이 된다
 ```
@@ -400,16 +401,18 @@ def mark_exported(
     document_title: str,
     document_url: str,
 ) -> None:
-    """문서 링크를 적고 로컬 본문을 지운다.
+    """문서 링크를 적고 로컬 답변을 지운다.
 
     Raises:
         ValueError: 그 ID 의 실행이 없는 경우.
     """
 ```
 
-`runs` UPDATE + `answers` DELETE + `run_metadata` DELETE 를 **커밋
-하나로** 묶는다. 중간에 죽어도 "본문은 사라졌는데 링크는 없는" 상태가
-생기지 않는다. `exported_at` 은 `store.now()` 를 쓴다.
+`runs` UPDATE + `answers` DELETE 를 **커밋 하나로** 묶는다. 중간에
+죽어도 "본문은 사라졌는데 링크는 없는" 상태가 생기지 않는다.
+`run_metadata` 는 지우지 않고 남긴다. 문서 머리에 적은 값과 같은
+캐시이기 때문이다(`2026-09-30-saved-run-metadata-design.md`).
+`exported_at` 은 `store.now()` 를 쓴다.
 
 인자를 문자열로 받는다. `SavedDocument` 를 받으면 저장소가 Outline 을 알게
 된다(→ 4).
@@ -659,7 +662,7 @@ dependencies = [
 | 파일 | 무엇을 |
 |---|---|
 | `tests/services/test_outline.py` (신규) | 주입한 `poster` 가 진짜 `httpx.Response` 를 돌려준다. 성공 파싱, 상대·절대 URL 조립, 401·404·5xx·타임아웃이 각각 제 메시지의 `OutlineError` 가 되는지, 토큰이 예외 메시지에 안 새는지, `config_from_env` 의 부분 설정이 `None` 인지, 끝 슬래시가 붙은 주소로도 URL 이 바르게 만들어지는지 |
-| `tests/services/test_run_history.py` | `mark_exported` 가 링크를 적고 `answers`·`run_metadata` 를 지우는지, 없는 ID 면 `ValueError` 인지, `list_runs` 가 저장 상태를 싣는지. `update_answer` 테스트 넷은 삭제 |
+| `tests/services/test_run_history.py` | `mark_exported` 가 링크를 적고 `answers` 를 지우고 `run_metadata` 는 남기는지, 없는 ID 면 `ValueError` 인지, `list_runs` 가 저장 상태를 싣는지. `update_answer` 테스트 넷은 삭제 |
 | `tests/pages/test_history.py` | 미저장·저장됨 두 상태의 렌더, 저장 버튼이 `create_document` 와 `mark_exported` 를 순서대로 부르는지, `OutlineError` 면 로컬이 그대로인지, `mark_exported` 가 실패하면 문서 URL 이 메시지에 실리는지, 설정이 없으면 버튼이 없는지, 제목이 공백이면 막히는지 |
 | `tests/core/test_markdown_export.py` | 확인한 제목이 메타데이터 리스트에 들어가는지, 본문에 머리글이 하나도 없는지, 리스트와 본문 사이와 답변과 답변 사이에 구분선이 있는지, 질문 제목·원문과 출처 블록이 **없는지**, 값 없는 항목이 줄째 빠지는지, 제어문자가 지워지고 개행이 공백으로 접히는지. `to_filename` 테스트는 삭제 |
 | `tests/test_components.py` | 편집 상자 관련 테스트 삭제 |

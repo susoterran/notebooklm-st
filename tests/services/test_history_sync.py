@@ -19,8 +19,24 @@ SUMMARY_BODY = (
     "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
 )
 
+METADATA_BODY = (
+    "- 제목: 밸류에이션 강의\n"
+    "- 채널: 어떤 채널\n"
+    "- 업로드 일자: 2026-09-20\n"
+    "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+    "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
+)
 
-def make_run(run_id: int, outline_id: str) -> models.RunSummary:
+DOC_METADATA = models.VideoMetadata(
+    channel="어떤 채널", upload_date="2026-09-20"
+)
+
+
+def make_run(
+    run_id: int,
+    outline_id: str,
+    metadata: models.VideoMetadata | None = None,
+) -> models.RunSummary:
     """저장된 실행 요약을 만든다."""
     return models.RunSummary(
         id=run_id,
@@ -33,6 +49,7 @@ def make_run(run_id: int, outline_id: str) -> models.RunSummary:
         outline_url=f"https://wiki.example.com/doc/{outline_id}",
         outline_title="정리한 제목",
         exported_at="2026-09-22T15:00:00",
+        metadata=metadata,
     )
 
 
@@ -170,6 +187,125 @@ def test_an_empty_plan_says_so() -> None:
     assert plan.is_empty
 
 
+def test_plan_carries_the_metadata_of_a_new_document() -> None:
+    """생성 대상에 문서 머리의 메타데이터가 실린다."""
+    result = history_sync.plan([], [make_document("doc-9", METADATA_BODY)])
+
+    assert result.creates[0].metadata == DOC_METADATA
+
+
+def test_plan_creates_without_metadata_when_the_head_has_none() -> None:
+    """두 줄이 없으면 생성 대상의 메타데이터는 ``None`` 이다."""
+    result = history_sync.plan([], [make_document("doc-9")])
+
+    assert result.creates[0].metadata is None
+
+
+def test_plan_updates_a_run_without_metadata() -> None:
+    """로컬에 메타데이터가 없고 문서가 주면 갱신 대상이다."""
+    run = make_run(1, "doc-1")
+
+    result = history_sync.plan([run], [make_document("doc-1", METADATA_BODY)])
+
+    assert result.updates == (
+        models.SyncUpdate(run=run, metadata=DOC_METADATA),
+    )
+    assert result.deletes == ()
+    assert result.creates == ()
+    assert not result.is_empty
+
+
+def test_plan_leaves_equal_metadata_alone() -> None:
+    """합친 값이 로컬과 같으면 손대지 않는다."""
+    run = make_run(1, "doc-1", DOC_METADATA)
+
+    result = history_sync.plan([run], [make_document("doc-1", METADATA_BODY)])
+
+    assert result.updates == ()
+    assert result.is_empty
+
+
+def test_plan_overwrites_a_different_value() -> None:
+    """문서 값이 로컬과 다르면 문서 값으로 덮는다."""
+    run = make_run(
+        1,
+        "doc-1",
+        models.VideoMetadata(channel="옛 채널", upload_date="2026-09-20"),
+    )
+
+    result = history_sync.plan([run], [make_document("doc-1", METADATA_BODY)])
+
+    assert [update.metadata for update in result.updates] == [DOC_METADATA]
+
+
+def test_plan_never_clears_local_metadata() -> None:
+    """문서에서 두 값을 못 읽으면 로컬 값을 그대로 둔다."""
+    run = make_run(1, "doc-1", DOC_METADATA)
+
+    result = history_sync.plan([run], [make_document("doc-1")])
+
+    assert result.updates == ()
+
+
+def test_plan_merges_field_by_field() -> None:
+    """문서가 준 칸은 문서 값, 주지 않은 칸은 로컬 값이다."""
+    run = make_run(
+        1, "doc-1", models.VideoMetadata(channel="A", upload_date=None)
+    )
+    body = (
+        "- 업로드 일자: 2026-09-20\n"
+        "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+    )
+
+    result = history_sync.plan([run], [make_document("doc-1", body)])
+
+    assert [update.metadata for update in result.updates] == [
+        models.VideoMetadata(channel="A", upload_date="2026-09-20")
+    ]
+
+
+def test_plan_fills_a_row_whose_values_are_empty() -> None:
+    """두 값이 빈 옛 행도 문서 값으로 채운다."""
+    run = make_run(
+        1, "doc-1", models.VideoMetadata(channel=None, upload_date=None)
+    )
+
+    result = history_sync.plan([run], [make_document("doc-1", METADATA_BODY)])
+
+    assert [update.metadata for update in result.updates] == [DOC_METADATA]
+
+
+def test_plan_judges_two_runs_on_one_document_separately() -> None:
+    """같은 문서를 가리키는 행 둘은 따로 판정한다."""
+    runs = [make_run(1, "doc-1", DOC_METADATA), make_run(2, "doc-1")]
+
+    result = history_sync.plan(runs, [make_document("doc-1", METADATA_BODY)])
+
+    assert [update.run.id for update in result.updates] == [2]
+
+
+def test_plan_does_not_update_a_run_being_deleted() -> None:
+    """문서가 없는 행은 지울 뿐 갱신하지 않는다."""
+    result = history_sync.plan([make_run(1, "gone")], [])
+
+    assert [run.id for run in result.deletes] == [1]
+    assert result.updates == ()
+
+
+def test_an_update_only_plan_is_not_empty() -> None:
+    """갱신만 있어도 적용할 것이 있다."""
+    plan = models.SyncPlan(
+        deletes=(),
+        creates=(),
+        skips=(),
+        updates=(
+            models.SyncUpdate(run=make_run(1, "doc-1"), metadata=DOC_METADATA),
+        ),
+    )
+
+    assert not plan.is_empty
+
+
 @pytest.fixture
 def connection(tmp_path) -> Iterator[sqlite3.Connection]:
     """임시 파일 DB 커넥션을 열고 테스트 후 닫는다."""
@@ -178,7 +314,11 @@ def connection(tmp_path) -> Iterator[sqlite3.Connection]:
     conn.close()
 
 
-def save_exported(connection: sqlite3.Connection, doc_id: str) -> int:
+def save_exported(
+    connection: sqlite3.Connection,
+    doc_id: str,
+    metadata: models.VideoMetadata | None = None,
+) -> int:
     """저장된 실행 하나를 DB 에 만든다."""
     run_id = run_history.save_run(
         connection,
@@ -188,6 +328,7 @@ def save_exported(connection: sqlite3.Connection, doc_id: str) -> int:
             title="원래 제목",
             items=(),
         ),
+        metadata,
     )
     run_history.mark_exported(
         connection,
@@ -347,3 +488,191 @@ def test_apply_with_an_empty_plan_changes_nothing(connection) -> None:
 
     assert result == history_sync.SyncResult(deleted=0, created=0)
     assert len(run_history_sync.list_exported(connection)) == 1
+
+
+class FailingMetadataWrite:
+    """메타데이터 쓰기 문장에서만 터지는 커넥션 대역.
+
+    나머지 호출은 진짜 커넥션이 그대로 처리한다. 삭제·삽입은 됐는데
+    갱신이 죽는 상황을 재현한다.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """감쌀 진짜 커넥션을 받는다."""
+        self._connection = connection
+
+    def execute(self, sql, *args):
+        """메타데이터를 넣는 문장만 실패시킨다."""
+        if "INSERT INTO run_metadata" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self._connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        """나머지 속성은 진짜 커넥션에 맡긴다."""
+        return getattr(self._connection, name)
+
+
+def test_apply_writes_updates_in_the_same_commit(connection) -> None:
+    """갱신이 확정되고 건수가 결과에 실린다."""
+    run_id = save_exported(connection, "doc-1")
+    plan = models.SyncPlan(
+        deletes=(),
+        creates=(),
+        skips=(),
+        updates=(
+            models.SyncUpdate(
+                run=make_run(run_id, "doc-1"), metadata=DOC_METADATA
+            ),
+        ),
+    )
+
+    result = history_sync.apply(connection, plan)
+
+    assert not connection.in_transaction
+    assert result == history_sync.SyncResult(deleted=0, created=0, updated=1)
+    assert run_history_sync.list_exported(connection)[0].metadata == (
+        DOC_METADATA
+    )
+
+
+def test_apply_rolls_back_everything_when_an_update_fails(
+    connection,
+) -> None:
+    """갱신이 죽으면 삭제와 삽입도 되돌린다."""
+    gone = save_exported(connection, "gone")
+    kept = save_exported(connection, "kept")
+    plan = models.SyncPlan(
+        deletes=(make_run(gone, "gone"),),
+        creates=(create_for("new-1"),),
+        skips=(),
+        updates=(
+            models.SyncUpdate(
+                run=make_run(kept, "kept"), metadata=DOC_METADATA
+            ),
+        ),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        # FailingMetadataWrite 는 진짜 Connection 이 아니라 일부 호출만
+        # 가로채는 대역이다. 구조적으로는 호환되지만 nominal 타입은
+        # 아니므로 억제한다.
+        failing = FailingMetadataWrite(connection)
+        history_sync.apply(failing, plan)  # type: ignore[arg-type]
+
+    runs = run_history_sync.list_exported(connection)
+    assert [run.outline_id for run in runs] == ["kept", "gone"]
+    assert [run.metadata for run in runs] == [None, None]
+
+
+def test_apply_does_not_write_an_update_to_a_reused_id(connection) -> None:
+    """낡은 계획의 갱신은 같은 ID 를 다시 받은 미저장 실행에 쓰지 않는다."""
+    gone = save_exported(connection, "doc-1")
+    stale = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        [make_document("doc-1", METADATA_BODY)],
+    )
+    assert [update.run.id for update in stale.updates] == [gone]
+    run_history.delete_run(connection, gone)
+    reused = run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            title="새 실행",
+            items=(),
+        ),
+    )
+    assert reused == gone
+
+    result = history_sync.apply(connection, stale)
+
+    assert result.updated == 0
+    assert run_history.load_metadata(connection, reused) is None
+
+
+def test_applying_the_same_plan_twice_updates_once(connection) -> None:
+    """다른 탭이 같은 계획을 먼저 적용했으면 두 번째는 0 건이다."""
+    save_exported(connection, "doc-1")
+    plan = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        [make_document("doc-1", METADATA_BODY)],
+    )
+
+    first = history_sync.apply(connection, plan)
+    second = history_sync.apply(connection, plan)
+
+    assert first.updated == 1
+    assert second.updated == 0
+
+
+def test_a_second_plan_after_apply_has_no_updates(connection) -> None:
+    """적용한 뒤 다시 계획하면 갱신할 것이 없다(갱신 경로)."""
+    save_exported(connection, "doc-1")
+    documents = [make_document("doc-1", METADATA_BODY)]
+    history_sync.apply(
+        connection,
+        history_sync.plan(
+            run_history_sync.list_exported(connection), documents
+        ),
+    )
+
+    again = history_sync.plan(
+        run_history_sync.list_exported(connection), documents
+    )
+
+    assert again.updates == ()
+    assert again.is_empty
+
+
+def test_a_revived_run_needs_no_update_on_the_next_plan(connection) -> None:
+    """메타데이터를 실어 되살린 행은 다음 계획에 오르지 않는다."""
+    documents = [make_document("new-1", METADATA_BODY)]
+    history_sync.apply(
+        connection,
+        history_sync.plan(
+            run_history_sync.list_exported(connection), documents
+        ),
+    )
+
+    again = history_sync.plan(
+        run_history_sync.list_exported(connection), documents
+    )
+
+    assert again.is_empty
+    assert run_history_sync.list_exported(connection)[0].metadata == (
+        DOC_METADATA
+    )
+
+
+def test_a_channel_with_doubled_spaces_settles_after_one_apply(
+    connection,
+) -> None:
+    """로컬 값과 문서 값의 공백 차이는 한 번 갱신하면 사라진다.
+
+    로컬은 yt-dlp 값의 앞뒤 공백만 뗀 것이고, 문서는 ``one_line`` 으로
+    공백을 접은 것이다.
+    """
+    save_exported(
+        connection,
+        "doc-1",
+        models.VideoMetadata(channel="투자  연구소", upload_date="2026-09-20"),
+    )
+    body = (
+        "- 채널: 투자 연구소\n"
+        "- 업로드 일자: 2026-09-20\n"
+        "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+    )
+    documents = [make_document("doc-1", body)]
+
+    first = history_sync.plan(
+        run_history_sync.list_exported(connection), documents
+    )
+    history_sync.apply(connection, first)
+    second = history_sync.plan(
+        run_history_sync.list_exported(connection), documents
+    )
+
+    assert [update.metadata.channel for update in first.updates] == [
+        "투자 연구소"
+    ]
+    assert second.updates == ()
