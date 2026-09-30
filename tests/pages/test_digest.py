@@ -6,7 +6,13 @@ import pytest
 from streamlit.testing import v1
 
 from notebooklm_st.core import models, youtube
-from notebooklm_st.services import nlm, outline, questions, run_history
+from notebooklm_st.services import (
+    nlm,
+    outline,
+    questions,
+    run_history,
+    run_history_sync,
+)
 
 BASE_URL = "http://192.168.0.10:3000"
 TOKEN = "ol_api_secret_value"
@@ -79,6 +85,45 @@ def add_instruction(
     return questions.add_question(connection, title, text)
 
 
+def select_rows(
+    app: v1.AppTest, connection: sqlite3.Connection, rows: list[int]
+) -> None:
+    """재료 표에서 행을 고른다.
+
+    AppTest 는 표 클릭을 흉내 내지 못한다. 대신 Streamlit 이 허용하는
+    세션 상태 주입을 쓴다. 브라우저가 선택을 되돌려 보내지 않으므로
+    선택은 바로 다음 실행 한 번에만 반영된다.
+    """
+    from notebooklm_st.pages import _digest_materials
+
+    key = _digest_materials.widget_key(
+        run_history_sync.list_exported(connection)
+    )
+    app.session_state[key] = {
+        "selection": {"rows": rows, "columns": [], "cells": []}
+    }
+
+
+def click_start(
+    app: v1.AppTest, connection: sqlite3.Connection, rows: list[int]
+) -> None:
+    """재료를 고른 채로 정리 시작을 누른다.
+
+    AppTest 는 직전 실행에서 잠긴 버튼을 누르지 못하게 막는다. 한 번
+    골라 버튼을 풀고, 누르는 실행에서 다시 고른다 — 선택이 한 실행만
+    가기 때문이다.
+    """
+    select_rows(app, connection, rows)
+    app.run()
+    select_rows(app, connection, rows)
+    app.button[0].click().run()
+
+
+def table_titles(app: v1.AppTest) -> list[str]:
+    """재료 표에 나온 문서 제목을 위에서부터 돌려준다."""
+    return list(app.dataframe[0].value["title"])
+
+
 def test_missing_config_shows_a_notice(app_db) -> None:
     """Outline 설정이 없으면 안내를 보여 준다."""
     save_exported(app_db)
@@ -97,19 +142,29 @@ def test_no_saved_runs_shows_a_notice(app_db, outline_env) -> None:
     app = v1.AppTest.from_function(script).run()
 
     assert not app.exception
-    assert len(app.multiselect) == 0
+    assert len(app.dataframe) == 0
     assert "이력" in app.info[0].value
 
 
-def test_saved_runs_are_selectable(app_db, outline_env) -> None:
-    """저장된 실행이 재료 목록에 나온다."""
+def test_saved_runs_are_listed_in_the_table(app_db, outline_env) -> None:
+    """저장된 실행이 문서 제목과 Outline 링크로 표에 나온다."""
     save_exported(app_db)
 
     app = v1.AppTest.from_function(script).run()
 
     assert not app.exception
-    assert len(app.multiselect) == 1
-    assert app.multiselect[0].options[0].startswith("밸류에이션 강의 · ")
+    assert table_titles(app) == ["밸류에이션 강의"]
+    assert list(app.dataframe[0].value["url"]) == [f"{BASE_URL}/doc/doc-1"]
+
+
+def test_saved_runs_are_listed_newest_first(app_db, outline_env) -> None:
+    """최근에 저장한 요약본이 표의 맨 위에 온다."""
+    save_exported(app_db, document_title="먼저 저장", document_id="doc-1")
+    save_exported(app_db, document_title="나중 저장", document_id="doc-2")
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert table_titles(app) == ["나중 저장", "먼저 저장"]
 
 
 def test_unsaved_runs_are_not_offered(app_db, outline_env) -> None:
@@ -119,9 +174,26 @@ def test_unsaved_runs_are_not_offered(app_db, outline_env) -> None:
 
     app = v1.AppTest.from_function(script).run()
 
-    options = app.multiselect[0].options
-    assert len(options) == 1
-    assert "저장 안 된 것" not in options[0]
+    assert table_titles(app) == ["저장된 것"]
+
+
+def test_saved_runs_older_than_the_recent_fifty_are_listed(
+    app_db, outline_env
+) -> None:
+    """최근 실행 50건 밖으로 밀려난 요약본도 재료로 나온다.
+
+    최근 실행 목록은 저장 여부와 상관없이 50건에서 끊긴다. 그
+    목록에서 저장된 것만 추리면, 미저장 실행이 쌓인 뒤로는 옛
+    요약본이 재료 후보에서 사라진다.
+    """
+    save_exported(app_db, document_title="오래된 요약본")
+    for _ in range(50):
+        run_history.save_run(app_db, make_result(title="미저장"))
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert table_titles(app) == ["오래된 요약본"]
 
 
 def test_no_questions_shows_a_notice(app_db, outline_env) -> None:
@@ -204,9 +276,28 @@ def test_selecting_a_run_enables_the_start(app_db, outline_env) -> None:
     add_instruction(app_db)
 
     app = v1.AppTest.from_function(script).run()
-    app.multiselect[0].select(app.multiselect[0].options[0]).run()
+    select_rows(app, app_db, [0])
+    app.run()
 
     assert app.button[0].disabled is False
+
+
+def test_picked_materials_are_listed_under_the_table(
+    app_db, outline_env
+) -> None:
+    """고른 재료의 제목과 개수를 표 아래에서 다시 확인할 수 있다."""
+    save_exported(app_db, document_title="먼저 저장", document_id="doc-1")
+    save_exported(app_db, document_title="나중 저장", document_id="doc-2")
+    add_instruction(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+    select_rows(app, app_db, [1])
+    app.run()
+
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "먼저 저장" in rendered
+    assert "나중 저장" not in rendered
+    assert f"1/{nlm.DIGEST_SOURCE_LIMIT}" in rendered
 
 
 def test_running_query_blocks_the_start(app_db, outline_env) -> None:
@@ -220,7 +311,8 @@ def test_running_query_blocks_the_start(app_db, outline_env) -> None:
     )
 
     app = v1.AppTest.from_function(script).run()
-    app.multiselect[0].select(app.multiselect[0].options[0]).run()
+    select_rows(app, app_db, [0])
+    app.run()
 
     assert app.button[0].disabled is True
     assert any("질의" in element.value for element in app.info)
@@ -229,10 +321,11 @@ def test_running_query_blocks_the_start(app_db, outline_env) -> None:
 def test_start_hands_the_selection_to_the_runner(
     app_db, outline_env, monkeypatch
 ) -> None:
-    """시작을 누르면 고른 실행들이 러너로 넘어간다."""
+    """시작을 누르면 표에서 고른 행의 실행이 러너로 넘어간다."""
     from notebooklm_st.pages import digest as digest_page
 
-    save_exported(app_db)
+    save_exported(app_db, document_title="먼저 저장", document_id="doc-1")
+    save_exported(app_db, document_title="나중 저장", document_id="doc-2")
     add_instruction(app_db)
     received: dict[str, object] = {}
 
@@ -245,8 +338,8 @@ def test_start_hands_the_selection_to_the_runner(
     monkeypatch.setattr(digest_page.digest_runner, "start_digest", fake_start)
 
     app = v1.AppTest.from_function(script).run()
-    app.multiselect[0].select(app.multiselect[0].options[0]).run()
-    app.button[0].click().run()
+    # 표는 새 것부터다. 1행은 먼저 저장한 doc-1 이다.
+    click_start(app, app_db, [1])
 
     summaries = received["summaries"]
     assert isinstance(summaries, list)
@@ -276,9 +369,8 @@ def test_start_hands_the_chosen_instruction_to_the_runner(
     monkeypatch.setattr(digest_page.digest_runner, "start_digest", fake_start)
 
     app = v1.AppTest.from_function(script).run()
-    app.multiselect[0].select(app.multiselect[0].options[0]).run()
     app.selectbox[0].select(second).run()
-    app.button[0].click().run()
+    click_start(app, app_db, [0])
 
     assert received["instruction"] == "연표로 정리해 줘"
 
@@ -294,10 +386,56 @@ def test_too_many_materials_blocks_the_start(app_db, outline_env) -> None:
         )
 
     app = v1.AppTest.from_function(script).run()
-    app.multiselect[0].set_value(app.multiselect[0].options).run()
+    select_rows(app, app_db, list(range(nlm.DIGEST_SOURCE_LIMIT + 1)))
+    app.run()
 
     assert app.button[0].disabled is True
     assert len(app.warning) == 1
+
+
+def summary(run_id: int) -> models.RunSummary:
+    """재료 표에 오를 저장된 실행 요약 하나를 만든다."""
+    return models.RunSummary(
+        id=run_id,
+        url="https://youtu.be/dQw4w9WgXcQ",
+        video_id="dQw4w9WgXcQ",
+        title="영상 제목",
+        created_at="2026-09-20T14:02:11",
+        answer_count=0,
+        outline_id=f"doc-{run_id}",
+        outline_url=f"{BASE_URL}/doc/doc-{run_id}",
+        outline_title=f"강의 {run_id}",
+        exported_at="2026-09-20T15:00:00",
+    )
+
+
+def test_table_key_is_stable_for_the_same_materials() -> None:
+    """재료가 그대로면 표의 key 도 그대로다.
+
+    행을 누를 때마다 화면이 다시 그려진다. 그때 key 가 바뀌면
+    Streamlit 이 새 표로 보고 방금 고른 선택을 비운다.
+    """
+    from notebooklm_st.pages import _digest_materials
+
+    first = _digest_materials.widget_key([summary(2), summary(1)])
+    second = _digest_materials.widget_key([summary(2), summary(1)])
+
+    assert first == second
+
+
+def test_table_key_changes_when_the_materials_change() -> None:
+    """재료 목록이 바뀌면 표의 key 가 달라진다.
+
+    선택은 행 번호로 돌아온다. key 가 같은 채로 맨 위에 새 재료가
+    끼면 고른 번호가 한 칸 밀린 다른 글을 가리킨다. key 가 바뀌면
+    Streamlit 이 새 표로 보고 선택을 비운다.
+    """
+    from notebooklm_st.pages import _digest_materials
+
+    before = _digest_materials.widget_key([summary(2), summary(1)])
+    after = _digest_materials.widget_key([summary(3), summary(2), summary(1)])
+
+    assert before != after
 
 
 def make_draft(instruction="정리해 줘", created_on="2026-09-23", topic=None):

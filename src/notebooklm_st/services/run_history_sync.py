@@ -21,7 +21,8 @@ from notebooklm_st.services import run_history
 def list_exported(connection: sqlite3.Connection) -> list[models.RunSummary]:
     """Outline 에 저장된 실행을 전부, 새 것부터 돌려준다.
 
-    상한을 두지 않는다. 동기화는 목록 전체를 봐야 한다.
+    상한을 두지 않는다. 동기화도, 정리본의 재료 표도 목록 전체를
+    봐야 한다.
 
     Args:
         connection: 열린 커넥션.

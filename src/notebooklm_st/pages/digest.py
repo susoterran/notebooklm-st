@@ -5,16 +5,16 @@ import sqlite3
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.core import digest_markdown, digest_title, labels, models
+from notebooklm_st.core import digest_markdown, digest_title, models
+from notebooklm_st.pages import _digest_materials
 from notebooklm_st.services import (
     digest_runner,
     nlm,
     outline,
     questions,
-    run_history,
+    run_history_sync,
 )
 
-_SELECTED_KEY = "digest_selected"
 _INSTRUCTION_KEY = "digest_instruction"
 _TITLE_KEY = "digest_title"
 _SAVED_KEY = "digest_saved"
@@ -74,30 +74,16 @@ def _render_form(registry: digest_runner.DigestRegistry) -> None:
         )
         return
     connection = session.get_connection()
-    saved = [
-        run
-        for run in run_history.list_runs(connection)
-        if run.exported_at is not None
-    ]
+    # 최근 실행 목록(list_runs)은 저장 여부와 상관없이 개수에서
+    # 끊긴다. 저장된 것만 상한 없이 읽어야 옛 요약본도 재료가 된다.
+    saved = run_history_sync.list_exported(connection)
     if not saved:
         st.info(
             "재료로 쓸 요약본이 없습니다."
             " 이력 화면에서 요약본을 Outline 에 먼저 저장하세요."
         )
         return
-
-    by_id = {run.id: run for run in saved}
-    selected_ids = st.multiselect(
-        "재료 선택",
-        options=list(by_id),
-        format_func=lambda run_id: _format_run(by_id[run_id]),
-        key=_SELECTED_KEY,
-        help=f"최대 {nlm.DIGEST_SOURCE_LIMIT}건까지 고를 수 있습니다.",
-    )
-    # 다른 탭에서 그 사이 이력이 지워지면 선택값이 남은 채로 위젯이
-    # 되살아나고, Streamlit 은 그 자리에 원본 라벨 문자열을 끼워
-    # 넣는다. by_id 에 없는 값은 조용히 걸러 트레이스백을 막는다.
-    selected = [by_id[key] for key in selected_ids if key in by_id]
+    selected = _digest_materials.render(saved)
     instruction = _render_instruction(connection)
     if instruction is None:
         return
@@ -168,16 +154,6 @@ def _render_start(
             registry, config, selected, instruction.strip()
         )
         st.rerun()
-
-
-def _format_run(run: models.RunSummary) -> str:
-    """재료 하나를 목록에 보여 줄 한 줄로 만든다.
-
-    위키에 붙은 문서 제목을 앞에 둔다. 고르는 사람이 찾는 이름이
-    그것이다.
-    """
-    label = run.outline_title or run.title or run.video_id
-    return f"{labels.shorten(label)} · {run.created_at}"
 
 
 def _render_finished(
