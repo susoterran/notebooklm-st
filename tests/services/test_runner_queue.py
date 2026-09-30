@@ -148,7 +148,7 @@ def test_the_worker_waits_while_something_else_uses_notebooklm(
     calls: list[str] = []
 
     def is_blocked() -> bool:
-        """막혀 있는 동안 몇 번 물었는지 알린다."""
+        """물어볼 때마다 알리고 막힘 여부를 돌려준다."""
         polled.set()
         return blocked.is_set()
 
