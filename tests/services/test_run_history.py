@@ -452,3 +452,36 @@ def test_list_video_ids_deduplicates(connection) -> None:
         run_history.save_run(connection, make_result(title="둘"))
 
     assert run_history.list_video_ids(connection) == {"dQw4w9WgXcQ"}
+
+
+def test_load_run_returns_the_same_summary_as_the_list(connection) -> None:
+    """한 건 조회는 목록의 그 항목과 같은 요약을 준다."""
+    run_id = run_history.save_run(
+        connection,
+        make_result(title="어떤 영상"),
+        models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
+    )
+
+    assert (
+        run_history.load_run(connection, run_id)
+        == (run_history.list_runs(connection)[0])
+    )
+
+
+def test_load_run_is_none_for_an_unknown_run(connection) -> None:
+    """없는 ID 면 빈 칸으로 찬 행이 아니라 None 이다."""
+    run_history.save_run(connection, make_result())
+
+    assert run_history.load_run(connection, 999) is None
+
+
+def test_load_run_carries_the_document_link(connection) -> None:
+    """저장된 실행은 링크를 싣고 답변 수가 0 이다."""
+    run_id = run_history.save_run(connection, make_result())
+    export(connection, run_id)
+
+    summary = run_history.load_run(connection, run_id)
+
+    assert summary is not None
+    assert summary.exported_at is not None
+    assert summary.answer_count == 0

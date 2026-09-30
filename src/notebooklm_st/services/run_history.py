@@ -39,8 +39,8 @@ SUMMARY_SELECT = (
     " LEFT JOIN answers AS a ON a.run_id = r.id"
     " LEFT JOIN run_metadata AS m ON m.run_id = r.id"
 )
-"""``list_runs`` 와 ``run_history_sync.list_exported`` 가 함께 쓰는
-SELECT 머리.
+"""``list_runs``·``load_run``·``run_history_sync.list_exported`` 가
+함께 쓰는 SELECT 머리.
 
 ``run_metadata`` 는 실행 하나에 많아야 한 행이라 조인이 답변 행을
 불리지 않는다."""
@@ -145,6 +145,31 @@ def list_runs(
         (limit,),
     ).fetchall()
     return [row_to_summary(row) for row in rows]
+
+
+def load_run(
+    connection: sqlite3.Connection, run_id: int
+) -> models.RunSummary | None:
+    """실행 하나의 요약을 읽는다.
+
+    ``list_runs`` 의 한 건짜리다. 자동 저장이 문서 본문을 만들 때
+    쓴다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_id: 찾을 실행 ID.
+
+    Returns:
+        요약. 그런 실행이 없으면 ``None``.
+    """
+    # GROUP BY 를 빼면 집계 함수(COUNT) 때문에 없는 ID 에도 빈 칸으로
+    # 찬 행이 하나 온다.
+    row = connection.execute(
+        SUMMARY_SELECT + " WHERE r.id = ? GROUP BY r.id", (run_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    return row_to_summary(row)
 
 
 def load_run_items(
