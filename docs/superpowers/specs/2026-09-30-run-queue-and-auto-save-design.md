@@ -503,11 +503,16 @@ def save(
 - 본문은 `markdown_export.to_markdown(summary, items, title, metadata)`
   이다. `mark_exported` 에서 `ValueError`·`sqlite3.Error` 만 잡아
   `RecordError` 로 바꾼다. 지금 이력 화면이 잡는 범위와 같다.
-- 이력 화면의 `_export` 는 이 함수를 부르고 두 예외를 `st.error` 로
-  보인다. 화면에 보이는 문구와 동작은 바뀌지 않는다.
+- 이력 화면의 `_export` 는 이 함수를 부르고 세 예외(`OutlineError`·
+  `RecordError`·`SaveConflictError`)를 `st.error` 로 보인다. 화면에
+  보이는 문구와 동작은 바뀌지 않는다.
 - `run_history.load_run(connection, run_id) -> RunSummary | None` 을
   더한다. `list_runs` 와 같은 SELECT 에 `WHERE r.id = ?` 를 붙인다.
   러너가 `to_markdown` 에 넘길 요약을 여기서 얻는다(→ 2.5).
+- `save` 는 같은 실행을 동시에 두 번 올리지 않는다. 실행 ID 를
+  선점하고, 선점한 뒤 이미 저장됐는지 다시 읽어 그렇다면
+  `SaveConflictError` 를 낸다. `mark_exported` 도 이미 저장된
+  실행에는 기록하지 않는다(`ValueError`).
 
 ### 7.4 러너의 자동 저장
 
@@ -732,6 +737,7 @@ def save(
 | 자동 저장 — 답변 일부 실패·제목 없음·설정 없음 | done, 저장 칸 `미저장 · …`. 이력에 미저장 |
 | 자동 저장 — Outline 이 거부·응답 없음 | done, 저장 칸 `미저장 · 저장 실패: …`. 이력에 미저장. 다시 올리면 된다 |
 | 자동 저장 — 문서는 만들었고 로컬 기록 실패 | done, 저장 칸에 문서 링크와 "다시 저장하면 문서가 둘" 경고. 이력에는 미저장으로 보인다 |
+| 자동 저장이 올리는 중에 이력 화면에서 같은 실행을 저장 | 먼저 시작한 쪽만 문서를 만든다. 이력 화면은 `이미 Outline 에 저장했거나 저장 중인 실행입니다. 화면을 새로 고쳐 확인하세요.` 를, 자동 저장은 저장 칸에 `이미 저장했거나 저장 중` 을 보인다. `run_export` 가 프로세스 안에서 실행 ID 를 선점하고, 선점한 뒤 저장 여부를 다시 읽는다 |
 | 자동 저장 — 예상 못 한 예외 | done, 저장 칸 `미저장 · 예상 못 한 오류(…)`. 로그에 트레이스백 |
 | 워커가 `BaseException` 으로 죽음 | 그 실행은 failed(지금 `_work` 가 하듯). 자리가 비고, 남은 대기 항목은 다음 넣기·재개 때 이어진다 |
 | 정리본이 도는 중 | 워커가 2초마다 확인하며 기다린다 |

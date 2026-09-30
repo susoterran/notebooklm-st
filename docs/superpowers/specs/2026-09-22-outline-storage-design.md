@@ -145,9 +145,14 @@ YAML frontmatter 를 따로 알아보지 않는 렌더러에서는 피할 수 �
 
 ```
 pages/history.py     제목 확인 · 인용 포함 결정 · 저장 버튼 · 결과 표시
-services/runner.py   자동 저장 — 건너뛸지 판정 · 영상 제목 · 인용 뺀 사본
         │
-        ▼  둘 다 부른다
+        │   services/runner.py   자동 저장을 켜면 이력을 남긴 직후
+        │           │
+        │           ▼
+        │   services/run_export.save_automatically()
+        │           건너뛸지 판정 · 영상 제목 · 인용 뺀 사본
+        │           │
+        ▼ 직접      ▼
 services/run_export.save()                   저장 한 벌
   ├── core/markdown_export.to_markdown()     본문 마크다운
   ├── services/outline.create_document()     documents.create 한 번
@@ -161,9 +166,9 @@ services/run_export.save()                   저장 한 벌
 - **`services/run_history.py` 는 Outline 을 모른다.** 문서 ID·제목·URL
   이라는 문자열 셋을 받을 뿐이다.
 - 둘을 잇는 것은 `services/run_export.py` 이고, 그것이 아는 것은
-  "만들고 → 기록한다" 는 순서뿐이다. 이력 화면과 러너는 그 함수를
-  부르고 두 실패(`OutlineError`·`RecordError`)를 각자의 자리에
-  보인다. 이력 화면은 빨간 줄로, 러너는 실행 현황 표의 저장 칸으로.
+  "만들고 → 기록한다" 는 순서뿐이다. 이력 화면은 `save` 를, 러너는
+  `save_automatically` 를 부른다. 실패는 이력 화면이 빨간 줄로, 자동
+  저장이 실행 현황 표의 저장 칸으로 보인다.
 
 데이터 흐름.
 
@@ -171,7 +176,7 @@ services/run_export.save()                   저장 한 벌
 요약 실행 끝 → SQLite 에 answers + run_metadata
                         ↓
    이력에서 사람이 읽고 제목 확인 → 저장 버튼
-   또는 자동 저장을 켠 실행이면 러너가 곧바로 (영상 제목 · 인용 뺌)
+   또는 자동 저장을 켠 실행이면 러너가 곧바로 save_automatically() (영상 제목 · 인용 뺌)
                         ↓
    to_markdown() → outline.create_document() → 문서 ID·제목·URL
                         ↓
@@ -276,8 +281,8 @@ def create_document(
 **실패를 예외로 던진다.** `video_metadata.fetch` 는 실패를 값으로
 돌려주는데, 그것은 백그라운드 스레드에서 요약을 멈출 수 없기 때문이었다.
 실패를 어떻게 보일지는 부르는 자리가 정한다. 이력 화면은 빨간 줄을
-띄우고 끝나며, 자동 저장은 러너가 잡아 실행 현황 표의 저장 칸에
-적는다.
+띄우고 끝나며, 자동 저장은 `run_export.save_automatically` 가 잡아
+실행 현황 표의 저장 칸에 적는다.
 
 타임아웃 기본값 20초는 `video_metadata` 와 같은 값을 쓴다. 홈 LAN 안의
 호출이라 넉넉하다.
