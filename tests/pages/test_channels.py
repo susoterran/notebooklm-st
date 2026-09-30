@@ -20,8 +20,10 @@ from notebooklm_st.services import (
     channel_feed,
     channel_lookup,
     channels,
+    outline,
     questions,
     run_history,
+    settings,
 )
 
 CHANNEL_ID = "UCsBjURrPoezykLs9EqgamOA"
@@ -402,6 +404,35 @@ def test_summary_hands_the_video_to_the_runner(app_db, monkeypatch) -> None:
 
     assert received["url"] == "https://www.youtube.com/watch?v=TbkUKCm3CHQ"
     assert received["questions"] == ["핵심 주장"]
+
+
+def test_summary_never_auto_saves(app_db, monkeypatch) -> None:
+    """자동 저장을 켜 두어도 채널 화면의 요약은 사람이 저장한다."""
+    from notebooklm_st.pages import _channel_check
+
+    monkeypatch.setenv(outline.URL_ENV_VAR, "http://192.168.0.10:3000")
+    monkeypatch.setenv(outline.TOKEN_ENV_VAR, "ol_secret")
+    monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
+    settings.set_auto_save(app_db, True)
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    check_feed(monkeypatch, feed_with(make_entry()))
+    calls: list[dict[str, object]] = []
+
+    def fake_start(registry, url, question_list, db_path, **kwargs):
+        """넘어온 키워드 인자를 기록한다."""
+        calls.append(kwargs)
+
+    monkeypatch.setattr(_channel_check.runner, "start_run", fake_start)
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
+    button_by(app, "요약").click().run()
+
+    assert len(calls) == 1
+    assert calls[0].get("auto_save", False) is False
 
 
 def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
