@@ -135,19 +135,6 @@ class RunRegistry(run_store.RunStore):
                 for handle in self._handles.values()
             )
 
-    def running_count(self) -> int:
-        """진행 중인 실행 개수를 센다.
-
-        Returns:
-            ``status`` 가 running 인 실행 수.
-        """
-        with self._lock:
-            return sum(
-                1
-                for handle in self._handles.values()
-                if handle.status == "running"
-            )
-
     def _take_worker_slot(self) -> bool:
         """워커 자리를 잡아야 하면 잡는다. 락을 쥔 채로 부른다."""
         if self._worker_active or self._paused_reason is not None:

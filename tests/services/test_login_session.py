@@ -105,6 +105,29 @@ def test_busy_sees_a_running_query() -> None:
     assert login_session.busy(registry, digest_runner.DigestRegistry())
 
 
+def test_busy_sees_a_queued_query() -> None:
+    """곧 돌 질의가 대기 중이어도 바쁘다."""
+    registry = run_registry.RunRegistry()
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+
+    assert login_session.busy(registry, digest_runner.DigestRegistry())
+
+
+def test_not_busy_while_the_queue_is_paused() -> None:
+    """멈춘 대기열은 로그인을 막지 않는다. 로그인으로 풀 멈춤도 있다."""
+    registry = run_registry.RunRegistry()
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+    registry.pause("인증이 만료되었습니다.")
+
+    assert not login_session.busy(registry, digest_runner.DigestRegistry())
+
+
 def test_busy_sees_a_running_digest() -> None:
     """정리본을 쓰고 있으면 바쁘다."""
     digests = digest_runner.DigestRegistry()

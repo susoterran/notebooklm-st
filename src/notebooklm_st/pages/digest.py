@@ -138,12 +138,12 @@ def _render_start(
             " 소스 하나마다 등록을 기다리므로 그 이상은 너무 오래"
             " 걸립니다."
         )
-    busy = session.get_registry().running_count() > 0
+    busy = session.get_registry().active_count() > 0
     if busy:
         st.info(
-            "질의가 실행 중입니다. 실행 현황에서 완료를 확인한 뒤"
-            " 시작하세요 — 둘이 같은 자격증명으로 NotebookLM 을"
-            " 동시에 쓰지 않게 막습니다."
+            "질의가 실행 중이거나 대기 중입니다. 실행 현황에서 완료를"
+            " 확인한 뒤 시작하세요 — 둘이 같은 자격증명으로 NotebookLM"
+            " 을 동시에 쓰지 않게 막습니다."
         )
     if st.button(
         "정리 시작",

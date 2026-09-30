@@ -22,17 +22,6 @@ def make_result() -> models.RunResult:
     )
 
 
-def test_running_count_counts_only_running_runs() -> None:
-    """진행 중인 실행만 센다."""
-    registry = run_registry.RunRegistry()
-    first = start(registry, "v1")
-    start(registry, "v2")
-    registry.enqueue("u3", "v3", QUESTIONS)
-    assert registry.running_count() == 2
-    registry.finish(first.run_id, make_result())
-    assert registry.running_count() == 1
-
-
 def test_cancel_removes_a_queued_run() -> None:
     """대기 중인 실행은 취소하면 목록에서 사라진다."""
     registry = run_registry.RunRegistry()

@@ -36,11 +36,12 @@ def render() -> None:
     for notebook in notebooks:
         st.write(f"- {notebook.title}")
 
-    running = session.get_registry().running_count()
-    if running > 0:
+    active = session.get_registry().active_count()
+    if active > 0:
         st.warning(
-            f"진행 중인 실행이 {running}건 있습니다. 그 노트북까지 지워질 수"
-            " 있어 삭제를 막았습니다. 실행 현황에서 완료를 확인하세요."
+            f"실행 중이거나 대기 중인 질의가 {active}건 있습니다. 그"
+            " 노트북까지 지워질 수 있어 삭제를 막았습니다. 실행 현황에서"
+            " 완료를 확인하세요."
         )
     digesting = session.get_digest_registry().is_running()
     if digesting:
@@ -54,7 +55,7 @@ def render() -> None:
     if st.button(
         f"{len(notebooks)}개 모두 삭제",
         key="maintenance_delete",
-        disabled=not confirmed or running > 0 or digesting,
+        disabled=not confirmed or active > 0 or digesting,
     ):
         _delete([notebook.id for notebook in notebooks])
 

@@ -175,7 +175,8 @@ def _blocked_reason(selected: list[models.Question]) -> str | None:
     """요약을 막을 이유를 찾아 문장으로 돌려준다.
 
     질의와 정리는 같은 쿠키로 NotebookLM 에 붙으므로 동시에 돌리지
-    않는다. 질의 화면과 같은 가드다.
+    않는다. 채널 화면의 요약은 대기열을 기다리지 않고 비어 있을 때만
+    시작한다. 멈춘 대기열에 넣으면 돌지 않고 서 있으므로 그때도 막는다.
 
     Args:
         selected: 고른 질문들.
@@ -183,10 +184,16 @@ def _blocked_reason(selected: list[models.Question]) -> str | None:
     Returns:
         막을 이유. 없으면 ``None``.
     """
-    if session.get_registry().running_count() > 0:
+    registry = session.get_registry()
+    if registry.active_count() > 0:
         return (
-            "이미 실행 중인 질의가 있습니다. 실행 현황 화면에서"
-            " 완료를 확인한 뒤 시작하세요."
+            "이미 실행 중이거나 대기 중인 질의가 있습니다. 실행 현황"
+            " 화면에서 완료를 확인한 뒤 시작하세요."
+        )
+    if registry.paused_reason() is not None:
+        return (
+            "대기열이 멈춰 있습니다. 실행 현황에서 재개하거나 대기 항목을"
+            " 취소한 뒤 시작하세요."
         )
     if session.get_digest_registry().is_running():
         return (

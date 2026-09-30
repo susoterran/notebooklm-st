@@ -435,6 +435,55 @@ def test_summary_never_auto_saves(app_db, monkeypatch) -> None:
     assert calls[0]["auto_save"] is False
 
 
+def test_a_queued_query_blocks_the_summary(app_db, monkeypatch) -> None:
+    """채널 화면의 요약은 대기열을 기다리지 않고 비어 있을 때만 연다."""
+    from notebooklm_st import session
+
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    check_feed(monkeypatch, feed_with(make_entry()))
+    session.get_registry().enqueue(
+        "https://youtu.be/dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+        tuple(questions.list_questions(app_db)),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
+
+    assert button_by(app, "요약").disabled is True
+    assert any("대기 중인 질의" in item.value for item in app.info)
+
+
+def test_a_paused_queue_blocks_the_summary(app_db, monkeypatch) -> None:
+    """멈춘 대기열에 넣으면 돌지 않으므로 재개나 취소를 먼저 권한다."""
+    from notebooklm_st import session
+
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    check_feed(monkeypatch, feed_with(make_entry()))
+    registry = session.get_registry()
+    registry.enqueue(
+        "https://youtu.be/dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+        tuple(questions.list_questions(app_db)),
+    )
+    registry.pause("요청 한도를 초과했습니다.")
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
+
+    assert button_by(app, "요약").disabled is True
+    assert [item.value for item in app.info] == [
+        "대기열이 멈춰 있습니다. 실행 현황에서 재개하거나 대기 항목을"
+        " 취소한 뒤 시작하세요."
+    ]
+
+
 def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
     """질의가 돌고 있으면 요약을 시작할 수 없다."""
     from notebooklm_st import session
