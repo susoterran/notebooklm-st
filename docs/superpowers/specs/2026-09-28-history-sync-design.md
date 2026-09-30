@@ -106,7 +106,7 @@ operator: "eq", value: ...}]` 로 컬렉션을 거르고, `sort`·`direction` �
 
 ### 2.4 기존 코드가 이미 가진 것
 
-- `run_history.mark_exported` 는 UPDATE 와 DELETE 를 커밋 하나로 묶고
+- `run_links.mark_exported` 는 UPDATE 와 DELETE 를 커밋 하나로 묶고
   어떤 예외든 롤백해 다시 던진다. 같은 패턴을 쓴다.
 - `pages/history.py` 의 삭제 UI 는 위젯 키가 아닌 우리 세션 키
   (`_DELETE_ARMED_KEY`)에 확인 상태를 두는 2단계다. 같은 패턴을 쓴다.
@@ -466,7 +466,7 @@ def write_metadata(
   새로 넣었거나 값을 바꿨으면 `True`, 맞는 행이 없거나 값이 같으면
   `False` 다. **커밋하지 않는다.**
 - 트랜잭션은 `history_sync.apply` 가 소유한다. 기존 `save_run`·
-  `mark_exported`·`delete_run` 은 `run_history` 에 남아 각자 커밋한다.
+  `delete_run`(`run_history`)과 `mark_exported`(`run_links`)는 각자 커밋한다.
   규약이 갈리는 것을 모듈 독스트링에 적는다.
 
 ### 7.3 `services/history_sync.py`

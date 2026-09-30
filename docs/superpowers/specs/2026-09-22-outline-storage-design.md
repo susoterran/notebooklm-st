@@ -156,7 +156,7 @@ pages/history.py     제목 확인 · 인용 포함 결정 · 저장 버튼 · �
 services/run_export.save()                   저장 한 벌
   ├── core/markdown_export.to_markdown()     본문 마크다운
   ├── services/outline.create_document()     documents.create 한 번
-  └── services/run_history.mark_exported()   링크 기록 + 본문 삭제
+  └── services/run_links.mark_exported()     링크 기록 + 본문 삭제
 ```
 
 경계는 이렇다.
@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 ### 6.3 `services/run_history.py`
 
-**더한다.**
+**더한다**(`services/run_links.py` 에 둔다).
 
 ```python
 def mark_exported(

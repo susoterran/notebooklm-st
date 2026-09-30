@@ -117,7 +117,7 @@
 ### 2.5 저장은 두 호출이고, 저장하면 답변이 지워진다
 
 - 이력 화면의 저장(`pages/history.py:_export`)은
-  `outline.create_document` → `run_history.mark_exported` 두 단계다.
+  `outline.create_document` → `run_links.mark_exported` 두 단계다.
   앞이 실패하면 로컬은 그대로다. 뒤가 실패하면 "문서는
   만들어졌습니다 … 다시 저장하면 문서가 둘이 됩니다" 를 보이며, 뒤는
   `ValueError`·`sqlite3.Error` 만 잡는다.
