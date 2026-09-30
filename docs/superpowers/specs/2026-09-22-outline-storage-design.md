@@ -9,6 +9,8 @@
   질의 파이프라인(`services/nlm.py`)과 실행 모델(`services/runs.py`),
   러너(`services/runner.py`), 인증(`services/auth.py`),
   메타데이터 조회(`services/video_metadata.py`)는 건드리지 않는다.
+  자동 저장이 러너·실행 모델·질의 화면·실행 현황에 더하는 것은
+  `2026-09-30-run-queue-and-auto-save-design.md` 가 다룬다.
 - **범위**: 릴리스 R4. 기획 문서
   `docs/requests/2026-09-16-summary-pipeline-v2.md` 의 **요구 3**.
   선행 조건인 R1(무인 갱신 인증)·R2(컨테이너 배포)·R3(영상 메타데이터)는
@@ -713,6 +715,10 @@ dependencies = [
 `core/youtube.py`, `pages/ask.py`, `pages/dashboard.py`,
 `pages/maintenance.py`, `pages/question_admin.py`, `Dockerfile`,
 `.github/workflows/`.
+
+자동 저장(`services/run_export.py` 신규, 러너·실행 모델·질의 화면·실행
+현황의 변경)이 건드리는 파일은
+`2026-09-30-run-queue-and-auto-save-design.md` §13 이 적는다.
 
 ---
 
