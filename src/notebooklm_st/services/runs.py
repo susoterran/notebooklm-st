@@ -20,6 +20,9 @@ FINISHED: frozenset[RunStatus] = frozenset({"done", "failed"})
 것을 ``!= "running"`` 으로 가리면 나중에 상태가 늘 때 함께 지워진다.
 """
 
+PENDING: frozenset[RunStatus] = frozenset({"queued", "running"})
+"""아직 끝나지 않은 실행의 상태. 같은 영상을 두 번 넣지 않는 데 쓴다."""
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SaveOutcome:

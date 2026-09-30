@@ -207,6 +207,30 @@ class RunStore:
                 del self._handles[run_id]
             return len(finished)
 
+    def _first_queued(self) -> runs.RunHandle | None:
+        """가장 먼저 넣은 대기 항목. 락을 쥔 채로 부른다."""
+        return next(
+            (
+                handle
+                for handle in self._handles.values()
+                if handle.status == "queued"
+            ),
+            None,
+        )
+
+    def _start(self, handle: runs.RunHandle) -> runs.RunHandle:
+        """대기 항목을 진행 중으로 바꾼다. 락을 쥔 채로 부른다.
+
+        Args:
+            handle: 보관소가 쥔 대기 항목.
+
+        Returns:
+            바꾼 핸들의 복사본.
+        """
+        handle.status = "running"
+        handle.started_at = _now()
+        return _copy(handle)
+
 
 def _copy(handle: runs.RunHandle) -> runs.RunHandle:
     """진행 목록까지 새로 만든 복사본을 돌려준다."""
