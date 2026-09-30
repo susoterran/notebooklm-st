@@ -9,7 +9,7 @@ from typing import Literal
 
 from notebooklm_st.core import models
 
-RunStatus = Literal["running", "done", "failed"]
+RunStatus = Literal["queued", "running", "done", "failed"]
 MessageLevel = Literal["info", "error"]
 SaveState = Literal["saved", "skipped", "failed"]
 
@@ -35,7 +35,7 @@ class SaveOutcome:
 
 @dataclasses.dataclass(slots=True)
 class RunHandle:
-    """진행 중이거나 끝난 실행 하나.
+    """대기 중이거나, 진행 중이거나, 끝난 실행 하나.
 
     다른 값 객체와 달리 frozen 이 아니다. 백그라운드 스레드가 상태를
     갱신하며, 동시 접근은 ``run_store.RunStore`` 의 락이 막는다.
@@ -50,7 +50,10 @@ class RunHandle:
     auto_save: bool
     """넣는 순간 고정한 자동 저장 여부. 설정을 바꿔도 그대로다."""
 
-    started_at: str
+    queued_at: str
+    started_at: str | None
+    """시작한 시각. 대기 중이면 ``None``."""
+
     status: RunStatus
     progress: list[str]
     result: models.RunResult | None

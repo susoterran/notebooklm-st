@@ -32,7 +32,26 @@ class RunStore:
         questions: tuple[models.Question, ...],
         auto_save: bool = False,
     ) -> runs.RunHandle:
-        """새 실행을 running 상태로 등록한다.
+        """새 실행을 대기열을 거치지 않고 running 으로 등록한다.
+
+        인자와 반환값은 ``enqueue`` 와 같다. 넣은 시각이 곧 시작
+        시각이다.
+        """
+        handle = self.enqueue(url, video_id, questions, auto_save)
+        with self._lock:
+            stored = self._handles[handle.run_id]
+            stored.status = "running"
+            stored.started_at = stored.queued_at
+            return _copy(stored)
+
+    def enqueue(
+        self,
+        url: str,
+        video_id: str,
+        questions: tuple[models.Question, ...],
+        auto_save: bool = False,
+    ) -> runs.RunHandle:
+        """새 실행을 대기열 끝에 넣는다.
 
         Args:
             url: 질의할 영상 URL.
@@ -42,8 +61,8 @@ class RunStore:
                 저장하는 입구(채널 화면)는 기본값을 쓴다.
 
         Returns:
-            등록된 핸들. 레지스트리가 보관하는 것과 같은 객체가 아니라
-            호출자가 ``run_id`` 를 얻는 용도다.
+            넣은 핸들. 보관소가 쥔 것과 같은 객체가 아니라 호출자가
+            ``run_id`` 를 얻는 용도다.
         """
         handle = runs.RunHandle(
             run_id=uuid.uuid4().hex[:8],
@@ -51,8 +70,9 @@ class RunStore:
             video_id=video_id,
             questions=questions,
             auto_save=auto_save,
-            started_at=_now(),
-            status="running",
+            queued_at=_now(),
+            started_at=None,
+            status="queued",
             progress=[],
             result=None,
             save=None,
@@ -80,10 +100,11 @@ class RunStore:
     def list_all(self) -> list[runs.RunHandle]:
         """실행 표에 그릴 순서로 모든 실행을 돌려준다.
 
-        진행 중인 실행을 넣은 순서대로 먼저 두고, 끝난 실행을 그 뒤에
-        최근에 끝난 것부터 둔다. 표를 위에서 아래로 "지금, 지난 것"
-        으로 읽게 하려는 순서다. 끝난 시각은 초 단위라 자주 겹치며,
-        겹치면 나중에 만든 실행이 앞에 온다.
+        진행 중인 실행, 대기 중인 실행을 넣은 순서대로 먼저 두고, 끝난
+        실행을 그 뒤에 최근에 끝난 것부터 둔다. 표를 위에서 아래로
+        "지금, 다음, 지난 것" 으로 읽게 하려는 순서다. 대기 줄은 워커가
+        가져갈 순서와 같다. 끝난 시각은 초 단위라 자주 겹치며, 겹치면
+        나중에 넣은 실행이 앞에 온다.
 
         Returns:
             복사본 목록. 화면이 순회하는 동안 스레드가 바꿔도 안전하다.
@@ -93,8 +114,9 @@ class RunStore:
             running = [
                 handle for handle in handles if handle.status == "running"
             ]
-            # 만든 순서의 역순으로 모은 뒤 안정 정렬한다. 끝난 시각이
-            # 같은 실행끼리는 나중에 만든 것이 앞에 남는다.
+            queued = [handle for handle in handles if handle.status == "queued"]
+            # 넣은 순서의 역순으로 모은 뒤 안정 정렬한다. 끝난 시각이
+            # 같은 실행끼리는 나중에 넣은 것이 앞에 남는다.
             finished = [
                 handle
                 for handle in reversed(handles)
@@ -103,7 +125,8 @@ class RunStore:
             finished.sort(
                 key=lambda handle: handle.finished_at or "", reverse=True
             )
-            return [_copy(handle) for handle in running + finished]
+            ordered = running + queued + finished
+            return [_copy(handle) for handle in ordered]
 
     def append_progress(self, run_id: str, message: str) -> None:
         """진행 문구를 덧붙인다. 없는 ID 면 조용히 넘어간다.

@@ -1,5 +1,7 @@
 """실행 현황 화면."""
 
+import functools
+
 import streamlit as st
 
 from notebooklm_st import session
@@ -45,8 +47,43 @@ def _render_runs() -> None:
         args=(registry,),
     )
     run_progress.render_header()
+    places = _queue_places(handles)
     for handle in handles:
-        run_progress.render_row(handle, registry.discard)
+        run_progress.render_row(
+            handle,
+            places.get(handle.run_id),
+            registry.discard,
+            functools.partial(_cancel, registry),
+        )
+
+
+def _queue_places(handles: list[runs.RunHandle]) -> dict[str, int]:
+    """대기 중인 실행마다 몇 번째로 시작할지 매긴다.
+
+    ``list_all`` 은 대기 줄을 워커가 가져갈 순서로 놓는다.
+
+    Args:
+        handles: ``list_all`` 이 돌려준 순서의 실행들.
+
+    Returns:
+        실행 ID 에서 차례(1부터)로 가는 사전. 대기 줄만 들어 있다.
+    """
+    queued = [handle.run_id for handle in handles if handle.status == "queued"]
+    return {run_id: place for place, run_id in enumerate(queued, start=1)}
+
+
+def _cancel(registry: run_registry.RunRegistry, run_id: str) -> None:
+    """대기 중인 실행을 취소한다.
+
+    버튼 콜백으로 쓴다. 누르기 직전에 워커가 가져갔으면 ``cancel`` 이
+    거짓을 돌려주고 아무것도 지우지 않는다. 그 줄은 다음 그림에서 실행
+    중으로 보인다.
+
+    Args:
+        registry: 실행 레지스트리.
+        run_id: 취소할 실행 ID.
+    """
+    registry.cancel(run_id)
 
 
 def _discard_finished(registry: run_registry.RunRegistry) -> None:

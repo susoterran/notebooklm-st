@@ -58,6 +58,81 @@ def test_dashboard_draws_a_running_run_as_a_row(app_db) -> None:
     assert len(app.info) == 0
 
 
+def test_dashboard_numbers_queued_runs_after_the_running_one(app_db) -> None:
+    """대기 줄은 실행 중인 줄 아래에 넣은 순서대로 차례를 단다."""
+
+    def script():
+        """AppTest 진입점 — 실행 중 하나와 대기 둘을 넣고 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            for video_id in ("queued00001", "queued00002"):
+                registry.enqueue(
+                    f"https://youtu.be/{video_id}", video_id, (question,)
+                )
+            registry.create(
+                "https://youtu.be/runrunrun01", "runrunrun01", (question,)
+            )
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    cells = [element.value for element in app.markdown]
+    badges = [cell for cell in cells if "-badge[" in cell]
+    assert badges == [
+        ":blue-badge[실행 중]",
+        ":gray-badge[대기 1]",
+        ":gray-badge[대기 2]",
+    ]
+    videos = [cell for cell in cells if "youtube.com" in cell]
+    assert "runrunrun01" in videos[0]
+    assert "queued00001" in videos[1]
+    assert "queued00002" in videos[2]
+    assert labels_of(app).count("취소") == 2
+
+
+def test_cancel_removes_only_its_queued_run(app_db) -> None:
+    """대기 줄의 취소는 그 실행만 지우고 남은 줄의 차례를 당긴다."""
+
+    def script():
+        """AppTest 진입점 — 대기 둘을 넣고 현황을 그린다."""
+        import streamlit as st
+
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if "ids" not in st.session_state:
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            st.session_state["ids"] = [
+                registry.enqueue(
+                    f"https://youtu.be/{video_id}", video_id, (question,)
+                ).run_id
+                for video_id in ("queued00001", "queued00002")
+            ]
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    first = app.session_state["ids"][0]
+
+    app.button(key=f"dashboard_cancel_{first}").click().run()
+
+    assert not app.exception
+    text = rendered(app)
+    assert "queued00001" not in text
+    assert "queued00002" in text
+    assert ":gray-badge[대기 1]" in text
+
+
 def test_dashboard_draws_a_finished_run_without_the_answer(app_db) -> None:
     """완료된 실행은 답변 수만 보이고 본문은 그리지 않는다."""
 

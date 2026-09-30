@@ -149,6 +149,7 @@ def make_handle(**changes) -> runs.RunHandle:
             video_id="dQw4w9WgXcQ",
             questions=(make_question("핵심 주장"),),
             auto_save=False,
+            queued_at="2026-09-30T17:12:40",
             started_at="2026-09-30T17:12:46",
             status="running",
             progress=[],
@@ -200,6 +201,14 @@ def test_status_badge_names_each_status() -> None:
     assert run_progress.status_badge(failed) == ("실패", "red")
 
 
+def test_status_badge_numbers_a_queued_run() -> None:
+    """대기 줄은 몇 번째로 시작할지를 회색 배지에 적는다."""
+    queued = make_handle(status="queued", started_at=None)
+
+    assert run_progress.status_badge(queued, 2) == ("대기 2", "gray")
+    assert run_progress.status_badge(queued) == ("대기", "gray")
+
+
 def test_video_label_uses_the_shortened_title_once_done() -> None:
     """완료된 실행은 제목을 40자로 줄여 쓴다."""
     label = run_progress.video_label(make_done(title="가" * 50))
@@ -225,11 +234,23 @@ def test_short_time_keeps_month_day_hour_minute() -> None:
     assert run_progress.short_time("2026-09-30T17:12:46") == "09-30 17:12"
 
 
+def test_short_time_is_a_dash_before_the_run_starts() -> None:
+    """대기 중이라 시작 시각이 없으면 ``—`` 다."""
+    assert run_progress.short_time(None) == "—"
+
+
 def test_result_shows_the_latest_progress_while_running() -> None:
     """진행 중이면 가장 최근 진행 문구만 보인다."""
     handle = make_handle(progress=["임시 노트북 생성 중", "자막 인덱싱 중"])
 
     assert run_progress.result_markdown(handle) == "자막 인덱싱 중"
+
+
+def test_result_is_empty_while_queued() -> None:
+    """대기 중인 실행은 결과 칸을 비운다."""
+    handle = make_handle(status="queued", started_at=None)
+
+    assert run_progress.result_markdown(handle) == ""
 
 
 def test_result_says_starting_before_any_progress() -> None:
@@ -329,9 +350,11 @@ def test_save_is_a_dash_without_auto_save() -> None:
 
 def test_save_says_auto_before_the_run_ends() -> None:
     """자동 저장을 켠 실행이 도는 동안은 ``자동`` 이다."""
-    handle = make_handle(auto_save=True)
+    running = make_handle(auto_save=True)
+    queued = make_handle(auto_save=True, status="queued", started_at=None)
 
-    assert run_progress.save_markdown(handle) == "자동"
+    assert run_progress.save_markdown(running) == "자동"
+    assert run_progress.save_markdown(queued) == "자동"
 
 
 def test_save_is_a_dash_when_the_run_failed() -> None:
@@ -416,6 +439,7 @@ def test_render_row_draws_a_badge_link_and_remove_button() -> None:
                     ),
                 ),
                 auto_save=False,
+                queued_at="2026-09-30T17:12:40",
                 started_at="2026-09-30T17:12:46",
                 status="done",
                 progress=[],
@@ -430,6 +454,8 @@ def test_render_row_draws_a_badge_link_and_remove_button() -> None:
                 error_level=None,
                 finished_at="2026-09-30T17:14:00",
             ),
+            None,
+            remember,
             remember,
         )
 
@@ -475,6 +501,7 @@ def test_render_row_offers_hide_for_a_running_run() -> None:
                 video_id="dQw4w9WgXcQ",
                 questions=(question, question),
                 auto_save=False,
+                queued_at="2026-09-30T17:12:40",
                 started_at="2026-09-30T17:12:46",
                 status="running",
                 progress=["자막 인덱싱 중"],
@@ -484,6 +511,8 @@ def test_render_row_offers_hide_for_a_running_run() -> None:
                 error_level=None,
                 finished_at=None,
             ),
+            None,
+            ignore,
             ignore,
         )
 
@@ -731,6 +760,63 @@ def test_schema_gate_keeps_firing_through_the_resource_cache(
     session.get_connection.clear()
 
 
+def test_render_row_offers_cancel_for_a_queued_run() -> None:
+    """대기 줄은 차례 배지·빈 시작 칸·취소 버튼을 그린다."""
+
+    def script():
+        """AppTest 진입점 — 대기 중인 실행 한 줄을 그린다."""
+        import streamlit as st
+
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.core import models
+        from notebooklm_st.services import runs
+
+        def ignore(run_id: str) -> None:
+            """누른 것을 무시한다."""
+
+        def remember(run_id: str) -> None:
+            """취소한 실행 ID 를 세션에 적는다."""
+            st.session_state.setdefault("cancelled", []).append(run_id)
+
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
+        run_progress.render_row(
+            runs.RunHandle(
+                run_id="abc12345",
+                url="https://youtu.be/dQw4w9WgXcQ",
+                video_id="dQw4w9WgXcQ",
+                questions=(question,),
+                auto_save=True,
+                queued_at="2026-09-30T17:12:40",
+                started_at=None,
+                status="queued",
+                progress=[],
+                result=None,
+                save=None,
+                error_message=None,
+                error_level=None,
+                finished_at=None,
+            ),
+            1,
+            ignore,
+            remember,
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    cells = [element.value for element in app.markdown]
+    assert ":gray-badge[대기 1]" in cells
+    assert "—" in cells
+    assert "자동" in cells
+    button = app.button(key="dashboard_cancel_abc12345")
+    assert button.label == "취소"
+
+    button.click().run()
+
+    assert app.session_state["cancelled"] == ["abc12345"]
+
+
 def test_render_row_links_the_raw_url_without_a_video_id() -> None:
     """영상 ID 가 없는 실행은 입력한 URL 그대로 링크한다."""
 
@@ -753,6 +839,7 @@ def test_render_row_links_the_raw_url_without_a_video_id() -> None:
                 video_id="",
                 questions=(question,),
                 auto_save=False,
+                queued_at="2026-09-30T17:12:40",
                 started_at="2026-09-30T17:12:46",
                 status="running",
                 progress=[],
@@ -762,6 +849,8 @@ def test_render_row_links_the_raw_url_without_a_video_id() -> None:
                 error_level=None,
                 finished_at=None,
             ),
+            None,
+            ignore,
             ignore,
         )
 

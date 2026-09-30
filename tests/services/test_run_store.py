@@ -60,6 +60,28 @@ def test_create_returns_a_running_handle() -> None:
     assert handle.started_at
 
 
+def test_create_starts_the_run_as_it_is_queued() -> None:
+    """대기열을 거치지 않은 실행은 넣은 시각이 곧 시작 시각이다."""
+    handle = run_store.RunStore().create("u", "v", QUESTIONS)
+
+    assert handle.queued_at
+    assert handle.started_at == handle.queued_at
+
+
+def test_enqueue_returns_a_queued_handle() -> None:
+    """대기열에 넣은 실행은 아직 시작하지 않았다."""
+    store = run_store.RunStore()
+
+    handle = store.enqueue("u", "v", QUESTIONS, auto_save=True)
+
+    assert handle.status == "queued"
+    assert handle.queued_at
+    assert handle.started_at is None
+    assert handle.questions == QUESTIONS
+    assert handle.auto_save is True
+    assert store.get(handle.run_id) == handle
+
+
 def test_create_gives_each_run_a_distinct_id() -> None:
     """실행마다 서로 다른 ID 를 준다."""
     store = run_store.RunStore()
@@ -131,6 +153,26 @@ def test_list_all_puts_running_runs_first_in_start_order(
     second = store.create("u2", "v2", QUESTIONS)
 
     assert [item.run_id for item in store.list_all()] == [
+        first.run_id,
+        second.run_id,
+        done.run_id,
+    ]
+
+
+def test_list_all_puts_queued_runs_between_running_and_finished(
+    monkeypatch,
+) -> None:
+    """대기 중인 실행은 진행 중인 실행 뒤, 끝난 실행 앞에 온다."""
+    use_ticking_clock(monkeypatch)
+    store = run_store.RunStore()
+    done = store.create("u0", "v0", QUESTIONS)
+    store.finish(done.run_id, make_result())
+    first = store.enqueue("u1", "v1", QUESTIONS)
+    running = store.create("u2", "v2", QUESTIONS)
+    second = store.enqueue("u3", "v3", QUESTIONS)
+
+    assert [item.run_id for item in store.list_all()] == [
+        running.run_id,
         first.run_id,
         second.run_id,
         done.run_id,
