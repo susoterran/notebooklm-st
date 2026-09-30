@@ -401,7 +401,7 @@ def mark_exported(
     document_title: str,
     document_url: str,
 ) -> None:
-    """문서 링크를 적고 로컬 본문을 지운다.
+    """문서 링크를 적고 로컬 답변을 지운다.
 
     Raises:
         ValueError: 그 ID 의 실행이 없는 경우.

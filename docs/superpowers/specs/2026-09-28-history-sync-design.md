@@ -124,8 +124,9 @@ operator: "eq", value: ...}]` 로 컬렉션을 거르고, `sort`·`direction` �
 ### 2.5 실행 선택은 ID 기준이다
 
 `pages/history.py` 의 selectbox 는 `RunSummary` 객체가 아니라 `run.id`
-를 값으로 쓴다. 동기화가 기존 행을 건드리지 않으면 적용 뒤에도 선택이
-살아남는다. 지워진 행을 고르고 있었다면 Streamlit 이 첫 항목으로 되돌린다
+를 값으로 쓴다. 동기화는 `runs` 행의 ID 를 바꾸지 않으므로(메타데이터
+갱신도 ID·시각을 바꾸지 않는다) 적용 뒤에도 선택이 살아남는다. 지워진
+행을 고르고 있었다면 Streamlit 이 첫 항목으로 되돌린다
 (기존 삭제에서 AppTest 로 확인한 동작).
 
 ### 2.6 실행 ID 는 다시 쓰인다
@@ -658,7 +659,7 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 - `tests/services/test_run_history_sync.py`
 - `tests/services/test_history_sync.py`
 
-**수정 8**
+**수정 9**
 
 - `src/notebooklm_st/core/models.py` — 값 객체 다섯
 - `src/notebooklm_st/core/markdown_export.py` — `SOURCE_URL_LABEL`·
@@ -671,7 +672,8 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 - `README.md` — 사용 순서에 동기화 단락, 한계(휴지통·보관함·중복·다른
   문서 무시), DB 삭제 주의 문구에 "저장된 이력은 동기화로 되살릴 수
   있다" 추가
-- `tests/services/test_outline.py`, `tests/pages/test_history.py`
+- `tests/services/test_outline.py`, `tests/services/test_run_history.py`,
+  `tests/pages/test_history.py`
 
 **변경 없음**
 
