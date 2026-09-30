@@ -141,7 +141,7 @@ JSON 으로 찍는다. 그런데 **값이 없는 키가 그 dict 에서 어떻�
 사용자가 URL 을 넣고 실행
         │
         ▼
-runner.start_run ──► 백그라운드 스레드 _work
+runner.enqueue ──► 워커 스레드 _work
                           │
                           ├─ video_metadata.fetch(url)      ← 새로 붙는 곳
                           │     yt_dlp 자식 프로세스, 20초
@@ -414,7 +414,7 @@ def to_markdown(
 
 ```python
 def _fetch_metadata(
-    registry: runs.RunRegistry, run_id: str, url: str
+    registry: run_registry.RunRegistry, run_id: str, url: str
 ) -> models.VideoMetadata | None: ...
 ```
 
