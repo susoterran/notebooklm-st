@@ -302,6 +302,78 @@ def test_result_warns_when_a_done_run_has_no_result() -> None:
     )
 
 
+DOC_URL = "http://192.168.0.10:3000/doc/x"
+
+
+def make_saved(outcome: runs.SaveOutcome) -> runs.RunHandle:
+    """자동 저장을 켜고 끝난 실행 핸들을 만든다."""
+    return dataclasses.replace(make_done(), auto_save=True, save=outcome)
+
+
+def test_save_is_a_dash_without_auto_save() -> None:
+    """자동 저장을 끈 실행은 상태와 상관없이 ``—`` 다."""
+    assert run_progress.save_markdown(make_handle()) == "—"
+    assert run_progress.save_markdown(make_done()) == "—"
+
+
+def test_save_says_auto_before_the_run_ends() -> None:
+    """자동 저장을 켠 실행이 도는 동안은 ``자동`` 이다."""
+    handle = make_handle(auto_save=True)
+
+    assert run_progress.save_markdown(handle) == "자동"
+
+
+def test_save_is_a_dash_when_the_run_failed() -> None:
+    """실행이 실패하면 올릴 이력이 없어 ``—`` 다."""
+    handle = make_handle(
+        auto_save=True,
+        status="failed",
+        error_message="x",
+        error_level="error",
+    )
+
+    assert run_progress.save_markdown(handle) == "—"
+
+
+def test_save_links_the_saved_document() -> None:
+    """저장되면 문구를 그 문서로 가는 링크로 건다."""
+    handle = make_saved(runs.SaveOutcome("saved", "저장됨", DOC_URL))
+
+    assert run_progress.save_markdown(handle) == f"[저장됨]({DOC_URL})"
+
+
+def test_save_shows_why_it_skipped() -> None:
+    """건너뛰었으면 이유를 보통 글자로 보인다."""
+    handle = make_saved(runs.SaveOutcome("skipped", "미저장 · 제목 없음", None))
+
+    assert run_progress.save_markdown(handle) == "미저장 · 제목 없음"
+
+
+def test_save_links_a_document_it_could_not_record() -> None:
+    """문서는 만들었는데 기록에 실패하면 경고 문구를 그 문서로 건다."""
+    message = (
+        f"문서는 만들어졌습니다: {DOC_URL} —"
+        " 로컬 기록에 실패했습니다(OperationalError)."
+        " 다시 저장하면 문서가 둘이 됩니다."
+    )
+    handle = make_saved(runs.SaveOutcome("failed", message, DOC_URL))
+
+    assert run_progress.save_markdown(handle) == f"[{message}]({DOC_URL})"
+
+
+def test_save_escapes_an_outline_error() -> None:
+    """Outline 이 준 문구의 서식 글자와 줄바꿈이 글자 그대로 보인다."""
+    handle = make_saved(
+        runs.SaveOutcome(
+            "failed", "미저장 · 저장 실패: 거부됨 [title]\n$x$", None
+        )
+    )
+
+    assert run_progress.save_markdown(handle) == (
+        "미저장 · 저장 실패: 거부됨 \\[title\\] \\$x\\$"
+    )
+
+
 def test_render_row_draws_a_badge_link_and_remove_button() -> None:
     """완료된 실행 한 줄에 배지·영상 링크·지우기 버튼을 그린다."""
 
@@ -345,7 +417,7 @@ def test_render_row_draws_a_badge_link_and_remove_button() -> None:
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
     text = " ".join(element.value for element in app.markdown)
-    for name in ("상태", "영상", "시작", "질문", "결과", "동작"):
+    for name in ("상태", "영상", "시작", "질문", "결과", "저장", "동작"):
         assert f"**{name}**" in text
     assert ":green-badge[완료]" in text
     assert (

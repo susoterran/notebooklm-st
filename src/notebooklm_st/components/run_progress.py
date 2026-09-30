@@ -33,7 +33,8 @@ _COLUMNS: tuple[tuple[str, float], ...] = (
     ("영상", 3.4),
     ("시작", 1.3),
     ("질문", 0.8),
-    ("결과", 4.6),
+    ("결과", 3.4),
+    ("저장", 2.0),
     ("동작", 1.0),
 )
 """칸 이름과 상대 폭.
@@ -50,6 +51,9 @@ _MARKDOWN_SPECIAL = re.compile(r"([\\`*_\[\]$<>~|#])")
 하나가 링크를 깨고 ``$`` 둘이 수식을 만든다. 앞에 역슬래시를 붙여
 글자 그대로 보이게 한다.
 """
+
+_NO_SAVE = "—"
+"""저장 칸에 적을 것이 없을 때의 표시."""
 
 
 def status_badge(handle: runs.RunHandle) -> tuple[str, BadgeColor]:
@@ -144,6 +148,38 @@ def _done_markdown(handle: runs.RunHandle) -> str:
     return f"{summary} · :orange[{len(failed)}건 실패: {titles}]"
 
 
+def save_markdown(handle: runs.RunHandle) -> str:
+    """저장 칸의 마크다운을 만든다.
+
+    자동 저장을 끈 실행과, 실행이 실패해 올릴 이력이 없는 실행은
+    ``—`` 다. 문서가 만들어졌으면 문구를 그 문서로 가는 링크로 건다.
+    문서는 만들었는데 로컬 기록에 실패한 경우도 링크가 걸린다. 사람이
+    그 문서를 열어 보고 다시 올릴지 정해야 하기 때문이다.
+
+    Args:
+        handle: 그릴 실행.
+
+    Returns:
+        칸 하나에 넣을 한 문단짜리 마크다운.
+    """
+    if not handle.auto_save:
+        return _NO_SAVE
+    match handle.status:
+        case "running":
+            return "자동"
+        case "failed":
+            return _NO_SAVE
+        case "done":
+            if handle.save is None:
+                return _NO_SAVE
+            text = _escape(handle.save.message)
+            if handle.save.url is None:
+                return text
+            return f"[{text}]({handle.save.url})"
+        case _:
+            assert_never(handle.status)
+
+
 def render_header() -> None:
     """표의 머리글 한 줄을 그린다."""
     cells = st.columns(_WIDTHS, gap="small", vertical_alignment="center")
@@ -165,9 +201,15 @@ def render_row(
         handle: 그릴 실행.
         on_remove: 실행 ID 를 받아 목록에서 치우는 함수.
     """
-    status_cell, video_cell, time_cell, count_cell, result_cell, action = (
-        st.columns(_WIDTHS, gap="small", vertical_alignment="center")
-    )
+    (
+        status_cell,
+        video_cell,
+        time_cell,
+        count_cell,
+        result_cell,
+        save_cell,
+        action,
+    ) = st.columns(_WIDTHS, gap="small", vertical_alignment="center")
     label, color = status_badge(handle)
     status_cell.badge(label, color=color)
     target = (
@@ -177,6 +219,7 @@ def render_row(
     time_cell.markdown(short_time(handle.started_at))
     count_cell.markdown(f"{len(handle.question_texts)}개")
     result_cell.markdown(result_markdown(handle))
+    save_cell.markdown(save_markdown(handle))
     match handle.status:
         case "running":
             action.button(

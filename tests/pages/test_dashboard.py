@@ -156,6 +156,54 @@ def test_dashboard_draws_failed_and_partial_failure_rows(app_db) -> None:
     assert "1건 실패: 요약" in text
 
 
+def test_dashboard_draws_the_four_save_cells(app_db) -> None:
+    """저장 칸이 끔·진행 중·저장됨·미저장 네 모양을 그린다."""
+
+    def script():
+        """AppTest 진입점 — 저장 칸이 다른 실행 넷을 넣고 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+        from notebooklm_st.services import runs
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            registry.create(
+                "https://youtu.be/runrunrun01",
+                "runrunrun01",
+                ("질문",),
+                auto_save=True,
+            )
+            saved = runs.SaveOutcome(
+                "saved", "저장됨", "http://192.168.0.10:3000/doc/x"
+            )
+            skipped = runs.SaveOutcome("skipped", "미저장 · 제목 없음", None)
+            for video_id, auto_save, save in (
+                ("offoffoff01", False, None),
+                ("savedsaved1", True, saved),
+                ("skippedskip", True, skipped),
+            ):
+                url = f"https://youtu.be/{video_id}"
+                handle = registry.create(
+                    url, video_id, ("질문",), auto_save=auto_save
+                )
+                registry.finish(
+                    handle.run_id,
+                    models.RunResult(url=url, video_id=video_id, items=()),
+                    save,
+                )
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    cells = [element.value for element in app.markdown]
+    assert "**저장**" in cells
+    assert "자동" in cells
+    assert "—" in cells
+    assert "[저장됨](http://192.168.0.10:3000/doc/x)" in cells
+    assert "미저장 · 제목 없음" in cells
+
+
 def test_discard_removes_only_its_run(app_db) -> None:
     """한 줄의 지우기는 그 실행만 치운다."""
 
