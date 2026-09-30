@@ -9,7 +9,7 @@ import sqlite3
 
 import streamlit as st
 
-from notebooklm_st.services import auth, digest_runner, runs, store
+from notebooklm_st.services import auth, digest_runner, run_registry, store
 
 
 @st.cache_resource
@@ -23,7 +23,7 @@ def get_connection() -> sqlite3.Connection:
 
 
 @st.cache_resource
-def get_registry() -> runs.RunRegistry:
+def get_registry() -> run_registry.RunRegistry:
     """앱 전체가 공유하는 실행 레지스트리를 돌려준다.
 
     ``@st.cache_resource`` 로 감싼 객체는 모든 세션·브라우저 탭에서 같은
@@ -33,7 +33,7 @@ def get_registry() -> runs.RunRegistry:
     Returns:
         재실행되어도 같은 레지스트리 객체.
     """
-    return runs.RunRegistry()
+    return run_registry.RunRegistry()
 
 
 @st.cache_resource

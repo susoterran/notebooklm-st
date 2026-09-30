@@ -4,8 +4,8 @@ import datetime as dt
 import logging
 import os
 
-from notebooklm_st.core import login_protocol
-from notebooklm_st.services import digest_runner, login_session, runs
+from notebooklm_st.core import login_protocol, models
+from notebooklm_st.services import digest_runner, login_session, run_registry
 
 
 def test_viewer_url_is_none_when_unset() -> None:
@@ -94,10 +94,38 @@ def test_pending_request_ignores_a_broken_file(tmp_path) -> None:
 
 def test_busy_sees_a_running_query() -> None:
     """질의가 돌고 있으면 바쁘다."""
-    registry = runs.RunRegistry()
-    registry.create("https://youtu.be/x", "x", ("q",))
+    registry = run_registry.RunRegistry()
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+    registry.acquire_worker()
+    registry.claim_next()
 
     assert login_session.busy(registry, digest_runner.DigestRegistry())
+
+
+def test_busy_sees_a_queued_query() -> None:
+    """곧 돌 질의가 대기 중이어도 바쁘다."""
+    registry = run_registry.RunRegistry()
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+
+    assert login_session.busy(registry, digest_runner.DigestRegistry())
+
+
+def test_not_busy_while_the_queue_is_paused() -> None:
+    """멈춘 대기열은 로그인을 막지 않는다. 로그인으로 풀 멈춤도 있다."""
+    registry = run_registry.RunRegistry()
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+    registry.pause("인증이 만료되었습니다.")
+
+    assert not login_session.busy(registry, digest_runner.DigestRegistry())
 
 
 def test_busy_sees_a_running_digest() -> None:
@@ -105,13 +133,13 @@ def test_busy_sees_a_running_digest() -> None:
     digests = digest_runner.DigestRegistry()
     digests.start()
 
-    assert login_session.busy(runs.RunRegistry(), digests)
+    assert login_session.busy(run_registry.RunRegistry(), digests)
 
 
 def test_not_busy_when_nothing_runs() -> None:
     """아무것도 돌지 않으면 한가하다."""
     assert not login_session.busy(
-        runs.RunRegistry(), digest_runner.DigestRegistry()
+        run_registry.RunRegistry(), digest_runner.DigestRegistry()
     )
 
 

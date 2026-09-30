@@ -11,9 +11,13 @@ def test_registry_is_shared_across_sessions(app_db) -> None:
         import streamlit as st
 
         from notebooklm_st import session
+        from notebooklm_st.core import models
 
         registry = session.get_registry()
-        registry.create("https://youtu.be/x", "x", ("질문",))
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
+        registry.enqueue("https://youtu.be/x", "x", (question,))
         st.write(f"count={len(registry.list_all())}")
 
     first = v1.AppTest.from_function(script).run()

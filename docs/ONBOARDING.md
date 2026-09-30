@@ -69,9 +69,9 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 
 | 파일 | 역할 |
 |---|---|
-| `pages/ask.py` | 실행을 **시작만** 하고 즉시 반환 |
-| `services/runner.py` | `threading.Thread` 에서 파이프라인을 돌리고, 진행 상황을 레지스트리에 기록, 결과를 SQLite 에 저장 |
-| `services/runs.py` | `RunHandle` / `RunRegistry` — 스레드와 화면이 만나는 **유일한 접점**, 잠금으로 보호 |
+| `pages/ask.py` | 질의를 **대기열에 넣기만** 하고 즉시 반환. 실행 중이어도 넣는다 |
+| `services/runner.py` | 비면 끝나는 워커 스레드 하나가 대기열을 넣은 순서대로 비운다. 파이프라인을 돌리고, 진행 상황을 레지스트리에 기록, 결과를 SQLite 에 저장. 다음 실행도 실패할 오류면 대기열을 멈춘다 |
+| `services/runs.py`·`run_store.py`·`run_registry.py` | `RunHandle` 값 / 그것을 락 안에서 보관하는 `RunStore` / 보관소에 대기열 규칙(워커 자리·멈춤·취소)을 더한 `RunRegistry` — 스레드와 화면이 만나는 **유일한 접점**, 잠금으로 보호 |
 | `session.py` | 레지스트리를 `@st.cache_resource` 싱글턴으로 감싸 **모든 탭이 같은 인스턴스**를 보게 함 |
 | `pages/dashboard.py` | `@st.fragment(run_every="1s")` 로 레지스트리를 1초마다 폴링 |
 
@@ -107,7 +107,7 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | 6 | **SQLite 저장소와 세 테이블** | `services/store.py` + `questions`·`runs`·`answers` |
 | 7 | **질문 템플릿과 이력 CRUD** | `services/questions.py`, `services/run_history.py` |
 | 8 | **NotebookLM 파이프라인의 핵심 트릭** | `services/nlm.py` |
-| 9 | **백그라운드 실행과 공유 레지스트리** — 가장 어려운 제약 | `services/runner.py`, `services/runs.py`, `session.py` |
+| 9 | **백그라운드 실행과 공유 레지스트리** — 가장 어려운 제약 | `services/runner.py`, `services/runs.py`, `services/run_store.py`, `services/run_registry.py`, `session.py` |
 | 10 | **진행 표시와 답변 카드** | `components/run_progress.py`, `components/answer_view.py` |
 | 11 | **인증 게이트와 최후 수단 로그인** | `services/auth.py`, `components/auth_gate.py` |
 | 12 | **테스트로 흐름 되짚기** | `tests/conftest.py`, `tests/test_components.py`, `scripts/smoke_check.py` |
@@ -137,13 +137,13 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
-| `pages/ask.py` | simple | 질의 화면. URL 입력·질문 선택 후 백그라운드 실행을 시작만 하고 반환 |
-| `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기는 버튼 콜백이 한다 |
+| `pages/ask.py` | moderate | 질의 화면. URL 입력·질문 선택 후 대기열에 넣고 반환. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
+| `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기·취소·재개는 버튼 콜백이 한다. 대기열이 멈추면 이유와 재개 버튼을 보인다 |
 | `pages/question_admin.py` | moderate | 질문 템플릿 CRUD. 검증 오류는 `st.error`, 성공 시 `st.rerun` |
 | `pages/history.py` | **complex** | 이력 조회·답변 수정·삭제·마크다운 내려받기. 인용 숨기기와 2단계 삭제 확인을 세션 키로 직접 관리 |
-| `pages/maintenance.py` | moderate | 남은 `tmp-` 노트북 조회·삭제. 실행 중이면 경고 |
+| `pages/maintenance.py` | moderate | 남은 `tmp-` 노트북 조회·삭제. 질의가 실행 중이거나 대기 중이면 경고 |
 | `components/answer_view.py` | moderate | 답변 카드. 저장 콜백과 항목 ID 가 **둘 다** 있을 때만 편집 상자를 연다 |
-| `components/run_progress.py` | simple | 실행 표의 머리글과 한 줄(running/failed/done). 칸 글자는 순수 함수가 만든다. 완료 시 답변 수만, 상세는 이력 화면으로 |
+| `components/run_progress.py` | simple | 실행 표의 머리글과 한 줄(queued/running/failed/done). 대기 줄은 차례 배지와 취소 버튼. 칸 글자는 순수 함수가 만든다. 완료 시 답변 수만, 상세는 이력 화면으로 |
 | `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다(브라우저 로그인 경로는 삭제됨 — `docs/how-to/2026-09-16-auth-reseed.md`) |
 | `components/schema_gate.py` | simple | 기동 직후 커넥션을 열어 보고 스키마 불일치면 안내 후 `st.stop()` |
 
@@ -154,8 +154,10 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `services/nlm.py` | **complex** | NotebookLM 파이프라인. 임시 노트북 생성 → 자막 색인 대기 → 질문별 질의(앞 대화 삭제) → `finally` 삭제. `tmp-` 노트북 조회·삭제도 제공 |
 | `services/auth.py` | **complex** | 쿠키 확인 → 무인 복구 → 최후 수단으로 `sys.executable -m notebooklm login` 자식 프로세스. `AuthGate` 가 앱 수명 동안 한 번만 타게 통제 |
 | `services/run_history.py` | **complex** | `runs`·`answers` CRUD. 저장·목록·상세·답변 수정·삭제 |
-| `services/runner.py` | moderate | 파이프라인을 백그라운드 스레드에서 실행. 모든 실패 경로에서 레지스트리를 실패로 마감 |
-| `services/runs.py` | moderate | `RunHandle` 값 객체 + 스레드 안전 `RunRegistry` |
+| `services/runner.py` | moderate | 대기열 워커. 넣은 순서대로 한 번에 하나씩 파이프라인을 돌린다. 모든 실패 경로에서 레지스트리를 실패로 마감하고, 다음 실행도 실패할 오류면 대기열을 멈춘다 |
+| `services/runs.py` | simple | `RunHandle`·`SaveOutcome` 값 객체와 상태 묶음(`FINISHED`·`PENDING`) |
+| `services/run_store.py` | moderate | 스레드 안전 핸들 보관소. 넣기·조회·진행 기록·치우기 |
+| `services/run_registry.py` | moderate | 보관소에 대기열 규칙(워커 자리·차례·멈춤·재개·취소)과 가드 판정(`active_count`·`is_pending`)을 더한다 |
 | `services/store.py` | moderate | 커넥션과 전체 스키마 소유. 마이그레이션 없이 즉시 실패 |
 | `services/questions.py` | moderate | 질문 템플릿 CRUD. 제목 중복·빈 값을 `ValueError` 로 강제 |
 

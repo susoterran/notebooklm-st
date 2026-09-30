@@ -3,6 +3,7 @@
 from streamlit.testing import v1
 
 from notebooklm_st import session
+from notebooklm_st.core import models
 from notebooklm_st.services import outline, questions, runner, settings
 
 
@@ -66,76 +67,155 @@ def test_ask_run_button_is_disabled_without_input(app_db) -> None:
 
 
 def test_run_button_starts_a_background_run(app_db, monkeypatch) -> None:
-    """실행 버튼을 누르면 백그라운드 실행을 시작한다."""
+    """실행 버튼을 누르면 대기열에 넣고, URL 칸만 비운다."""
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
     started: list[str] = []
 
-    def fake_start_run(registry, url, questions, db_path, **kwargs):
+    def fake_enqueue(registry, url, questions, db_path, **kwargs):
         """스레드를 띄우지 않고 호출만 기록하는 가짜."""
         started.append(url)
-        return registry.create(url, "dQw4w9WgXcQ", ("핵심 주장은?",))
+        return registry.enqueue(url, "dQw4w9WgXcQ", tuple(questions))
 
-    monkeypatch.setattr(runner, "start_run", fake_start_run)
+    monkeypatch.setattr(runner, "enqueue", fake_enqueue)
 
-    def script():
-        """AppTest 진입점 — 질의 화면을 렌더한다."""
-        from notebooklm_st.pages import ask
-
-        ask.render()
-
-    app = v1.AppTest.from_function(script)
+    app = v1.AppTest.from_function(ask_page)
     app.run()
-    app.text_input[0].set_value(
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    ).run()
-    app.multiselect[0].set_value(questions.list_questions(app_db)).run()
-    app.button[0].click().run()
+    fill_and_run(app, app_db)
 
     assert not app.exception
     assert started == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
-    assert len(app.success) == 1
+    assert [item.value for item in app.success] == [
+        "실행을 시작했습니다. 실행 현황 화면에서 확인하세요."
+    ]
+    assert app.text_input[0].value == ""
+    assert app.multiselect[0].value == questions.list_questions(app_db)
 
 
-def test_run_button_is_locked_while_another_run_is_active(app_db) -> None:
-    """이미 실행 중이면 버튼을 잠그고 안내를 보여준다."""
+def put_other_video(state: str = "queued") -> None:
+    """다른 영상 하나를 넣는다. ``running`` 이면 시작까지 한다."""
+    registry = session.get_registry()
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.enqueue("https://youtu.be/otherother1", "otherother1", (question,))
+    if state == "running":
+        registry.acquire_worker()
+        registry.claim_next()
+
+
+def test_a_running_query_does_not_lock_the_button(app_db, monkeypatch) -> None:
+    """실행 중인 질의가 있어도 넣을 수 있고, 몇 번째인지 알린다."""
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    record_enqueue(monkeypatch)
+    put_other_video("running")
 
-    def script():
-        """AppTest 진입점 — 실행 중인 상태를 만들고 질의 화면을 그린다."""
-        from notebooklm_st import session
-        from notebooklm_st.pages import ask
-
-        registry = session.get_registry()
-        if not registry.list_all():
-            registry.create("https://youtu.be/x", "x", ("질문",))
-        ask.render()
-
-    app = v1.AppTest.from_function(script).run()
-    assert not app.exception
-    assert app.button[0].disabled is True
-    assert any("실행 중" in element.value for element in app.info)
-
-
-def test_run_is_blocked_while_digesting(app_db) -> None:
-    """정리본 작성 중에는 질의를 시작하지 못한다."""
-    questions.add_question(app_db, "핵심 주장", "핵심 주장 3가지 정리")
-    session.get_digest_registry().start()
-
-    def script():
-        from notebooklm_st.pages import ask
-
-        ask.render()
-
-    app = v1.AppTest.from_function(script)
-    app.run()
+    app = v1.AppTest.from_function(ask_page).run()
     app.text_input[0].set_value(
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     ).run()
     app.multiselect[0].set_value(questions.list_questions(app_db)).run()
 
+    assert app.button[0].disabled is False
+    assert [item.value for item in app.info] == [
+        "실행 중이거나 대기 중인 질의가 1건 있습니다. 넣으면 그 뒤에"
+        " 실행됩니다."
+    ]
+    app.button[0].click().run()
     assert not app.exception
-    assert any("정리본" in element.value for element in app.info)
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다 — 앞에 1건. 실행 현황 화면에서 확인하세요."
+    ]
+
+
+def test_a_digest_does_not_lock_the_button(app_db, monkeypatch) -> None:
+    """정리본을 작성 중이어도 넣고, 끝난 뒤 시작한다고 알린다."""
+    questions.add_question(app_db, "핵심 주장", "핵심 주장 3가지 정리")
+    record_enqueue(monkeypatch)
+    session.get_digest_registry().start()
+
+    app = v1.AppTest.from_function(ask_page).run()
+    app.text_input[0].set_value(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ).run()
+    app.multiselect[0].set_value(questions.list_questions(app_db)).run()
+
+    assert app.button[0].disabled is False
+    assert [item.value for item in app.info] == [
+        "정리본을 작성 중입니다. 넣은 질의는 정리본이 끝난 뒤 시작합니다."
+    ]
+    app.button[0].click().run()
+    assert not app.exception
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다. 정리본이 끝나면 시작합니다."
+    ]
+
+
+def test_a_paused_queue_still_takes_a_query(app_db, monkeypatch) -> None:
+    """멈춘 대기열에도 넣을 수 있고, 재개할 때까지 기다린다고 알린다."""
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    record_enqueue(monkeypatch)
+    put_other_video()
+    session.get_registry().pause("요청 한도를 초과했습니다.")
+
+    app = v1.AppTest.from_function(ask_page).run()
+    fill_and_run(app, app_db)
+
+    assert not app.exception
+    assert [item.value for item in app.warning] == [
+        "대기열이 멈춰 있습니다. 넣은 질의는 실행 현황에서 재개할 때까지"
+        " 기다립니다."
+    ]
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다. 대기열이 멈춰 있어 재개할 때까지 기다립니다."
+    ]
+
+
+def test_the_same_video_cannot_be_queued_twice(app_db, monkeypatch) -> None:
+    """대기 중이거나 실행 중인 영상을 다시 넣지 못한다."""
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    received = record_enqueue(monkeypatch)
+    question = questions.list_questions(app_db)[0]
+    session.get_registry().enqueue(
+        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,)
+    )
+
+    app = v1.AppTest.from_function(ask_page).run()
+    app.text_input[0].set_value(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30"
+    ).run()
+    app.multiselect[0].set_value(questions.list_questions(app_db)).run()
+
+    assert not app.exception
     assert app.button[0].disabled is True
+    assert "이 영상은 이미 대기 중이거나 실행 중입니다." in [
+        item.value for item in app.info
+    ]
+    assert received == []
+
+
+def test_a_press_after_the_video_was_queued_adds_nothing(
+    app_db, monkeypatch
+) -> None:
+    """그린 뒤 같은 영상이 대기열에 들어가면 눌러도 넣지 않는다."""
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    received = record_enqueue(monkeypatch)
+
+    app = v1.AppTest.from_function(ask_page).run()
+    app.text_input[0].set_value(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ).run()
+    app.multiselect[0].set_value(questions.list_questions(app_db)).run()
+    assert app.button[0].disabled is False
+
+    question = questions.list_questions(app_db)[0]
+    session.get_registry().enqueue(
+        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,)
+    )
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert received == []
+    assert len(session.get_registry().list_all()) == 1
 
 
 def ask_page():
@@ -152,16 +232,16 @@ def set_outline_env(monkeypatch) -> None:
     monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
 
 
-def record_start_run(monkeypatch) -> list[bool]:
-    """``runner.start_run`` 을 막고 넘어온 자동 저장 값을 기록한다."""
+def record_enqueue(monkeypatch) -> list[bool]:
+    """``runner.enqueue`` 를 막고 넘어온 자동 저장 값을 기록한다."""
     received: list[bool] = []
 
-    def fake_start_run(registry, url, questions, db_path, **kwargs):
+    def fake_enqueue(registry, url, questions, db_path, **kwargs):
         """스레드를 띄우지 않고 자동 저장 값만 기록하는 가짜."""
         received.append(kwargs["auto_save"])
-        return registry.create(url, "dQw4w9WgXcQ", ("핵심 주장은?",))
+        return registry.enqueue(url, "dQw4w9WgXcQ", tuple(questions))
 
-    monkeypatch.setattr(runner, "start_run", fake_start_run)
+    monkeypatch.setattr(runner, "enqueue", fake_enqueue)
     return received
 
 
@@ -251,7 +331,7 @@ def test_run_hands_the_shown_auto_save_to_the_runner(
     """방금 켠 체크 값이 그대로 러너로 넘어간다."""
     set_outline_env(monkeypatch)
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    received = record_start_run(monkeypatch)
+    received = record_enqueue(monkeypatch)
 
     app = v1.AppTest.from_function(ask_page).run()
     app.checkbox(key="ask_auto_save").check().run()
@@ -265,7 +345,7 @@ def test_run_without_outline_hands_no_auto_save(app_db, monkeypatch) -> None:
     """Outline 설정이 없으면 DB 에 켜 두었어도 자동 저장 없이 넣는다."""
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
     settings.set_auto_save(app_db, True)
-    received = record_start_run(monkeypatch)
+    received = record_enqueue(monkeypatch)
 
     app = v1.AppTest.from_function(ask_page).run()
     fill_and_run(app, app_db)

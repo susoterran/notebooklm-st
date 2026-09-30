@@ -14,7 +14,7 @@ import urllib.parse
 import uuid
 
 from notebooklm_st.core import login_protocol
-from notebooklm_st.services import digest_runner, runs
+from notebooklm_st.services import digest_runner, run_registry
 
 logger = logging.getLogger(__name__)
 
@@ -150,18 +150,19 @@ def request_cancel(directory: pathlib.Path) -> str:
 
 
 def busy(
-    registry: runs.RunRegistry, digests: digest_runner.DigestRegistry
+    registry: run_registry.RunRegistry, digests: digest_runner.DigestRegistry
 ) -> bool:
-    """질의나 정리본이 돌고 있는지.
+    """질의나 정리본이 돌고 있거나 곧 돌 것인지.
 
     돌고 있는 작업은 옛 쿠키를 들고 있다가 회전할 때 파일에 되쓴다.
     새 로그인 직후 그 되쓰기가 일어나면 새 쿠키가 덮일 수 있어 시작을
-    막는 데 쓴다.
+    막는 데 쓴다. 멈춘 대기열의 항목은 재개하기 전까지 돌지 않으므로
+    막지 않는다. 인증 만료로 멈췄다면 로그인해야 풀린다.
 
     Returns:
-        하나라도 돌고 있으면 ``True``.
+        하나라도 돌고 있거나 곧 돌면 ``True``.
     """
-    return registry.running_count() > 0 or digests.is_running()
+    return registry.active_count() > 0 or digests.is_running()
 
 
 def viewer_link(base: str, password: str) -> str:

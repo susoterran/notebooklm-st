@@ -57,7 +57,7 @@
 | 로그인에 쓴 크로미움 프로필이 `profiles/default/browser_profile/` 에 남는다 | `notebooklm/paths.py:500` | 라이브러리가 계정 동등 자격증명으로 다루는 것(R1 §2.2 L3 경고)이 공유 볼륨에 남는다 → 세션이 끝나면 지운다(6.4) |
 | `--fresh` 는 캐시된 브라우저 프로필을 지우고 시작한다 | `notebooklm login --help` | 매 세션을 깨끗한 상태로 시작한다 |
 | `--browser-timeout` 으로 사람을 기다리는 시간을 정한다(기본 300초) | `notebooklm login --help` | 시한은 사이드카가 정하고 CLI 에는 더 긴 값을 준다(6.4) |
-| 실행 중인 질의·정리본을 알 수 있다 | `RunRegistry.running_count()`(`services/runs.py:106`), `DigestRegistry.is_running()`(`services/digest_runner.py:95`) | 실행 중에는 로그인 시작을 막는다(8.2) |
+| 실행·대기 중인 질의와 실행 중인 정리본을 알 수 있다 | `RunRegistry.active_count()`(`services/run_registry.py`), `DigestRegistry.is_running()`(`services/digest_runner.py:95`) | 실행·대기 중에는 로그인 시작을 막는다(8.2) |
 | 공개 주소를 환경변수로 받는 선례가 있다 | `NOTEBOOKLM_ST_OUTLINE_PUBLIC_URL`(`services/outline.py:17`) | 뷰어 주소도 같은 방식으로 받는다(7.4) |
 | 앱 이미지에는 playwright 가 없고 CI 가 이를 단언한다 | R2 §3, `.github/workflows/build.yml` | 브라우저는 **별도 컨테이너**에 둔다. 앱 이미지는 건드리지 않는다 |
 | 구글은 컨테이너 안 가상 화면(Xvfb)의 비루트 크로미움 로그인을 막지 않는다 | Task 1 스파이크(이 PC 의 Docker Desktop, linux/amd64) — 사람이 noVNC 로 실제 구글 계정 로그인을 끝까지 마쳤고 차단 문구가 없었다 | 1.1 절이 우려한 "안전하지 않은 브라우저" 차단은 이 환경에서 현실화되지 않았다. 홈서버는 같은 아키텍처(x86_64, 4절)라 같은 결과를 기대하며, 그 확인은 Task 9 의 홈서버 E2E 로 남긴다 |
@@ -289,7 +289,7 @@ idle ──start──► starting ──► running ──┬─► succeeded
 |---|---|
 | 뷰어 주소 미설정 | 영역을 그리지 않는다 |
 | 사이드카 꺼짐 (heartbeat 10초 초과 또는 없음) | "로그인 브라우저가 꺼져 있습니다" |
-| 실행 중인 질의·정리본 있음 | 시작 버튼 비활성 + "진행 중인 실행이 끝난 뒤 로그인하세요" (8.2) |
+| 실행·대기 중인 질의 또는 실행 중인 정리본 있음 | 시작 버튼 비활성 + "진행 중인 실행이 끝난 뒤 로그인하세요" (8.2) |
 | `idle`·마지막 결과 | 마지막 결과 한 줄(있으면) + **구글 로그인 시작** |
 | 앱이 30초 안에 `start` 요청을 썼고 사이드카가 아직 받지 않음 | "로그인 브라우저를 준비하는 중" |
 | `starting` | "로그인 브라우저를 준비하는 중" |
@@ -387,19 +387,24 @@ def start_is_stale(request: login_protocol.Request, now: datetime) -> bool: ...
 def request_start(directory: Path) -> str: ...      # 새 id 를 돌려준다
 def request_cancel(directory: Path) -> str: ...
 
-def busy(registry: runs.RunRegistry, digests: digest_runner.DigestRegistry) -> bool: ...
-    # running_count() > 0 or is_running()
+def busy(registry: run_registry.RunRegistry, digests: digest_runner.DigestRegistry) -> bool: ...
+    # active_count() > 0 or is_running()
 ```
 
 원격 로그인 영역은 `viewer_url()` 과 `login_dir()` 이 **둘 다** 값이 있을
 때만 그린다.
 
-### 8.2 실행 중에는 시작을 막는 이유
+### 8.2 실행·대기 중에는 시작을 막는 이유
 
 실행 중인 질의·정리본은 연 클라이언트에 **옛 쿠키를 들고 있다가 회전할
 때 파일에 되쓴다**(R1 §2.6). 새 로그인 직후 그 되쓰기가 일어나면 새 쿠키가
 옛 쿠키로 덮일 수 있다. 실제로 덮이는지는 확인하지 않았다(13절). 확인하는
 비용보다 막는 비용이 싸다.
+
+대기 중인 질의도 센다. 대기 항목이 있으면 워커가 곧 NotebookLM 을
+쓰기 때문이다. 다만 **멈춘 대기열의 항목은 세지 않는다.** 멈춘 동안에는
+NotebookLM 을 쓰지 않고, 인증 만료로 멈춘 대기열은 로그인해야 풀린다
+(`2026-09-30-run-queue-and-auto-save-design.md` §8.5).
 
 막는 것은 **시작**뿐이다. 이미 진행 중인 로그인 세션 중에 사용자가 질의를
 시작하는 것은 막지 않는다 — 5분 안에 끝나는 드문 일이고, 막으려면 질의

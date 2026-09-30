@@ -1,7 +1,7 @@
 # 질의 대기열·자동 저장·실행 현황 표 설계 — 넣어 두면 Outline 까지 가게 하기
 
 - **작성일**: 2026-09-30
-- **상태**: 표·자동 저장 단계 구현 완료 (2026-09-30). 대기열 단계는 구현 전
+- **상태**: 표·자동 저장·대기열 단계 구현 완료 (2026-09-30)
 - **단계**: **표 → 자동 저장 → 대기열** 순서로 셋으로 나눠 만든다.
   단계마다 구현 계획을 따로 쓰고, 구현한 뒤 앱에서 확인하고 다음
   단계로 간다(→ 4.2). 요청서 번호로는 3 → 1 → 2 다.
@@ -11,8 +11,9 @@
   (`services/outline.py`·`services/outline_parse.py`), 이력 동기화
   (`services/history_sync.py`·`services/run_history_sync.py`), 정리
   (`services/digest.py`·`services/digest_runner.py`·`core/digest*.py`),
-  공유 자원(`session.py`), 배포 파일
-  (`docker-compose.yml`·`Dockerfile`·`pyproject.toml`)은 건드리지 않는다.
+  배포 파일(`docker-compose.yml`·`Dockerfile`·`pyproject.toml`)은
+  건드리지 않는다. 공유 자원(`session.py`)은 `get_registry` 의 반환
+  타입 이름만 바뀐다(→ 13).
 - **범위**: 질의 화면에서 넣는 실행에 한해 (1) 실행 현황을 한 줄 표로
   바꾸고, (2) 체크 하나로 답변을 받자마자 인용을 뺀 채 Outline 에
   저장하고, (3) 실행 중에도 다음 질의를 대기열에 넣어 차례로 돌린다.
@@ -239,7 +240,9 @@ components/run_progress.py  표의 한 줄을 그리는 함수들 (표)
 pages/history.py          저장 버튼이 공유 저장 함수를 부른다 (자동 저장)
 pages/digest.py·maintenance.py·_channel_check.py  가드 교체 (대기열)
 services/login_session.py busy 가 active_count 를 본다 (대기열)
-services/runs.py          핸들·레지스트리 — 대기·멈춤·저장 결과 (셋 다)
+services/runs.py          핸들 값 — 대기·저장 결과 (셋 다)
+services/run_store.py     새 파일 — 핸들 보관소: 넣기·조회·기록·치우기 (대기열)
+services/run_registry.py  새 파일 — 보관소 + 워커 자리·멈춤·취소·가드 판정 (대기열)
 services/runner.py        넣기·워커·자동 저장 부르기 (자동 저장, 대기열)
 services/run_export.py    새 파일 — Outline 저장 한 벌과 자동 저장 한 번 (자동 저장)
 services/settings.py      새 파일 — 자동 저장 설정 읽기·쓰기 (자동 저장)
@@ -317,9 +320,14 @@ class RunHandle:
   의 `None` 은 대기열 단계에서 들어온다. 표 단계에서 `started_at` 은
   지금처럼 만드는 순간의 시각이다.
 
-### 6.2 `services/runs.py` — 레지스트리
+### 6.2 `services/run_registry.py` — 레지스트리
 
-모든 공개 메서드는 지금처럼 락 안에서 동작하고 복사본을 돌려준다.
+`RunRegistry` 는 `services/run_store.py` 의 `RunStore` 를 물려받는다.
+락과 핸들 dict, `enqueue`·`get`·`list_all`·`append_progress`·
+`finish`·`fail`·`discard`·`discard_finished` 는 보관소가 갖고,
+레지스트리는 같은 락 안에서 나머지를 더한다. 한 클래스로 두면
+300줄을 넘는다. 모든 공개 메서드는 지금처럼 락 안에서 동작하고
+복사본을 돌려준다.
 
 | 메서드 | 하는 일 | 단계 |
 | --- | --- | --- |
@@ -330,7 +338,7 @@ class RunHandle:
 | `append_progress(run_id, message)` | 지금과 같다 | — |
 | `finish(run_id, result, save=None)` | done 으로 표시하고 저장 결과를 싣는다 | `save` 는 자동 저장 |
 | `fail(run_id, message, level)` | 지금과 같다 | — |
-| `pause(reason) -> None` | 대기열을 멈춘다 | 대기열 |
+| `pause(reason) -> None` | 대기 항목이 남아 있으면 대기열을 멈춘다. 없으면 아무것도 하지 않는다 | 대기열 |
 | `resume() -> bool` | 멈춤을 풀고, `acquire_worker` 와 같은 판정으로 워커를 띄워야 하면 참 | 대기열 |
 | `paused_reason() -> str \| None` | 멈춘 이유. 멈추지 않았으면 `None` | 대기열 |
 | `cancel(run_id) -> bool` | 그 항목이 **아직 대기 중일 때만** 지우고 참. 마지막 대기 항목을 지우면 멈춤도 풀린다 | 대기열 |
@@ -349,7 +357,7 @@ class RunHandle:
 
 ```python
 def enqueue(
-    registry: runs.RunRegistry,
+    registry: run_registry.RunRegistry,
     url: str,
     questions: Sequence[models.Question],
     db_path: pathlib.Path,
@@ -359,7 +367,7 @@ def enqueue(
 ) -> runs.RunHandle: ...
 
 def resume(
-    registry: runs.RunRegistry,
+    registry: run_registry.RunRegistry,
     db_path: pathlib.Path,
     is_blocked: Callable[[], bool],
     pipeline: PipelineCallable = nlm.run_pipeline,
@@ -636,6 +644,11 @@ def save(
 채널 화면의 멈춤 안내는 `대기열이 멈춰 있습니다. 실행 현황에서
 재개하거나 대기 항목을 취소한 뒤 시작하세요.` 다.
 
+원격 로그인 화면의 안내 문구(`pages/_remote_login.py`)는 바꾸지 않는다.
+실행 중인 것 없이 멈추지 않은 대기 항목만 남는 때는 워커가 정리본을
+기다리는 동안뿐이라, 지금 문구의 "진행 중인 질의·정리본" 이 그 경우를
+덮는다.
+
 ### 8.6 재시작
 
 대기 항목도 메모리에만 있어 서버를 재시작하면 사라진다. 실행 현황의
@@ -691,7 +704,7 @@ def save(
 - **멈춤 안내와 재개** — `paused_reason()` 이 있으면
   `st.warning(f"대기열을 멈췄습니다 — {이유} 원인을 해결한 뒤 재개하세요.")`
   와 **재개** 버튼(대기열 단계).
-- **정리본 대기 안내** — 대기 항목이 있고 정리본이 돌고 있으면
+- **정리본 대기 안내** — 대기 항목이 있고, 멈추지 않았고, 정리본이 돌고 있으면
   `st.info("정리본을 작성 중입니다. 끝나면 대기열이 이어집니다.")`
   (대기열 단계).
 
@@ -825,7 +838,7 @@ Outline 은 `runner.run_export.save` 또는 `outline.create_document` 를
 | --- | --- | --- | --- |
 | 표 | `services/runs.py`, `components/run_progress.py`, `pages/dashboard.py` | `tests/services/test_runs.py`, `tests/pages/test_dashboard.py`, `tests/test_components.py` | `README.md`(실행 현황 한 줄), `docs/ONBOARDING.md`(`run_progress` 설명) |
 | 자동 저장 | `services/store.py`, `services/settings.py`(새), `core/auto_save.py`(새), `services/run_export.py`(새), `services/run_history.py`, `services/runs.py`, `services/runner.py`, `pages/ask.py`, `pages/history.py`, `pages/dashboard.py`, `components/run_progress.py` | 위 항목별 테스트 파일, 새 모듈마다 새 테스트 파일 | `README.md`(자동 저장 사용법), `2026-09-22-outline-storage-design.md` **다시 쓰기** |
-| 대기열 | `core/errors.py`, `services/runs.py`, `services/runner.py`, `services/login_session.py`, `pages/ask.py`, `pages/dashboard.py`, `pages/digest.py`, `pages/maintenance.py`, `pages/_channel_check.py`, `components/run_progress.py` | 위 항목별 테스트 파일, `tests/test_session.py` | `README.md`(대기열), `docs/ONBOARDING.md`(러너·레지스트리 설명), `2026-08-28-background-execution-design.md`·`2026-09-23-channel-watch-design.md`·`2026-09-23-digest-design.md`·`2026-09-26-remote-login-design.md` **다시 쓰기** |
+| 대기열 | `core/errors.py`, `services/runs.py`, `services/run_store.py`(새), `services/run_registry.py`(새), `session.py`, `services/runner.py`, `services/login_session.py`, `pages/ask.py`, `pages/dashboard.py`, `pages/digest.py`, `pages/maintenance.py`, `pages/_channel_check.py`, `components/run_progress.py` | 위 항목별 테스트 파일, `tests/services/test_run_store.py`·`test_run_registry.py`·`test_runner_queue.py`(새), `tests/test_session.py` | `README.md`(대기열), `docs/ONBOARDING.md`(러너·레지스트리 설명), `2026-08-28-background-execution-design.md`·`2026-09-23-channel-watch-design.md`·`2026-09-23-digest-design.md`·`2026-09-26-remote-login-design.md` **다시 쓰기** |
 
 **다시 쓰는 문서를 고른 기준.** 지금의 동작이나 코드 이름을 적은
 문장이 이 설계로 틀리게 되는 설계 문서만 다시 쓴다. 한 문서가 여러

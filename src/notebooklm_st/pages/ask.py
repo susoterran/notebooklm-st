@@ -1,4 +1,4 @@
-"""질의 화면 — 백그라운드 실행을 시작하는 트리거."""
+"""질의 화면 — 질의를 대기열에 넣는 입구."""
 
 import sqlite3
 
@@ -6,12 +6,21 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.core import youtube
-from notebooklm_st.services import outline, questions, runner, settings, store
+from notebooklm_st.services import (
+    outline,
+    questions,
+    run_registry,
+    runner,
+    runs,
+    settings,
+    store,
+)
 
 _URL_KEY = "ask_url"
 _SELECTED_KEY = "ask_selected"
 _AUTO_SAVE_KEY = "ask_auto_save"
 _AUTO_SAVE_LOCKED_KEY = "ask_auto_save_locked"
+_ENQUEUED_KEY = "ask_enqueued"
 
 _AUTO_SAVE_HELP = (
     "켜면 답변을 받은 뒤 인용을 빼고 곧바로 Outline 에 올립니다."
@@ -22,11 +31,11 @@ _AUTO_SAVE_HELP = (
 
 
 def render() -> None:
-    """URL 입력, 질문 선택, 자동 저장 여부, 실행 시작을 그린다.
+    """URL 입력, 질문 선택, 자동 저장 여부, 대기열에 넣기를 그린다.
 
-    실행은 백그라운드 스레드가 맡는다. 이 화면은 시작만 하고 즉시
-    반환하므로 페이지를 이동해도 작업이 중단되지 않는다. 진행 상황과
-    답변은 실행 현황 화면에서 본다.
+    실행은 백그라운드 워커가 넣은 순서대로 맡는다. 이 화면은 넣기만
+    하고 즉시 반환하므로, 앞 실행을 기다리지 않고 다음 영상을 넣을 수
+    있다. 진행 상황과 답변은 실행 현황 화면에서 본다.
     """
     st.title("영상 질의")
     connection = session.get_connection()
@@ -54,32 +63,118 @@ def render() -> None:
     )
     auto_save = _render_auto_save(connection)
 
-    busy = registry.running_count() > 0
-    if busy:
-        st.info(
-            "이미 실행 중인 작업이 있습니다. 실행 현황 화면에서 확인하세요."
-        )
-    digesting = session.get_digest_registry().is_running()
-    if digesting:
-        st.info(
-            "정리본을 작성 중입니다. 둘이 같은 자격증명으로 NotebookLM"
-            " 을 동시에 쓰지 않도록 막았습니다. 정리본 화면에서 완료를"
-            " 확인하세요."
-        )
-
-    if st.button(
+    duplicate = _render_queue_notices(
+        registry, youtube.extract_video_id(url) if url_ok else None
+    )
+    st.button(
         "실행",
         key="ask_run",
-        disabled=busy or digesting or not (url_ok and selected),
-    ):
-        runner.start_run(
-            registry,
-            url,
-            selected,
-            store.default_db_path(),
-            auto_save=auto_save,
+        disabled=duplicate or not (url_ok and selected),
+        on_click=_enqueue,
+        args=(registry, auto_save),
+    )
+    enqueued = st.session_state.pop(_ENQUEUED_KEY, None)
+    if enqueued is not None:
+        st.success(enqueued)
+
+
+def _render_queue_notices(
+    registry: run_registry.RunRegistry, video_id: str | None
+) -> bool:
+    """넣으면 언제 돌지 알리고, 같은 영상이 이미 들어 있는지 본다.
+
+    Args:
+        registry: 실행 레지스트리.
+        video_id: 입력한 URL 의 영상 ID. URL 이 틀렸으면 ``None``.
+
+    Returns:
+        그 영상이 이미 대기 중이거나 실행 중이면 참. 버튼을 잠근다.
+    """
+    ahead = _count_ahead(registry)
+    if ahead > 0:
+        st.info(
+            f"실행 중이거나 대기 중인 질의가 {ahead}건 있습니다."
+            " 넣으면 그 뒤에 실행됩니다."
         )
-        st.success("실행을 시작했습니다. 실행 현황 화면에서 확인하세요.")
+    if session.get_digest_registry().is_running():
+        st.info(
+            "정리본을 작성 중입니다. 넣은 질의는 정리본이 끝난 뒤 시작합니다."
+        )
+    if registry.paused_reason() is not None:
+        st.warning(
+            "대기열이 멈춰 있습니다. 넣은 질의는 실행 현황에서 재개할"
+            " 때까지 기다립니다."
+        )
+    duplicate = video_id is not None and registry.is_pending(video_id)
+    if duplicate:
+        st.info("이 영상은 이미 대기 중이거나 실행 중입니다.")
+    return duplicate
+
+
+def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
+    """입력한 영상을 대기열에 넣고 URL 칸을 비운다.
+
+    실행 버튼의 ``on_click`` 콜백이다. 콜백은 재실행 전에 돌므로 URL
+    위젯의 키를 바꿔도 예외가 없다. URL·질문은 버튼을 그릴 때가 아니라
+    누른 순간의 세션 값을 읽는다. 질문 선택은 남겨 다음 영상을 바로
+    붙여 넣게 한다. 결과 문구는 세션에 적어 다음 그림에서 한 번
+    보인다.
+
+    Args:
+        registry: 실행 레지스트리.
+        auto_save: 화면에 보이는 자동 저장 값.
+    """
+    url = st.session_state.get(_URL_KEY, "")
+    selected = st.session_state.get(_SELECTED_KEY, [])
+    video_id = youtube.extract_video_id(url)
+    if video_id is None or not selected or registry.is_pending(video_id):
+        return
+    ahead = _count_ahead(registry)
+    paused = registry.paused_reason() is not None
+    digests = session.get_digest_registry()
+    digesting = digests.is_running()
+    runner.enqueue(
+        registry,
+        url,
+        selected,
+        store.default_db_path(),
+        auto_save=auto_save,
+        is_blocked=digests.is_running,
+    )
+    st.session_state[_URL_KEY] = ""
+    st.session_state[_ENQUEUED_KEY] = _enqueued_text(ahead, paused, digesting)
+
+
+def _count_ahead(registry: run_registry.RunRegistry) -> int:
+    """지금 넣으면 앞에 설 질의 수. 멈춤과 상관없이 센다."""
+    return sum(
+        1 for handle in registry.list_all() if handle.status in runs.PENDING
+    )
+
+
+def _enqueued_text(ahead: int, paused: bool, digesting: bool) -> str:
+    """넣은 뒤 보일 문구. 위에서부터 처음 맞는 것을 쓴다.
+
+    Args:
+        ahead: 넣기 직전에 센 앞선 질의 수.
+        paused: 대기열이 멈춰 있었는가.
+        digesting: 정리본을 작성 중이었는가.
+
+    Returns:
+        화면에 한 번 보일 문구.
+    """
+    if paused:
+        return (
+            "대기열에 넣었습니다. 대기열이 멈춰 있어 재개할 때까지 기다립니다."
+        )
+    if ahead > 0:
+        return (
+            f"대기열에 넣었습니다 — 앞에 {ahead}건. 실행 현황 화면에서"
+            " 확인하세요."
+        )
+    if digesting:
+        return "대기열에 넣었습니다. 정리본이 끝나면 시작합니다."
+    return "실행을 시작했습니다. 실행 현황 화면에서 확인하세요."
 
 
 def _render_auto_save(connection: sqlite3.Connection) -> bool:

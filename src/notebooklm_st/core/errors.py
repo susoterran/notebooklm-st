@@ -37,6 +37,13 @@ _LOGIN_ERRORS: tuple[type[Exception], ...] = (
 )
 """재로그인으로만 풀리는 예외들."""
 
+_QUEUE_STOPPING_ERRORS: tuple[type[Exception], ...] = (
+    *_LOGIN_ERRORS,
+    exceptions.RateLimitError,
+    exceptions.NotebookLimitError,
+)
+"""다음 실행도 같은 이유로 실패하는 예외들. ``stops_queue`` 가 본다."""
+
 LOGIN_HINT = (
     "인증이 만료되었습니다. 「인증」 페이지에서 구글 로그인을 다시"
     " 하세요. 원격 로그인을 쓸 수 없으면 데스크톱에서"
@@ -78,6 +85,23 @@ def probe_failed_text(error: Exception) -> str:
         "인증 상태를 확인하지 못했습니다"
         f"({type(error).__name__}). 자세한 사유는 앱 로그에 남습니다."
     )
+
+
+def stops_queue(error: BaseException) -> bool:
+    """다음 실행도 같은 이유로 실패할 오류인가.
+
+    재로그인으로만 풀리는 인증 오류, 시간이 지나야 풀리는 요청 한도,
+    노트북을 지워야 풀리는 노트북 상한이다. 그 밖의 매핑 오류는 그
+    영상에 한정된다고 본다. 러너는 참이면 대기열을 멈춘다. 매핑하는
+    목록(``to_message``)과 한 파일에 두어 둘이 함께 보이게 한다.
+
+    Args:
+        error: 파이프라인이 던진 예외.
+
+    Returns:
+        대기열을 멈춰야 하면 참.
+    """
+    return isinstance(error, _QUEUE_STOPPING_ERRORS)
 
 
 def to_message(error: Exception) -> UserMessage:

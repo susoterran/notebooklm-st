@@ -2,8 +2,9 @@
 
 from streamlit.testing import v1
 
+from notebooklm_st import session
 from notebooklm_st.core import models
-from notebooklm_st.services import video_metadata
+from notebooklm_st.services import runner, video_metadata
 
 
 def rendered(app: v1.AppTest) -> str:
@@ -37,13 +38,19 @@ def test_dashboard_draws_a_running_run_as_a_row(app_db) -> None:
     def script():
         """AppTest 진입점 — 실행을 하나 등록하고 현황을 그린다."""
         from notebooklm_st import session
+        from notebooklm_st.core import models
         from notebooklm_st.pages import dashboard
 
         registry = session.get_registry()
         if not registry.list_all():
-            handle = registry.create(
-                "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("질문",)
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
             )
+            registry.enqueue(
+                "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,)
+            )
+            registry.acquire_worker()
+            handle = registry.claim_next()
             registry.append_progress(handle.run_id, "자막 인덱싱 중")
         dashboard.render()
 
@@ -58,6 +65,170 @@ def test_dashboard_draws_a_running_run_as_a_row(app_db) -> None:
     assert len(app.info) == 0
 
 
+def test_dashboard_numbers_queued_runs_after_the_running_one(app_db) -> None:
+    """대기 줄은 실행 중인 줄 아래에 넣은 순서대로 차례를 단다."""
+
+    def script():
+        """AppTest 진입점 — 실행 중 하나와 대기 둘을 넣고 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            for video_id in ("runrunrun01", "queued00001", "queued00002"):
+                registry.enqueue(
+                    f"https://youtu.be/{video_id}", video_id, (question,)
+                )
+            registry.acquire_worker()
+            registry.claim_next()
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    cells = [element.value for element in app.markdown]
+    badges = [cell for cell in cells if "-badge[" in cell]
+    assert badges == [
+        ":blue-badge[실행 중]",
+        ":gray-badge[대기 1]",
+        ":gray-badge[대기 2]",
+    ]
+    videos = [cell for cell in cells if "youtube.com" in cell]
+    assert "runrunrun01" in videos[0]
+    assert "queued00001" in videos[1]
+    assert "queued00002" in videos[2]
+    assert labels_of(app).count("취소") == 2
+
+
+def test_cancel_removes_only_its_queued_run(app_db) -> None:
+    """대기 줄의 취소는 그 실행만 지우고 남은 줄의 차례를 당긴다."""
+
+    def script():
+        """AppTest 진입점 — 대기 둘을 넣고 현황을 그린다."""
+        import streamlit as st
+
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if "ids" not in st.session_state:
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            st.session_state["ids"] = [
+                registry.enqueue(
+                    f"https://youtu.be/{video_id}", video_id, (question,)
+                ).run_id
+                for video_id in ("queued00001", "queued00002")
+            ]
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    first = app.session_state["ids"][0]
+
+    app.button(key=f"dashboard_cancel_{first}").click().run()
+
+    assert not app.exception
+    text = rendered(app)
+    assert "queued00001" not in text
+    assert "queued00002" in text
+    assert ":gray-badge[대기 1]" in text
+
+
+def paused_page():
+    """AppTest 진입점 — 대기 둘을 넣고 멈춘 뒤 현황을 그린다."""
+    from notebooklm_st import session
+    from notebooklm_st.core import models
+    from notebooklm_st.pages import dashboard
+
+    registry = session.get_registry()
+    if not registry.list_all():
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
+        for video_id in ("queued00001", "queued00002"):
+            registry.enqueue(
+                f"https://youtu.be/{video_id}", video_id, (question,)
+            )
+        registry.pause("요청 한도를 초과했습니다. 잠시 후 다시 시도하세요.")
+    dashboard.render()
+
+
+def test_a_paused_queue_shows_why_and_offers_resume(app_db) -> None:
+    """멈춘 대기열은 표 위에 이유와 재개 버튼을 보인다."""
+    app = v1.AppTest.from_function(paused_page).run()
+
+    assert not app.exception
+    assert [item.value for item in app.warning] == [
+        "대기열을 멈췄습니다 — 요청 한도를 초과했습니다. 잠시 후 다시"
+        " 시도하세요. 원인을 해결한 뒤 재개하세요."
+    ]
+    assert app.button(key="dashboard_resume").label == "재개"
+
+
+def test_resume_hands_the_registry_to_the_runner(app_db, monkeypatch) -> None:
+    """재개를 누르면 러너가 멈춤을 풀고, 경고가 사라진다."""
+    calls: list[object] = []
+
+    def fake_resume(registry, db_path, is_blocked, **kwargs):
+        """워커를 띄우지 않고 멈춤만 푼다."""
+        calls.append(registry)
+        registry.resume()
+
+    monkeypatch.setattr(runner, "resume", fake_resume)
+    app = v1.AppTest.from_function(paused_page).run()
+
+    app.button(key="dashboard_resume").click().run()
+
+    assert not app.exception
+    assert calls == [session.get_registry()]
+    assert len(app.warning) == 0
+
+
+def test_queued_runs_waiting_for_a_digest_are_explained(app_db) -> None:
+    """정리본을 기다리는 대기 항목이 있으면 그 사실을 알린다."""
+    session.get_digest_registry().start()
+
+    def script():
+        """AppTest 진입점 — 대기 하나를 넣고 현황을 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            registry.enqueue("https://youtu.be/x", "x", (question,))
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert [item.value for item in app.info] == [
+        "정리본을 작성 중입니다. 끝나면 대기열이 이어집니다."
+    ]
+
+
+def test_the_caption_warns_that_a_restart_drops_the_queue(app_db) -> None:
+    """서버를 재시작하면 대기 중인 질의도 사라진다고 알린다."""
+
+    def script():
+        """AppTest 진입점 — 실행 현황을 그린다."""
+        from notebooklm_st.pages import dashboard
+
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert "대기 중인 질의는 사라집니다" in app.caption[0].value
+
+
 def test_dashboard_draws_a_finished_run_without_the_answer(app_db) -> None:
     """완료된 실행은 답변 수만 보이고 본문은 그리지 않는다."""
 
@@ -69,9 +240,14 @@ def test_dashboard_draws_a_finished_run_without_the_answer(app_db) -> None:
 
         registry = session.get_registry()
         if not registry.list_all():
-            handle = registry.create(
-                "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("핵심 주장은?",)
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
             )
+            registry.enqueue(
+                "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,)
+            )
+            registry.acquire_worker()
+            handle = registry.claim_next()
             registry.finish(
                 handle.run_id,
                 models.RunResult(
@@ -111,17 +287,23 @@ def test_dashboard_draws_failed_and_partial_failure_rows(app_db) -> None:
 
         registry = session.get_registry()
         if not registry.list_all():
-            failed = registry.create(
-                "https://youtu.be/aaaaaaaaaaa", "aaaaaaaaaaa", ("질문",)
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
             )
+            registry.enqueue(
+                "https://youtu.be/aaaaaaaaaaa", "aaaaaaaaaaa", (question,)
+            )
+            registry.enqueue(
+                "https://youtu.be/dQw4w9WgXcQ",
+                "dQw4w9WgXcQ",
+                (question, question),
+            )
+            registry.acquire_worker()
+            failed = registry.claim_next()
             registry.fail(
                 failed.run_id, "네트워크 오류가 발생했습니다.", "error"
             )
-            done = registry.create(
-                "https://youtu.be/dQw4w9WgXcQ",
-                "dQw4w9WgXcQ",
-                ("핵심 주장은?", "요약해줘"),
-            )
+            done = registry.claim_next()
             registry.finish(
                 done.run_id,
                 models.RunResult(
@@ -168,12 +350,17 @@ def test_dashboard_draws_the_four_save_cells(app_db) -> None:
 
         registry = session.get_registry()
         if not registry.list_all():
-            registry.create(
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            registry.enqueue(
                 "https://youtu.be/runrunrun01",
                 "runrunrun01",
-                ("질문",),
+                (question,),
                 auto_save=True,
             )
+            registry.acquire_worker()
+            registry.claim_next()
             saved = runs.SaveOutcome(
                 "saved", "저장됨", "http://192.168.0.10:3000/doc/x"
             )
@@ -184,9 +371,8 @@ def test_dashboard_draws_the_four_save_cells(app_db) -> None:
                 ("skippedskip", True, skipped),
             ):
                 url = f"https://youtu.be/{video_id}"
-                handle = registry.create(
-                    url, video_id, ("질문",), auto_save=auto_save
-                )
+                registry.enqueue(url, video_id, (question,), auto_save)
+                handle = registry.claim_next()
                 registry.finish(
                     handle.run_id,
                     models.RunResult(url=url, video_id=video_id, items=()),
@@ -217,13 +403,18 @@ def test_discard_removes_only_its_run(app_db) -> None:
 
         registry = session.get_registry()
         if not registry.list_all():
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
             ids = []
             for video_id, title in (
                 ("aaaaaaaaaaa", "첫 영상"),
                 ("bbbbbbbbbbb", "둘째 영상"),
             ):
                 url = f"https://youtu.be/{video_id}"
-                handle = registry.create(url, video_id, ("질문",))
+                registry.enqueue(url, video_id, (question,))
+                registry.acquire_worker()
+                handle = registry.claim_next()
                 registry.finish(
                     handle.run_id,
                     models.RunResult(
@@ -256,6 +447,9 @@ def test_discard_targets_its_run_after_a_new_run_arrives(app_db) -> None:
         from notebooklm_st.core import models
         from notebooklm_st.pages import dashboard
 
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
         registry = session.get_registry()
         if not registry.list_all():
             ids = []
@@ -264,7 +458,9 @@ def test_discard_targets_its_run_after_a_new_run_arrives(app_db) -> None:
                 ("bbbbbbbbbbb", "둘째 영상"),
             ):
                 url = f"https://youtu.be/{video_id}"
-                handle = registry.create(url, video_id, ("질문",))
+                registry.enqueue(url, video_id, (question,))
+                registry.acquire_worker()
+                handle = registry.claim_next()
                 registry.finish(
                     handle.run_id,
                     models.RunResult(
@@ -276,8 +472,8 @@ def test_discard_targets_its_run_after_a_new_run_arrives(app_db) -> None:
         if st.session_state.get("arrive") and (
             "arrived" not in st.session_state
         ):
-            registry.create(
-                "https://youtu.be/ccccccccccc", "ccccccccccc", ("질문",)
+            registry.enqueue(
+                "https://youtu.be/ccccccccccc", "ccccccccccc", (question,)
             )
             st.session_state["arrived"] = True
         dashboard.render()
@@ -307,11 +503,16 @@ def test_discard_finished_keeps_the_running_run(app_db) -> None:
 
         registry = session.get_registry()
         if not registry.list_all():
-            registry.create(
-                "https://youtu.be/runrunrun01", "runrunrun01", ("질문",)
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
             )
             url = "https://youtu.be/aaaaaaaaaaa"
-            done = registry.create(url, "aaaaaaaaaaa", ("질문",))
+            registry.enqueue(url, "aaaaaaaaaaa", (question,))
+            registry.enqueue(
+                "https://youtu.be/runrunrun01", "runrunrun01", (question,)
+            )
+            registry.acquire_worker()
+            done = registry.claim_next()
             registry.finish(
                 done.run_id,
                 models.RunResult(
@@ -321,6 +522,7 @@ def test_discard_finished_keeps_the_running_run(app_db) -> None:
                     title="끝난 영상",
                 ),
             )
+            registry.claim_next()
         dashboard.render()
 
     app = v1.AppTest.from_function(script).run()
@@ -395,11 +597,13 @@ def test_real_background_run_reaches_the_dashboard(app_db, monkeypatch) -> None:
                     updated_at="2026-08-28T10:00:00",
                 )
             ]
-            runner.start_run(
+            runner.enqueue(
                 registry,
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 questions,
                 store.default_db_path(),
+                auto_save=False,
+                is_blocked=lambda: False,
                 pipeline=fake_pipeline,
             )
             runner.join_all(timeout=5.0)

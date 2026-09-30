@@ -15,7 +15,7 @@ import streamlit as st
 from notebooklm_st.core import labels, youtube
 from notebooklm_st.services import runs
 
-BadgeColor = Literal["blue", "green", "red"]
+BadgeColor = Literal["gray", "blue", "green", "red"]
 """상태 배지에 쓰는 색. ``st.badge`` 가 받는 색의 일부다."""
 
 TITLE_MAX_CHARS = 40
@@ -52,20 +52,26 @@ _MARKDOWN_SPECIAL = re.compile(r"([\\`*_\[\]$<>~|#])")
 글자 그대로 보이게 한다.
 """
 
-_NO_SAVE = "—"
-"""저장 칸에 적을 것이 없을 때의 표시."""
+_BLANK = "—"
+"""시작 칸·저장 칸에 적을 것이 없을 때의 표시."""
 
 
-def status_badge(handle: runs.RunHandle) -> tuple[str, BadgeColor]:
+def status_badge(
+    handle: runs.RunHandle, place: int | None = None
+) -> tuple[str, BadgeColor]:
     """상태 칸의 배지 글자와 색을 고른다.
 
     Args:
         handle: 그릴 실행.
+        place: 대기 중인 실행이 몇 번째로 시작할지(1부터). 대기 줄이
+            아니면 ``None``.
 
     Returns:
         배지 글자와 색.
     """
     match handle.status:
+        case "queued":
+            return ("대기" if place is None else f"대기 {place}"), "gray"
         case "running":
             return "실행 중", "blue"
         case "failed":
@@ -93,15 +99,18 @@ def video_label(handle: runs.RunHandle) -> str:
     return handle.video_id or handle.url
 
 
-def short_time(value: str) -> str:
+def short_time(value: str | None) -> str:
     """ISO 시각을 표에 맞게 줄인다.
 
     Args:
-        value: ``2026-09-30T17:12:46`` 형식의 시각.
+        value: ``2026-09-30T17:12:46`` 형식의 시각. 대기 중이라 아직
+            시작하지 않았으면 ``None``.
 
     Returns:
-        ``09-30 17:12`` 형식의 문자열.
+        ``09-30 17:12`` 형식의 문자열. ``None`` 이면 ``—``.
     """
+    if value is None:
+        return _BLANK
     return datetime.datetime.fromisoformat(value).strftime("%m-%d %H:%M")
 
 
@@ -119,6 +128,8 @@ def result_markdown(handle: runs.RunHandle) -> str:
         칸 하나에 넣을 한 문단짜리 마크다운.
     """
     match handle.status:
+        case "queued":
+            return ""
         case "running":
             latest = handle.progress[-1] if handle.progress else "시작하는 중"
             return _escape(latest)
@@ -163,15 +174,15 @@ def save_markdown(handle: runs.RunHandle) -> str:
         칸 하나에 넣을 한 문단짜리 마크다운.
     """
     if not handle.auto_save:
-        return _NO_SAVE
+        return _BLANK
     match handle.status:
-        case "running":
+        case "queued" | "running":
             return "자동"
         case "failed":
-            return _NO_SAVE
+            return _BLANK
         case "done":
             if handle.save is None:
-                return _NO_SAVE
+                return _BLANK
             text = _escape(handle.save.message)
             if handle.save.url is None:
                 return text
@@ -188,18 +199,22 @@ def render_header() -> None:
 
 
 def render_row(
-    handle: runs.RunHandle, on_remove: Callable[[str], None]
+    handle: runs.RunHandle,
+    place: int | None,
+    on_remove: Callable[[str], None],
+    on_cancel: Callable[[str], None],
 ) -> None:
     """실행 하나를 표의 한 줄로 그린다.
 
-    버튼은 누른 순간 ``on_remove(run_id)`` 를 콜백으로 부른다. 콜백은
-    재실행 전에 돌아 치운 결과가 다음 그림에 바로 보인다. 버튼 키에
-    실행 ID 가 들어가므로 그 사이 표에 행이 끼어도 누른 행의 실행만
-    치운다.
+    버튼은 누른 순간 콜백으로 실행 ID 를 넘긴다. 콜백은 재실행 전에
+    돌아 치운 결과가 다음 그림에 바로 보인다. 버튼 키에 실행 ID 가
+    들어가므로 그 사이 표에 행이 끼어도 누른 행의 실행만 치운다.
 
     Args:
         handle: 그릴 실행.
-        on_remove: 실행 ID 를 받아 목록에서 치우는 함수.
+        place: 대기 중인 실행의 차례(1부터). 대기 줄이 아니면 ``None``.
+        on_remove: 실행 중·끝난 실행을 목록에서 치우는 함수.
+        on_cancel: 대기 중인 실행을 취소하는 함수.
     """
     (
         status_cell,
@@ -210,17 +225,25 @@ def render_row(
         save_cell,
         action,
     ) = st.columns(_WIDTHS, gap="small", vertical_alignment="center")
-    label, color = status_badge(handle)
+    label, color = status_badge(handle, place)
     status_cell.badge(label, color=color)
     target = (
         youtube.watch_url(handle.video_id) if handle.video_id else handle.url
     )
     video_cell.markdown(f"[{_escape(video_label(handle))}]({target})")
     time_cell.markdown(short_time(handle.started_at))
-    count_cell.markdown(f"{len(handle.question_texts)}개")
+    count_cell.markdown(f"{len(handle.questions)}개")
     result_cell.markdown(result_markdown(handle))
     save_cell.markdown(save_markdown(handle))
     match handle.status:
+        case "queued":
+            action.button(
+                "취소",
+                key=f"dashboard_cancel_{handle.run_id}",
+                type="tertiary",
+                on_click=on_cancel,
+                args=(handle.run_id,),
+            )
         case "running":
             action.button(
                 "숨기기",

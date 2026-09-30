@@ -354,9 +354,13 @@ def test_running_query_blocks_the_start(app_db, outline_env) -> None:
 
     save_exported(app_db)
     add_instruction(app_db)
-    session.get_registry().create(
-        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("질문",)
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
     )
+    registry = session.get_registry()
+    registry.enqueue("https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", (question,))
+    registry.acquire_worker()
+    registry.claim_next()
 
     app = v1.AppTest.from_function(script).run()
     select_rows(app, app_db, [0])
@@ -364,6 +368,45 @@ def test_running_query_blocks_the_start(app_db, outline_env) -> None:
 
     assert app.button[0].disabled is True
     assert any("질의" in element.value for element in app.info)
+
+
+def test_a_queued_query_blocks_the_start(app_db, outline_env) -> None:
+    """곧 돌 질의가 대기 중이어도 정리를 시작할 수 없다."""
+    from notebooklm_st import session
+
+    save_exported(app_db)
+    add_instruction(app_db)
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    session.get_registry().enqueue("https://youtu.be/x", "x", (question,))
+
+    app = v1.AppTest.from_function(script).run()
+    select_rows(app, app_db, [0])
+    app.run()
+
+    assert app.button[0].disabled is True
+    assert any("대기 중" in element.value for element in app.info)
+
+
+def test_a_paused_queue_does_not_block_the_start(app_db, outline_env) -> None:
+    """멈춘 대기열은 돌지 않으므로 정리를 막지 않는다."""
+    from notebooklm_st import session
+
+    save_exported(app_db)
+    add_instruction(app_db)
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry = session.get_registry()
+    registry.enqueue("https://youtu.be/x", "x", (question,))
+    registry.pause("요청 한도를 초과했습니다.")
+
+    app = v1.AppTest.from_function(script).run()
+    select_rows(app, app_db, [0])
+    app.run()
+
+    assert app.button[0].disabled is False
 
 
 def test_start_hands_the_selection_to_the_runner(
