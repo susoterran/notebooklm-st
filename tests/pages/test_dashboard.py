@@ -100,6 +100,62 @@ def test_dashboard_draws_a_finished_run_without_the_answer(app_db) -> None:
     assert app.button(key="dashboard_discard_finished").disabled is False
 
 
+def test_dashboard_draws_failed_and_partial_failure_rows(app_db) -> None:
+    """실패한 실행과 일부 질문이 실패한 완료 실행이 각자 결과를 그린다."""
+
+    def script():
+        """AppTest 진입점 — 실패·부분 실패 실행을 넣고 현황을 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            failed = registry.create(
+                "https://youtu.be/aaaaaaaaaaa", "aaaaaaaaaaa", ("질문",)
+            )
+            registry.fail(
+                failed.run_id, "네트워크 오류가 발생했습니다.", "error"
+            )
+            done = registry.create(
+                "https://youtu.be/dQw4w9WgXcQ",
+                "dQw4w9WgXcQ",
+                ("핵심 주장은?", "요약해줘"),
+            )
+            registry.finish(
+                done.run_id,
+                models.RunResult(
+                    url="https://youtu.be/dQw4w9WgXcQ",
+                    video_id="dQw4w9WgXcQ",
+                    items=(
+                        models.AnswerItem(
+                            question_title="핵심 주장",
+                            question_text="핵심 주장은?",
+                            answer="세 가지다.",
+                            citations=(),
+                            error=None,
+                        ),
+                        models.AnswerItem(
+                            question_title="요약",
+                            question_text="요약해줘",
+                            answer="",
+                            citations=(),
+                            error="응답이 비어 있습니다.",
+                        ),
+                    ),
+                ),
+            )
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    text = rendered(app)
+    assert ":red-badge[실패]" in text
+    assert ":red[네트워크 오류가 발생했습니다.]" in text
+    assert ":green-badge[완료]" in text
+    assert "1건 실패: 요약" in text
+
+
 def test_discard_removes_only_its_run(app_db) -> None:
     """한 줄의 지우기는 그 실행만 치운다."""
 

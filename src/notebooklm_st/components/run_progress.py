@@ -8,11 +8,11 @@
 import datetime
 import re
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, assert_never
 
 import streamlit as st
 
-from notebooklm_st.core import labels
+from notebooklm_st.core import labels, youtube
 from notebooklm_st.services import runs
 
 BadgeColor = Literal["blue", "green", "red"]
@@ -61,11 +61,15 @@ def status_badge(handle: runs.RunHandle) -> tuple[str, BadgeColor]:
     Returns:
         배지 글자와 색.
     """
-    if handle.status == "running":
-        return "실행 중", "blue"
-    if handle.status == "failed":
-        return "실패", "red"
-    return "완료", "green"
+    match handle.status:
+        case "running":
+            return "실행 중", "blue"
+        case "failed":
+            return "실패", "red"
+        case "done":
+            return "완료", "green"
+        case _:
+            assert_never(handle.status)
 
 
 def video_label(handle: runs.RunHandle) -> str:
@@ -110,16 +114,25 @@ def result_markdown(handle: runs.RunHandle) -> str:
     Returns:
         칸 하나에 넣을 한 문단짜리 마크다운.
     """
-    if handle.status == "running":
-        latest = handle.progress[-1] if handle.progress else "시작하는 중"
-        return _escape(latest)
-    if handle.status == "failed":
-        text = _escape(
-            handle.error_message or "알 수 없는 오류로 실패했습니다."
-        )
-        if handle.error_level == "info":
-            return text
-        return f":red[{text}]"
+    match handle.status:
+        case "running":
+            latest = handle.progress[-1] if handle.progress else "시작하는 중"
+            return _escape(latest)
+        case "failed":
+            text = _escape(
+                handle.error_message or "알 수 없는 오류로 실패했습니다."
+            )
+            if handle.error_level == "info":
+                return text
+            return f":red[{text}]"
+        case "done":
+            return _done_markdown(handle)
+        case _:
+            assert_never(handle.status)
+
+
+def _done_markdown(handle: runs.RunHandle) -> str:
+    """완료된 실행의 결과 칸 마크다운을 만든다."""
     if handle.result is None:
         return ":orange[완료되었지만 결과가 비어 있습니다.]"
     items = handle.result.items
@@ -157,27 +170,33 @@ def render_row(
     )
     label, color = status_badge(handle)
     status_cell.badge(label, color=color)
-    video_cell.markdown(f"[{_escape(video_label(handle))}]({handle.url})")
+    target = (
+        youtube.watch_url(handle.video_id) if handle.video_id else handle.url
+    )
+    video_cell.markdown(f"[{_escape(video_label(handle))}]({target})")
     time_cell.markdown(short_time(handle.started_at))
     count_cell.markdown(f"{len(handle.question_texts)}개")
     result_cell.markdown(result_markdown(handle))
-    if handle.status == "running":
-        action.button(
-            "숨기기",
-            key=f"dashboard_hide_{handle.run_id}",
-            type="tertiary",
-            help=HIDE_HELP,
-            on_click=on_remove,
-            args=(handle.run_id,),
-        )
-        return
-    action.button(
-        "지우기",
-        key=f"dashboard_discard_{handle.run_id}",
-        type="tertiary",
-        on_click=on_remove,
-        args=(handle.run_id,),
-    )
+    match handle.status:
+        case "running":
+            action.button(
+                "숨기기",
+                key=f"dashboard_hide_{handle.run_id}",
+                type="tertiary",
+                help=HIDE_HELP,
+                on_click=on_remove,
+                args=(handle.run_id,),
+            )
+        case "done" | "failed":
+            action.button(
+                "지우기",
+                key=f"dashboard_discard_{handle.run_id}",
+                type="tertiary",
+                on_click=on_remove,
+                args=(handle.run_id,),
+            )
+        case _:
+            assert_never(handle.status)
 
 
 def _escape(text: str) -> str:

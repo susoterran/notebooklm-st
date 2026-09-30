@@ -225,7 +225,7 @@ def test_result_says_starting_before_any_progress() -> None:
 
 
 def test_result_paints_a_real_failure_red() -> None:
-    """Error 수준의 실패는 빨간 글자다."""
+    """수준이 error 인 실패는 빨간 글자다."""
     handle = make_handle(
         status="failed",
         error_message="네트워크 오류가 발생했습니다.",
@@ -344,7 +344,10 @@ def test_render_row_draws_a_badge_link_and_remove_button() -> None:
     for name in ("상태", "영상", "시작", "질문", "결과", "동작"):
         assert f"**{name}**" in text
     assert ":green-badge[완료]" in text
-    assert "[AI \\[실전\\] 가이드 \\$5](https://youtu.be/dQw4w9WgXcQ)" in text
+    assert (
+        "[AI \\[실전\\] 가이드 \\$5]"
+        "(https://www.youtube.com/watch?v=dQw4w9WgXcQ)"
+    ) in text
     assert "09-30 17:12" in text
     assert "1개" in text
     button = app.button(key="dashboard_discard_abc12345")
@@ -387,7 +390,7 @@ def test_render_row_offers_hide_for_a_running_run() -> None:
     assert not app.exception
     text = " ".join(element.value for element in app.markdown)
     assert ":blue-badge[실행 중]" in text
-    assert "[dQw4w9WgXcQ](https://youtu.be/dQw4w9WgXcQ)" in text
+    assert "[dQw4w9WgXcQ](https://www.youtube.com/watch?v=dQw4w9WgXcQ)" in text
     assert "자막 인덱싱 중" in text
     assert "2개" in text
     button = app.button(key="dashboard_hide_abc12345")
@@ -625,3 +628,37 @@ def test_schema_gate_keeps_firing_through_the_resource_cache(
     assert str(db_path) in app.error[0].value
 
     session.get_connection.clear()
+
+
+def test_render_row_links_the_raw_url_without_a_video_id() -> None:
+    """영상 ID 가 없는 실행은 입력한 URL 그대로 링크한다."""
+
+    def script():
+        """AppTest 진입점 — 영상 ID 가 빈 실행 한 줄을 그린다."""
+        from notebooklm_st.components import run_progress
+        from notebooklm_st.services import runs
+
+        def ignore(run_id: str) -> None:
+            """누른 것을 무시한다."""
+
+        run_progress.render_row(
+            runs.RunHandle(
+                run_id="abc12345",
+                url="https://example.com/v",
+                video_id="",
+                question_texts=("질문",),
+                started_at="2026-09-30T17:12:46",
+                status="running",
+                progress=[],
+                result=None,
+                error_message=None,
+                error_level=None,
+                finished_at=None,
+            ),
+            ignore,
+        )
+
+    app = v1.AppTest.from_function(script).run()
+    assert not app.exception
+    text = " ".join(element.value for element in app.markdown)
+    assert "(https://example.com/v)" in text
