@@ -121,8 +121,13 @@ def _start_worker(
         args=(registry, db_path, is_blocked, pipeline),
         daemon=True,
     )
+    try:
+        thread.start()
+    except BaseException:
+        # 못 뜬 스레드가 자리를 쥐고 있으면 다시는 워커가 뜨지 않는다.
+        registry.release_worker()
+        raise
     _threads.append(thread)
-    thread.start()
 
 
 def _drain(

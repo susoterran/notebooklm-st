@@ -277,3 +277,30 @@ def test_a_dead_worker_frees_its_slot(db_path) -> None:
     assert calls == [FIRST, SECOND, THIRD]
     assert statuses(registry)["bbbbbbbbbbb"] == "done"
     assert statuses(registry)["ccccccccccc"] == "done"
+
+
+def test_a_failed_thread_start_frees_the_slot(db_path, monkeypatch) -> None:
+    """스레드가 못 떠도 워커 자리는 비고 남은 항목이 이어진다."""
+    registry = run_registry.RunRegistry()
+    calls: list[str] = []
+
+    async def pipeline(url, questions, on_progress, **kwargs):
+        """호출을 기록한다."""
+        calls.append(url)
+        return answer(url)
+
+    def refuse(self) -> None:
+        """스레드 시작을 거부한다."""
+        raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", refuse)
+        with pytest.raises(RuntimeError):
+            put(registry, db_path, FIRST, pipeline)
+    assert runner._threads == []
+
+    put(registry, db_path, SECOND, pipeline)
+    runner.join_all(timeout=5.0)
+
+    assert calls == [FIRST, SECOND]
+    assert set(statuses(registry).values()) == {"done"}
