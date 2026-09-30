@@ -172,6 +172,15 @@ class SyncSkip:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class SyncUpdate:
+    """동기화가 메타데이터를 갱신할 기존 행 한 건."""
+
+    run: RunSummary
+    metadata: VideoMetadata
+    """쓸 값. 문서가 준 칸과 로컬에 남길 칸을 합친 결과다."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class SyncPlan:
     """미리보기와 적용이 함께 쓰는 동기화 계획.
 
@@ -182,11 +191,12 @@ class SyncPlan:
     deletes: tuple[RunSummary, ...]
     creates: tuple[SyncCreate, ...]
     skips: tuple[SyncSkip, ...]
+    updates: tuple[SyncUpdate, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        """지울 것도 만들 것도 없다."""
-        return not self.deletes and not self.creates
+        """지울 것도 만들 것도 갱신할 것도 없다."""
+        return not self.deletes and not self.creates and not self.updates
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
