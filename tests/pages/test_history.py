@@ -564,6 +564,14 @@ SYNC_BODY = (
     "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
 )
 
+SYNC_META_BODY = (
+    "- 제목: 되살릴 문서\n"
+    "- 채널: 어떤 채널\n"
+    "- 업로드 일자: 2026-09-20\n"
+    "- 영상 URL: https://www.youtube.com/watch?v=aaaaaaaaaaa\n"
+    "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
+)
+
 
 def listed(doc_id: str, markdown: str = SYNC_BODY) -> models.ListedDocument:
     """목록에서 읽어 온 문서 하나."""
@@ -645,7 +653,10 @@ def test_sync_check_previews_the_counts_and_lists(app_db, monkeypatch) -> None:
 
     assert not app.exception
     text = rendered_markdown(app)
-    assert "지울 이력 1건 · 만들 문서 1건 · 건너뛴 문서 1건" in text
+    assert (
+        "지울 이력 1건 · 만들 문서 1건 · 채널·업로드일 갱신 0건"
+        " · 건너뛴 문서 1건"
+    ) in text
     assert "정리한 제목" in text
     assert "문서 new-1" in text
     assert "문서 skip-1" in text
@@ -711,6 +722,70 @@ def test_sync_with_nothing_to_do_hides_the_apply_button(
     messages = " ".join(element.value for element in app.info)
     assert "이미 맞습니다" in messages
     assert "문서 skip-1" in rendered_markdown(app)
+
+
+def test_sync_previews_a_metadata_update(app_db, monkeypatch) -> None:
+    """갱신만 있어도 건수가 보이고 적용 버튼이 나온다."""
+    set_outline_env(monkeypatch)
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+    monkeypatch.setattr(
+        outline, "list_documents", fake_list([listed("doc-1", SYNC_META_BODY)])
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+
+    assert not app.exception
+    assert "채널·업로드일 갱신 1건" in rendered_markdown(app)
+    assert "history_sync_apply" in [e.key for e in app.button]
+
+
+def test_sync_apply_fills_the_metadata(app_db, monkeypatch) -> None:
+    """적용하면 메타데이터가 채워지고 결과 문구에 갱신 건수가 나온다."""
+    set_outline_env(monkeypatch)
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+    monkeypatch.setattr(
+        outline, "list_documents", fake_list([listed("doc-1", SYNC_META_BODY)])
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    app.button(key="history_sync_apply").click().run()
+
+    assert not app.exception
+    assert "갱신 1건" in app.success[0].value
+    assert run_history_sync.list_exported(app_db)[0].metadata == (
+        models.VideoMetadata(channel="어떤 채널", upload_date="2026-09-20")
+    )
+
+
+def test_sync_with_equal_metadata_is_already_in_step(
+    app_db, monkeypatch
+) -> None:
+    """메타데이터까지 같으면 이미 맞다."""
+    set_outline_env(monkeypatch)
+    run_id = run_history.save_run(
+        app_db,
+        make_result(),
+        models.VideoMetadata(channel="어떤 채널", upload_date="2026-09-20"),
+    )
+    export(app_db, run_id)
+    monkeypatch.setattr(
+        outline, "list_documents", fake_list([listed("doc-1", SYNC_META_BODY)])
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+
+    assert not app.exception
+    assert "history_sync_apply" not in [e.key for e in app.button]
+    messages = " ".join(element.value for element in app.info)
+    assert "이미 맞습니다" in messages
 
 
 def test_sync_list_failure_shows_the_message(app_db, monkeypatch) -> None:

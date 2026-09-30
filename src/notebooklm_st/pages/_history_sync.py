@@ -32,7 +32,7 @@ def render(connection: sqlite3.Connection) -> None:
         st.caption(
             "Outline 컬렉션의 문서 목록과 저장된 이력을 맞춥니다."
             " Outline 에 없는 이력은 지우고, 이력에 없는 문서는 새로"
-            " 만듭니다."
+            " 만듭니다. 채널·업로드일은 문서 머리에서 읽어 채웁니다."
         )
         config = outline.config_from_env()
         if config is None:
@@ -75,10 +75,13 @@ def _render_plan(
     """미리보기와 적용·취소 버튼을 그린다.
 
     expander 는 중첩할 수 없으므로 세 목록은 마크다운으로 그린다.
+    채널·업로드일 갱신은 개수만 그린다. 처음 채울 때는 저장된 요약본
+    전부가 대상이라 목록이 길다.
     """
     st.markdown(
         f"지울 이력 {len(sync_plan.deletes)}건"
         f" · 만들 문서 {len(sync_plan.creates)}건"
+        f" · 채널·업로드일 갱신 {len(sync_plan.updates)}건"
         f" · 건너뛴 문서 {len(sync_plan.skips)}건"
     )
     if sync_plan.deletes:
@@ -135,5 +138,6 @@ def _apply(connection: sqlite3.Connection, sync_plan: models.SyncPlan) -> None:
     st.session_state.pop(_PLAN_KEY, None)
     st.session_state[_RESULT_KEY] = (
         f"동기화 완료 · 지움 {result.deleted}건 · 만듦 {result.created}건"
+        f" · 갱신 {result.updated}건"
     )
     st.rerun()
