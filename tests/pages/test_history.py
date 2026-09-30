@@ -11,6 +11,7 @@ from notebooklm_st.services import (
     run_export,
     run_history,
     run_history_sync,
+    run_links,
 )
 
 
@@ -205,7 +206,7 @@ def test_delete_keeps_the_other_runs(app_db) -> None:
 
 def export(app_db, run_id: int) -> None:
     """실행 하나를 저장된 상태로 만든다."""
-    run_history.mark_exported(
+    run_links.mark_exported(
         app_db,
         run_id,
         document_id="doc-1",
@@ -490,7 +491,7 @@ def test_export_reports_a_created_document_it_could_not_record(
         """mark_exported 가 실패하는 상황을 만든다."""
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(run_history, "mark_exported", boom)
+    monkeypatch.setattr(run_links, "mark_exported", boom)
     run_history.save_run(app_db, make_result())
 
     app = v1.AppTest.from_function(script)
@@ -570,7 +571,7 @@ def test_export_does_not_swallow_a_programming_error(
         """리팩터링이 남긴 버그를 흉내 낸다."""
         raise AttributeError("no attribute 'mark_exported'")
 
-    monkeypatch.setattr(run_history, "mark_exported", boom)
+    monkeypatch.setattr(run_links, "mark_exported", boom)
     run_history.save_run(app_db, make_result())
 
     app = v1.AppTest.from_function(script)

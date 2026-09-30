@@ -8,7 +8,13 @@ from collections.abc import Iterator
 import pytest
 
 from notebooklm_st.core import models
-from notebooklm_st.services import outline, run_export, run_history, store
+from notebooklm_st.services import (
+    outline,
+    run_export,
+    run_history,
+    run_links,
+    store,
+)
 
 CONFIG = outline.OutlineConfig(
     base_url="http://192.168.0.10:3000",
@@ -115,7 +121,7 @@ def test_save_reports_a_document_it_could_not_record(
         """기록이 실패하는 상황을 만든다."""
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(run_history, "mark_exported", boom)
+    monkeypatch.setattr(run_links, "mark_exported", boom)
     summary = saved(connection)
 
     with pytest.raises(run_export.RecordError) as excinfo:
@@ -155,7 +161,7 @@ def test_save_does_not_swallow_a_programming_error(
         """리팩터링이 남긴 버그를 흉내 낸다."""
         raise AttributeError("no attribute 'mark_exported'")
 
-    monkeypatch.setattr(run_history, "mark_exported", boom)
+    monkeypatch.setattr(run_links, "mark_exported", boom)
     summary = saved(connection)
 
     with pytest.raises(AttributeError):

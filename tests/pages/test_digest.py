@@ -13,6 +13,7 @@ from notebooklm_st.services import (
     questions,
     run_history,
     run_history_sync,
+    run_links,
 )
 
 BASE_URL = "http://192.168.0.10:3000"
@@ -64,7 +65,7 @@ def save_exported(
 ) -> int:
     """Outline 에 저장까지 끝난 실행 하나를 만든다."""
     run_id = run_history.save_run(connection, make_result(), metadata)
-    run_history.mark_exported(
+    run_links.mark_exported(
         connection,
         run_id,
         document_id=document_id,

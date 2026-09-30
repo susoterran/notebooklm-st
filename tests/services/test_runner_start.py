@@ -13,6 +13,7 @@ from notebooklm_st.services import (
     outline,
     run_export,
     run_history,
+    run_links,
     runner,
     runs,
     store,
@@ -572,7 +573,7 @@ def test_auto_save_reports_a_document_it_could_not_record(
         """기록이 실패하는 상황을 만든다."""
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(run_history, "mark_exported", boom)
+    monkeypatch.setattr(run_links, "mark_exported", boom)
 
     handle = auto_saved(db_path, answering())
 

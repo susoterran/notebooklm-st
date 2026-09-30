@@ -19,7 +19,13 @@ import threading
 from collections.abc import Iterator, Sequence
 
 from notebooklm_st.core import answer_text, auto_save, markdown_export, models
-from notebooklm_st.services import outline, run_history, runs, store
+from notebooklm_st.services import (
+    outline,
+    run_history,
+    run_links,
+    runs,
+    store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +108,7 @@ def save(
 ) -> outline.SavedDocument:
     """문서를 만들고 로컬에 링크를 적는다.
 
-    링크를 적으면서 로컬 답변을 지운다(``run_history.mark_exported``).
+    링크를 적으면서 로컬 답변을 지운다(``run_links.mark_exported``).
 
     이력 화면과 자동 저장이 같은 실행을 겹쳐 올리지 않도록 실행 ID 를
     먼저 선점하고, 선점한 뒤 저장 여부를 DB 에서 다시 읽는다. 부르는
@@ -137,7 +143,7 @@ def save(
             markdown_export.to_markdown(summary, items, title, metadata),
         )
         try:
-            run_history.mark_exported(
+            run_links.mark_exported(
                 connection,
                 summary.id,
                 document_id=document.id,

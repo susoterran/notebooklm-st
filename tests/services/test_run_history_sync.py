@@ -6,7 +6,12 @@ from collections.abc import Iterator
 import pytest
 
 from notebooklm_st.core import models
-from notebooklm_st.services import run_history, run_history_sync, store
+from notebooklm_st.services import (
+    run_history,
+    run_history_sync,
+    run_links,
+    store,
+)
 
 
 @pytest.fixture
@@ -51,7 +56,7 @@ def export(
     connection: sqlite3.Connection, run_id: int, document_id: str = "doc-1"
 ) -> None:
     """테스트용 저장 기록 한 번."""
-    run_history.mark_exported(
+    run_links.mark_exported(
         connection,
         run_id,
         document_id=document_id,
