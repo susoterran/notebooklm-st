@@ -43,6 +43,8 @@ def render(runs: Sequence[models.RunSummary]) -> list[models.RunSummary]:
         hide_index=True,
         column_config={
             "title": st.column_config.TextColumn("문서 제목"),
+            "channel": st.column_config.TextColumn("채널"),
+            "upload_date": st.column_config.TextColumn("업로드일"),
             "created_at": st.column_config.TextColumn("시각"),
             "url": st.column_config.LinkColumn("Outline", display_text="열기"),
         },
@@ -72,9 +74,17 @@ def widget_key(runs: Sequence[models.RunSummary]) -> str:
 
 
 def _row(run: models.RunSummary) -> dict[str, str | None]:
-    """재료 하나를 표의 한 행으로 만든다."""
+    """재료 하나를 표의 한 행으로 만든다.
+
+    열 순서가 곧 표의 열 순서다. 채널·업로드일은 고르는 기준이라
+    제목 바로 뒤에 둔다. 업로드일은 ``YYYY-MM-DD`` 문자열이라 머리글
+    정렬이 날짜 순서와 같다.
+    """
+    metadata = run.metadata
     return {
         "title": _title(run),
+        "channel": metadata.channel if metadata else None,
+        "upload_date": metadata.upload_date if metadata else None,
         "created_at": run.created_at,
         "url": run.outline_url,
     }

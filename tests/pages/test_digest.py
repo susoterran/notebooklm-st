@@ -1,5 +1,6 @@
 """정리본 화면 테스트."""
 
+import dataclasses
 import sqlite3
 
 import pytest
@@ -59,9 +60,10 @@ def save_exported(
     connection: sqlite3.Connection,
     document_title: str = "밸류에이션 강의",
     document_id: str = "doc-1",
+    metadata: models.VideoMetadata | None = None,
 ) -> int:
     """Outline 에 저장까지 끝난 실행 하나를 만든다."""
-    run_id = run_history.save_run(connection, make_result())
+    run_id = run_history.save_run(connection, make_result(), metadata)
     run_history.mark_exported(
         connection,
         run_id,
@@ -194,6 +196,49 @@ def test_saved_runs_older_than_the_recent_fifty_are_listed(
 
     assert not app.exception
     assert table_titles(app) == ["오래된 요약본"]
+
+
+def test_table_shows_the_channel_and_upload_date(app_db, outline_env) -> None:
+    """저장한 요약본의 채널·업로드일이 표에 나온다."""
+    save_exported(
+        app_db,
+        metadata=models.VideoMetadata(
+            channel="어떤 채널", upload_date="2026-09-20"
+        ),
+    )
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    table = app.dataframe[0].value
+    assert list(table["channel"]) == ["어떤 채널"]
+    assert list(table["upload_date"]) == ["2026-09-20"]
+
+
+def test_table_leaves_missing_metadata_blank(app_db, outline_env) -> None:
+    """메타데이터가 없는 요약본은 두 칸이 빈다."""
+    save_exported(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    table = app.dataframe[0].value
+    assert table["channel"].isna().all()
+    assert table["upload_date"].isna().all()
+
+
+def test_table_columns_come_in_order(app_db, outline_env) -> None:
+    """고르는 기준이 제목 다음에 오고 시각은 뒤로 간다."""
+    save_exported(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert list(app.dataframe[0].value.columns) == [
+        "title",
+        "channel",
+        "upload_date",
+        "created_at",
+        "url",
+    ]
 
 
 def test_no_questions_shows_a_notice(app_db, outline_env) -> None:
@@ -436,6 +481,26 @@ def test_table_key_changes_when_the_materials_change() -> None:
     after = _digest_materials.widget_key([summary(3), summary(2), summary(1)])
 
     assert before != after
+
+
+def test_table_key_ignores_the_metadata() -> None:
+    """메타데이터만 바뀌면 표의 key 는 그대로다.
+
+    다른 탭에서 동기화로 채널·업로드일이 채워져도 고른 재료가 비워지면
+    안 된다.
+    """
+    from notebooklm_st.pages import _digest_materials
+
+    filled = dataclasses.replace(
+        summary(1),
+        metadata=models.VideoMetadata(
+            channel="어떤 채널", upload_date="2026-09-20"
+        ),
+    )
+
+    assert _digest_materials.widget_key([summary(1)]) == (
+        _digest_materials.widget_key([filled])
+    )
 
 
 def make_draft(instruction="정리해 줘", created_on="2026-09-23", topic=None):
