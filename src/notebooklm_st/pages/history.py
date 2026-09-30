@@ -186,7 +186,11 @@ def _export(
             run_export.save(
                 connection, config, selected, title, items, metadata
             )
-        except (outline.OutlineError, run_export.RecordError) as error:
+        except (
+            outline.OutlineError,
+            run_export.RecordError,
+            run_export.SaveConflictError,
+        ) as error:
             st.error(str(error))
             return
     st.rerun()

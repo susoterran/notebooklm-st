@@ -9,7 +9,14 @@ from notebooklm import exceptions
 from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import models
-from notebooklm_st.services import outline, run_history, runner, runs, store
+from notebooklm_st.services import (
+    outline,
+    run_export,
+    run_history,
+    runner,
+    runs,
+    store,
+)
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -575,6 +582,24 @@ def test_auto_save_reports_a_document_it_could_not_record(
     assert handle.save.url == DOC_URL
     assert "다시 저장하면 문서가 둘이 됩니다." in handle.save.message
     assert saved_runs(db_path)[0].exported_at is None
+
+
+def test_auto_save_skips_a_run_saved_elsewhere(db_path, monkeypatch) -> None:
+    """이력 화면이 먼저 저장했거나 저장 중이면 건너뛴 것으로 적는다."""
+    set_outline_env(monkeypatch)
+
+    def conflict(*args, **kwargs):
+        """이력 화면이 같은 실행을 올리고 있는 상황을 흉내 낸다."""
+        raise run_export.SaveConflictError()
+
+    monkeypatch.setattr(run_export, "save", conflict)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "done"
+    assert handle.save == runs.SaveOutcome(
+        "skipped", "이미 저장했거나 저장 중", None
+    )
 
 
 def test_auto_save_survives_an_unexpected_error(db_path, monkeypatch) -> None:

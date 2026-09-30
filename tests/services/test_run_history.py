@@ -382,6 +382,24 @@ def test_mark_exported_keeps_the_answers_of_an_unknown_run(
     assert len(run_history.load_run_items(connection, run_id)) == 2
 
 
+def test_mark_exported_refuses_an_already_saved_run(connection) -> None:
+    """이미 저장된 실행의 링크를 다른 문서로 덮지 않는다."""
+    run_id = run_history.save_run(connection, make_result())
+    export(connection, run_id)
+
+    with pytest.raises(ValueError, match="이미 저장되었습니다"):
+        run_history.mark_exported(
+            connection,
+            run_id,
+            document_id="doc-2",
+            document_title="다른 제목",
+            document_url="http://192.168.0.10:3000/doc/y",
+        )
+
+    run = run_history.list_runs(connection)[0]
+    assert run.outline_url == "http://192.168.0.10:3000/doc/x"
+
+
 class FailingAnswerDelete:
     """답변 삭제 문장에서만 터지는 커넥션 대역.
 

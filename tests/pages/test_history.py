@@ -8,6 +8,7 @@ from notebooklm_st.core import models, youtube
 from notebooklm_st.services import (
     history_sync,
     outline,
+    run_export,
     run_history,
     run_history_sync,
 )
@@ -500,6 +501,28 @@ def test_export_reports_a_created_document_it_could_not_record(
     message = app.error[0].value
     assert "http://192.168.0.10:3000/doc/x" in message
     assert "둘이 됩니다" in message
+
+
+def test_export_reports_a_run_saved_elsewhere(app_db, monkeypatch) -> None:
+    """자동 저장이 먼저 올렸거나 올리는 중이면 새로 고치라고 알린다."""
+    set_outline_env(monkeypatch)
+
+    def conflict(*args, **kwargs):
+        """자동 저장이 같은 실행을 올리고 있는 상황을 흉내 낸다."""
+        raise run_export.SaveConflictError()
+
+    monkeypatch.setattr(run_export, "save", conflict)
+    run_history.save_run(app_db, make_result())
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_export_1").click().run()
+
+    assert not app.exception
+    assert app.error[0].value == (
+        "이미 Outline 에 저장했거나 저장 중인 실행입니다."
+        " 화면을 새로 고쳐 확인하세요."
+    )
 
 
 def test_exporting_an_older_run_redraws_that_same_run(

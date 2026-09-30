@@ -11,15 +11,27 @@
 순서만 갖는다.
 """
 
+import contextlib
 import logging
 import pathlib
 import sqlite3
-from collections.abc import Sequence
+import threading
+from collections.abc import Iterator, Sequence
 
 from notebooklm_st.core import answer_text, auto_save, markdown_export, models
 from notebooklm_st.services import outline, run_history, runs, store
 
 logger = logging.getLogger(__name__)
+
+_CONFLICT_MESSAGE = (
+    "이미 Outline 에 저장했거나 저장 중인 실행입니다."
+    " 화면을 새로 고쳐 확인하세요."
+)
+
+# 이력 화면과 러너 스레드는 커넥션이 따로지만 이 모듈 객체는 함께
+# 본다. 그래서 선점을 커넥션이 아니라 프로세스에 둔다.
+_saving_lock = threading.Lock()
+_saving: set[int] = set()
 
 
 class RecordError(Exception):
@@ -48,6 +60,38 @@ class RecordError(Exception):
         self.document = document
 
 
+class SaveConflictError(Exception):
+    """같은 실행을 이미 저장했거나 다른 길이 저장하고 있다."""
+
+    def __init__(self) -> None:
+        """사람에게 보일 문구 하나로 만든다."""
+        super().__init__(_CONFLICT_MESSAGE)
+
+
+@contextlib.contextmanager
+def _claimed(run_id: int) -> Iterator[None]:
+    """실행 하나를 이 프로세스 안에서 선점하고, 어떻게 끝나든 푼다.
+
+    Args:
+        run_id: 선점할 실행 ID.
+
+    Yields:
+        선점한 동안 한 번.
+
+    Raises:
+        SaveConflictError: 다른 길이 그 실행을 저장하고 있다.
+    """
+    with _saving_lock:
+        if run_id in _saving:
+            raise SaveConflictError()
+        _saving.add(run_id)
+    try:
+        yield
+    finally:
+        with _saving_lock:
+            _saving.discard(run_id)
+
+
 def save(
     connection: sqlite3.Connection,
     config: outline.OutlineConfig,
@@ -59,6 +103,10 @@ def save(
     """문서를 만들고 로컬에 링크를 적는다.
 
     링크를 적으면서 로컬 답변을 지운다(``run_history.mark_exported``).
+
+    이력 화면과 자동 저장이 같은 실행을 겹쳐 올리지 않도록 실행 ID 를
+    먼저 선점하고, 선점한 뒤 저장 여부를 DB 에서 다시 읽는다. 부르는
+    쪽이 든 요약은 저장 전의 것일 수 있다.
 
     Args:
         connection: 열린 커넥션.
@@ -72,27 +120,35 @@ def save(
         만들어진 문서.
 
     Raises:
+        SaveConflictError: 이미 저장했거나 다른 길이 저장하고 있다.
+            문서를 만들지 않는다.
         outline.OutlineError: 문서를 만들지 못했다. 로컬은 그대로다.
         RecordError: 문서는 만들었는데 로컬 기록에 실패했다.
     """
-    document = outline.create_document(
-        config,
-        title,
-        markdown_export.to_markdown(summary, items, title, metadata),
-    )
-    try:
-        run_history.mark_exported(
-            connection,
-            summary.id,
-            document_id=document.id,
-            document_title=document.title,
-            document_url=document.url,
+    with _claimed(summary.id):
+        current = run_history.load_run(connection, summary.id)
+        # 없는 실행은 그대로 보낸다. mark_exported 의 ValueError 가
+        # RecordError 로 드러난다.
+        if current is not None and current.exported_at is not None:
+            raise SaveConflictError()
+        document = outline.create_document(
+            config,
+            title,
+            markdown_export.to_markdown(summary, items, title, metadata),
         )
-    except (ValueError, sqlite3.Error) as error:
-        # mark_exported 가 실제로 내는 둘만 잡는다. 더 넓게 잡으면
-        # 나중에 생길 프로그래밍 오류까지 "문서가 둘이 됩니다" 로
-        # 둔갑해 진짜 버그가 드러나지 않는다.
-        raise RecordError(document, error) from error
+        try:
+            run_history.mark_exported(
+                connection,
+                summary.id,
+                document_id=document.id,
+                document_title=document.title,
+                document_url=document.url,
+            )
+        except (ValueError, sqlite3.Error) as error:
+            # mark_exported 가 실제로 내는 둘만 잡는다. 더 넓게 잡으면
+            # 나중에 생길 프로그래밍 오류까지 "문서가 둘이 됩니다" 로
+            # 둔갑해 진짜 버그가 드러나지 않는다.
+            raise RecordError(document, error) from error
     return document
 
 
@@ -127,6 +183,8 @@ def save_automatically(
     title = (result.title or "").strip()
     try:
         document = _upload(config, history_id, title, metadata, db_path)
+    except SaveConflictError:
+        return runs.SaveOutcome("skipped", "이미 저장했거나 저장 중", None)
     except outline.OutlineError as error:
         return runs.SaveOutcome("failed", f"미저장 · 저장 실패: {error}", None)
     except RecordError as error:
@@ -157,6 +215,7 @@ def _upload(
     같은 사본이다.
 
     Raises:
+        SaveConflictError: 이미 저장했거나 다른 길이 저장하고 있다.
         outline.OutlineError: 문서를 만들지 못했다.
         RecordError: 문서는 만들었는데 기록에 실패했다.
         LookupError: 방금 남긴 이력을 찾지 못했다.

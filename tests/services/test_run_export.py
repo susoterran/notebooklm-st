@@ -2,6 +2,7 @@
 
 import dataclasses
 import sqlite3
+import threading
 from collections.abc import Iterator
 
 import pytest
@@ -159,3 +160,116 @@ def test_save_does_not_swallow_a_programming_error(
 
     with pytest.raises(AttributeError):
         run_export.save(connection, CONFIG, summary, "제목", [], None)
+
+
+CONFLICT = (
+    "이미 Outline 에 저장했거나 저장 중인 실행입니다."
+    " 화면을 새로 고쳐 확인하세요."
+)
+
+
+def numbered_create(monkeypatch) -> list[str]:
+    """``outline.create_document`` 를 막고 부를 때마다 새 문서를 만든다.
+
+    문서마다 URL 이 달라 나중 쪽이 첫 링크를 덮었는지 가려낼 수 있다.
+    """
+    urls: list[str] = []
+
+    def create(config, title, markdown, **kwargs):
+        """번호 붙은 URL 로 문서를 만들고 그 URL 을 기록한다."""
+        urls.append(f"{DOC_URL}{len(urls) + 1}")
+        return outline.SavedDocument(id="doc-1", title=title, url=urls[-1])
+
+    monkeypatch.setattr(outline, "create_document", create)
+    return urls
+
+
+def test_save_refuses_a_run_that_is_already_saved(
+    connection, monkeypatch
+) -> None:
+    """이미 저장한 실행은 문서를 다시 만들지 않고 첫 링크를 지킨다.
+
+    이력 화면이 들고 있는 요약은 저장 전의 것이다. 그래서 요약이 아니라
+    DB 를 다시 읽어 가른다.
+    """
+    urls = numbered_create(monkeypatch)
+    summary = saved(connection)
+    run_export.save(connection, CONFIG, summary, "제목", [], None)
+
+    with pytest.raises(run_export.SaveConflictError) as excinfo:
+        run_export.save(connection, CONFIG, summary, "제목", [], None)
+
+    assert str(excinfo.value) == CONFLICT
+    assert urls == [f"{DOC_URL}1"]
+    assert run_history.list_runs(connection)[0].outline_url == urls[0]
+
+
+def test_save_refuses_a_second_save_while_the_first_is_uploading(
+    connection, tmp_path, monkeypatch
+) -> None:
+    """먼저 올리는 쪽이 끝나기 전에 온 저장은 문서를 만들지 않는다.
+
+    자동 저장(러너 스레드)이 올리는 동안 이력 화면의 버튼이 눌린
+    경우다. 두 길은 커넥션이 따로라 첫 저장은 다른 스레드에서 자기
+    커넥션으로 돌린다.
+    """
+    uploading = threading.Event()
+    release = threading.Event()
+    urls: list[str] = []
+
+    def held_create(config, title, markdown, **kwargs):
+        """첫 문서는 풀어 줄 때까지 붙잡아 둔다."""
+        urls.append(f"{DOC_URL}{len(urls) + 1}")
+        url = urls[-1]
+        if len(urls) == 1:
+            uploading.set()
+            release.wait(timeout=5)
+        return outline.SavedDocument(id="doc-1", title=title, url=url)
+
+    monkeypatch.setattr(outline, "create_document", held_create)
+    summary = saved(connection)
+    documents: list[outline.SavedDocument] = []
+
+    def first_save() -> None:
+        """자기 커넥션을 열어 첫 저장을 돌린다."""
+        own = store.connect(tmp_path / "export.db")
+        try:
+            documents.append(
+                run_export.save(own, CONFIG, summary, "제목", [], None)
+            )
+        finally:
+            own.close()
+
+    thread = threading.Thread(target=first_save)
+    thread.start()
+    try:
+        assert uploading.wait(timeout=5)
+        with pytest.raises(run_export.SaveConflictError):
+            run_export.save(connection, CONFIG, summary, "제목", [], None)
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert [document.url for document in documents] == [f"{DOC_URL}1"]
+    assert urls == [f"{DOC_URL}1"]
+    assert run_history.list_runs(connection)[0].outline_url == urls[0]
+
+
+def test_save_releases_the_run_after_a_failure(connection, monkeypatch) -> None:
+    """올리다 실패한 실행은 선점이 풀려 다시 저장할 수 있다."""
+
+    def refuse(config, title, markdown, **kwargs):
+        """항상 거부한다."""
+        raise outline.OutlineError("토큰이 거부되었습니다.")
+
+    monkeypatch.setattr(outline, "create_document", refuse)
+    summary = saved(connection)
+    with pytest.raises(outline.OutlineError):
+        run_export.save(connection, CONFIG, summary, "제목", [], None)
+    calls = record_create(monkeypatch)
+
+    document = run_export.save(connection, CONFIG, summary, "제목", [], None)
+
+    assert document.url == DOC_URL
+    assert len(calls) == 1
