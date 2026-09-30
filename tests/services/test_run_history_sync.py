@@ -63,6 +63,7 @@ def export(
 def make_create(
     doc_id: str = "doc-9",
     video_id: str = "dQw4w9WgXcQ",
+    metadata: models.VideoMetadata | None = None,
 ) -> models.SyncCreate:
     """동기화가 만들 이력 한 건."""
     document = models.ListedDocument(
@@ -76,7 +77,21 @@ def make_create(
         document=document,
         url=f"https://www.youtube.com/watch?v={video_id}",
         video_id=video_id,
+        metadata=metadata,
     )
+
+
+METADATA = models.VideoMetadata(channel="안될공학", upload_date="2026-09-15")
+
+
+def exported_run(
+    connection: sqlite3.Connection,
+    metadata: models.VideoMetadata | None = None,
+) -> int:
+    """``doc-1`` 에 저장된 실행 하나를 만든다."""
+    run_id = run_history.save_run(connection, make_result(), metadata)
+    export(connection, run_id)
+    return run_id
 
 
 def test_list_exported_returns_only_exported_runs(connection) -> None:
@@ -226,3 +241,109 @@ def test_list_video_ids_includes_a_revived_run(connection) -> None:
     connection.commit()
 
     assert run_history.list_video_ids(connection) == {"aaaaaaaaaaa"}
+
+
+def test_list_exported_carries_the_metadata(connection) -> None:
+    """저장된 행의 메타데이터가 요약에 실려 온다."""
+    exported_run(connection, METADATA)
+
+    assert run_history_sync.list_exported(connection)[0].metadata == METADATA
+
+
+def test_insert_exported_writes_the_metadata_it_read(connection) -> None:
+    """문서에서 읽은 메타데이터로 ``run_metadata`` 행도 만든다."""
+    run_id = run_history_sync.insert_exported(
+        connection, make_create(metadata=METADATA)
+    )
+    connection.commit()
+
+    assert run_id is not None
+    assert run_history.load_metadata(connection, run_id) == METADATA
+
+
+def test_insert_exported_writes_nothing_for_an_existing_document(
+    connection,
+) -> None:
+    """이미 있는 문서면 메타데이터도 쓰지 않는다."""
+    run_id = exported_run(connection)
+
+    result = run_history_sync.insert_exported(
+        connection, make_create("doc-1", metadata=METADATA)
+    )
+    connection.commit()
+
+    assert result is None
+    assert run_history.load_metadata(connection, run_id) is None
+
+
+def test_write_metadata_inserts_a_missing_row(connection) -> None:
+    """행이 없으면 넣고 ``True`` 다."""
+    run_id = exported_run(connection)
+
+    written = run_history_sync.write_metadata(
+        connection, run_id, "doc-1", METADATA
+    )
+    connection.commit()
+
+    assert written is True
+    assert run_history.load_metadata(connection, run_id) == METADATA
+
+
+def test_write_metadata_overwrites_a_different_row(connection) -> None:
+    """값이 다르면 덮고 ``True`` 다."""
+    run_id = exported_run(
+        connection, models.VideoMetadata(channel="옛 채널", upload_date=None)
+    )
+
+    written = run_history_sync.write_metadata(
+        connection, run_id, "doc-1", METADATA
+    )
+    connection.commit()
+
+    assert written is True
+    assert run_history.load_metadata(connection, run_id) == METADATA
+
+
+def test_write_metadata_reports_an_unchanged_row(connection) -> None:
+    """값이 이미 같으면 덮지 않고 ``False`` 다."""
+    run_id = exported_run(connection, METADATA)
+
+    written = run_history_sync.write_metadata(
+        connection, run_id, "doc-1", METADATA
+    )
+
+    assert written is False
+    assert run_history.load_metadata(connection, run_id) == METADATA
+
+
+def test_write_metadata_needs_the_document_id_to_match(connection) -> None:
+    """실행 ID 와 문서 ID 가 둘 다 맞아야 쓴다.
+
+    SQLite 는 지워진 가장 큰 ID 를 다음 삽입에 다시 준다. 그 ID 를
+    받은 미저장 실행에 남의 메타데이터가 쓰이면 안 된다.
+    """
+    exported = exported_run(connection)
+    unexported = run_history.save_run(connection, make_result())
+
+    wrong_document = run_history_sync.write_metadata(
+        connection, exported, "doc-other", METADATA
+    )
+    unsaved = run_history_sync.write_metadata(
+        connection, unexported, "doc-1", METADATA
+    )
+    connection.commit()
+
+    assert wrong_document is False
+    assert unsaved is False
+    assert run_history.load_metadata(connection, exported) is None
+    assert run_history.load_metadata(connection, unexported) is None
+
+
+def test_write_metadata_does_not_commit(connection) -> None:
+    """트랜잭션은 호출자가 소유한다."""
+    run_id = exported_run(connection)
+
+    run_history_sync.write_metadata(connection, run_id, "doc-1", METADATA)
+    connection.rollback()
+
+    assert run_history.load_metadata(connection, run_id) is None

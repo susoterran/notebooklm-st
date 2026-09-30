@@ -48,8 +48,9 @@ def insert_exported(
     같은 문서를 가리키는 행이 이미 있으면 넣지 않는다 — 미리보기와
     적용 사이에 다른 탭이 먼저 저장했을 수 있다.
 
-    ``answers``·``run_metadata`` 행은 만들지 않는다. 저장된 실행은
-    원래 본문이 없다.
+    ``answers`` 행은 만들지 않는다. 저장된 실행은 원래 본문이 없다.
+    문서 머리에서 읽은 메타데이터가 있으면 ``run_metadata`` 행을 함께
+    만든다.
 
     Args:
         connection: 열린 커넥션.
@@ -79,7 +80,14 @@ def insert_exported(
             create.document.created_at,
         ),
     ).fetchone()
-    return int(row["id"])
+    run_id = int(row["id"])
+    if create.metadata is not None:
+        connection.execute(
+            "INSERT INTO run_metadata (run_id, channel, upload_date)"
+            " VALUES (?, ?, ?)",
+            (run_id, create.metadata.channel, create.metadata.upload_date),
+        )
+    return run_id
 
 
 def delete_runs(
@@ -113,3 +121,44 @@ def delete_runs(
     )
     # executemany 의 DML rowcount 는 sqlite3 가 문장마다 더해 준다.
     return int(cursor.rowcount)
+
+
+def write_metadata(
+    connection: sqlite3.Connection,
+    run_id: int,
+    outline_id: str,
+    metadata: models.VideoMetadata,
+) -> bool:
+    """저장된 행 하나의 메타데이터를 넣거나 덮는다.
+
+    **커밋하지 않는다.** 트랜잭션은 ``history_sync.apply`` 가 소유한다.
+    실행 ID 와 문서 ID 가 둘 다 맞는 행에만 쓴다 — ``delete_runs`` 와
+    같은 이유로, 다시 쓰인 ID 의 미저장 실행을 건드리지 않는다.
+
+    값이 이미 같으면 덮지 않는다. 적용 결과의 갱신 건수가 실제로
+    바뀐 행만 세게 한다.
+
+    SQLite 는 ``INSERT … SELECT`` 에 ``WHERE`` 가 있어야 뒤의
+    ``ON CONFLICT`` 를 upsert 절로 읽는다. 두 조건이 그 ``WHERE`` 다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_id: 쓸 실행의 ID.
+        outline_id: 그 실행이 가리켜야 할 문서 ID.
+        metadata: 쓸 값.
+
+    Returns:
+        새로 넣었거나 값을 바꿨으면 ``True``. 맞는 행이 없거나 값이
+        이미 같으면 ``False``.
+    """
+    cursor = connection.execute(
+        "INSERT INTO run_metadata (run_id, channel, upload_date)"
+        " SELECT id, ?, ? FROM runs WHERE id = ? AND outline_id = ?"
+        " ON CONFLICT(run_id) DO UPDATE SET"
+        " channel = excluded.channel,"
+        " upload_date = excluded.upload_date"
+        " WHERE channel IS NOT excluded.channel"
+        " OR upload_date IS NOT excluded.upload_date",
+        (metadata.channel, metadata.upload_date, run_id, outline_id),
+    )
+    return cursor.rowcount > 0

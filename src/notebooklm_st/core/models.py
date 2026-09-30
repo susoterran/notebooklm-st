@@ -159,6 +159,8 @@ class SyncCreate:
     url: str
     """본문에서 읽은 영상 URL."""
     video_id: str
+    metadata: VideoMetadata | None = None
+    """문서 머리에서 읽은 채널·업로드 일자. 두 줄이 다 없으면 ``None``."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
