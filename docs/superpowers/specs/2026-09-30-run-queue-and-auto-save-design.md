@@ -160,9 +160,14 @@
   세로로 쌓인다.
 - key 없는 `st.checkbox` 의 위젯 ID 에는 `value` 가 들어간다
   (`elements/widgets/checkbox.py` 의 `compute_and_register_element_id`
-  호출). 초기값이 바뀌면 새 위젯이 된다.
+  호출). 초기값이 바뀌면 새 위젯이 된다. 그래서 초기값을 DB 에서
+  읽는 key 없는 체크는 바꾼 값을 DB 에 적는 순간 다음 그림에서 ID 가
+  바뀌고, 브라우저가 들고 있던 옛 위젯으로 보낸 **바로 다음 조작이
+  버려진다.** AppTest 로 확인했다 — 켜고 곧바로 끄면 켜진 채 남는다.
 - 위젯 값은 기본(`persist_state=None`)으로 다른 화면에 다녀오면
-  버려진다.
+  버려진다. key 를 준 위젯도 같다. 그래서 세션에 키가 없을 때만 DB
+  값으로 채우면, 다른 화면에 다녀올 때마다 DB 값으로 다시 시작한다.
+  AppTest 로 확인했다.
 
 ---
 
@@ -535,11 +540,12 @@ def save(
 - 라벨 `자동 저장`. 도움말: `켜면 답변을 받은 뒤 인용을 빼고 곧바로
   Outline 에 올립니다. 제목이 없거나 답변 일부가 실패하면 올리지 않고
   이력에 미저장으로 남깁니다.`
-- key 없이 그리고 초기값을 `settings.auto_save(connection)` 에서
-  읽는다. 돌려받은 값이 DB 값과 다르면 곧바로 `set_auto_save` 로
-  적는다. 초기값이 위젯 ID 에 들어가므로 다음 그림에서 새 값으로 다시
-  그려진다(→ 2.8). 다른 화면에 다녀오거나 다른 기기에서 열어도 DB
-  값이 보인다.
+- 위젯 키는 `ask_auto_save` 다. 세션에 그 키가 없을 때만
+  `settings.auto_save(connection)` 로 채우고, 체크의 `on_change`
+  콜백이 바뀐 값을 `set_auto_save` 로 적는다(→ 2.8). 사람이 바꿀
+  때만 DB 에 쓰므로 다른 기기에서 바꾼 값을 되덮지 않는다. 다른
+  화면에 다녀오거나, 재시작하거나, 다른 기기에서 열면 DB 값이
+  보인다.
 - Outline 설정이 없으면 체크를 잠그고(`disabled=True`, 값 `False`)
   캡션 `Outline 연결이 설정되지 않아 자동 저장을 쓸 수 없습니다.` 를
   보인다. DB 값은 건드리지 않는다.
@@ -763,8 +769,8 @@ Outline 은 `runner.run_export.save` 또는 `outline.create_document` 를
   `skipped` 이고 Outline 을 부르지 않으며 이력이 미저장이다. Outline
   실패면 `failed` 이고 이력이 미저장이다. 끄면 Outline 을 부르지 않고
   `save is None` 이다.
-- `ask`(AppTest): 체크의 초기값이 DB 값이다. 바꾸면 DB 에 남는다.
-  Outline 설정이 없으면 잠긴다.
+- `ask`(AppTest): 체크의 초기값이 DB 값이다. 바꾸면 DB 에 남고,
+  곧바로 다시 바꿔도 남는다. Outline 설정이 없으면 잠긴다.
 - `history`(AppTest): 기존 저장 테스트가 그대로 통과한다.
 - `dashboard`: 저장 칸의 네 모양(`—`·`자동`·`저장됨` 링크·`미저장 · …`).
 
