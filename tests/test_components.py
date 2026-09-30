@@ -129,6 +129,17 @@ def test_answer_view_separates_items_with_a_divider() -> None:
     assert labels.count("질문 원문") == 2
 
 
+def make_question(title: str) -> models.Question:
+    """테스트용 질문을 만든다."""
+    return models.Question(
+        id=1,
+        title=title,
+        text=f"{title}?",
+        created_at="2026-09-30T17:00:00",
+        updated_at="2026-09-30T17:00:00",
+    )
+
+
 def make_handle(**changes) -> runs.RunHandle:
     """테스트용 실행 핸들을 만든다. 넘긴 칸만 바꾼다."""
     return dataclasses.replace(
@@ -136,7 +147,7 @@ def make_handle(**changes) -> runs.RunHandle:
             run_id="abc12345",
             url="https://youtu.be/dQw4w9WgXcQ",
             video_id="dQw4w9WgXcQ",
-            question_texts=("핵심 주장은?",),
+            questions=(make_question("핵심 주장"),),
             auto_save=False,
             started_at="2026-09-30T17:12:46",
             status="running",
@@ -395,7 +406,15 @@ def test_render_row_draws_a_badge_link_and_remove_button() -> None:
                 run_id="abc12345",
                 url="https://youtu.be/dQw4w9WgXcQ",
                 video_id="dQw4w9WgXcQ",
-                question_texts=("핵심 주장은?",),
+                questions=(
+                    models.Question(
+                        id=1,
+                        title="핵심 주장",
+                        text="핵심 주장은?",
+                        created_at="",
+                        updated_at="",
+                    ),
+                ),
                 auto_save=False,
                 started_at="2026-09-30T17:12:46",
                 status="done",
@@ -440,17 +459,21 @@ def test_render_row_offers_hide_for_a_running_run() -> None:
     def script():
         """AppTest 진입점 — 진행 중인 실행 한 줄을 그린다."""
         from notebooklm_st.components import run_progress
+        from notebooklm_st.core import models
         from notebooklm_st.services import runs
 
         def ignore(run_id: str) -> None:
             """누른 것을 무시한다."""
 
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
         run_progress.render_row(
             runs.RunHandle(
                 run_id="abc12345",
                 url="https://youtu.be/dQw4w9WgXcQ",
                 video_id="dQw4w9WgXcQ",
-                question_texts=("핵심 주장은?", "요약해줘"),
+                questions=(question, question),
                 auto_save=False,
                 started_at="2026-09-30T17:12:46",
                 status="running",
@@ -714,17 +737,21 @@ def test_render_row_links_the_raw_url_without_a_video_id() -> None:
     def script():
         """AppTest 진입점 — 영상 ID 가 빈 실행 한 줄을 그린다."""
         from notebooklm_st.components import run_progress
+        from notebooklm_st.core import models
         from notebooklm_st.services import runs
 
         def ignore(run_id: str) -> None:
             """누른 것을 무시한다."""
 
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
         run_progress.render_row(
             runs.RunHandle(
                 run_id="abc12345",
                 url="https://example.com/v",
                 video_id="",
-                question_texts=("질문",),
+                questions=(question,),
                 auto_save=False,
                 started_at="2026-09-30T17:12:46",
                 status="running",

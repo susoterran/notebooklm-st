@@ -217,7 +217,7 @@ def render_row(
     )
     video_cell.markdown(f"[{_escape(video_label(handle))}]({target})")
     time_cell.markdown(short_time(handle.started_at))
-    count_cell.markdown(f"{len(handle.question_texts)}개")
+    count_cell.markdown(f"{len(handle.questions)}개")
     result_cell.markdown(result_markdown(handle))
     save_cell.markdown(save_markdown(handle))
     match handle.status:

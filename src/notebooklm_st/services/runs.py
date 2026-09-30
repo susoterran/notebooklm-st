@@ -44,7 +44,9 @@ class RunHandle:
     run_id: str
     url: str
     video_id: str
-    question_texts: tuple[str, ...]
+    questions: tuple[models.Question, ...]
+    """물어볼 질문들. 파이프라인에 넘길 수 있게 제목까지 쥔다."""
+
     auto_save: bool
     """넣는 순간 고정한 자동 저장 여부. 설정을 바꿔도 그대로다."""
 

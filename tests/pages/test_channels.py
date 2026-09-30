@@ -443,7 +443,9 @@ def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
     check_feed(monkeypatch, feed_with(make_entry()))
     session.get_registry().create(
-        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("질문",)
+        "https://youtu.be/dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+        tuple(questions.list_questions(app_db)),
     )
 
     app = v1.AppTest.from_function(script)

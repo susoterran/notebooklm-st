@@ -5,6 +5,17 @@ import itertools
 from notebooklm_st.core import models
 from notebooklm_st.services import run_store, runs
 
+QUESTIONS = (
+    models.Question(
+        id=1,
+        title="핵심 주장",
+        text="핵심 주장은?",
+        created_at="2026-09-30T10:00:00",
+        updated_at="2026-09-30T10:00:00",
+    ),
+)
+"""보관소에 넣을 질문. 보관소는 질문을 들고 있기만 한다."""
+
 
 def make_result() -> models.RunResult:
     """테스트용 실행 결과를 만든다."""
@@ -39,7 +50,7 @@ def test_create_returns_a_running_handle() -> None:
     """새로 만든 실행은 running 상태로 시작한다."""
     store = run_store.RunStore()
     handle = store.create(
-        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", ("핵심 주장은?",)
+        "https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ", QUESTIONS
     )
     assert handle.status == "running"
     assert handle.progress == []
@@ -52,8 +63,8 @@ def test_create_returns_a_running_handle() -> None:
 def test_create_gives_each_run_a_distinct_id() -> None:
     """실행마다 서로 다른 ID 를 준다."""
     store = run_store.RunStore()
-    first = store.create("u1", "v1", ("q",))
-    second = store.create("u2", "v2", ("q",))
+    first = store.create("u1", "v1", QUESTIONS)
+    second = store.create("u2", "v2", QUESTIONS)
     assert first.run_id != second.run_id
 
 
@@ -66,7 +77,7 @@ def test_get_returns_none_for_unknown_id() -> None:
 def test_append_progress_accumulates_messages() -> None:
     """진행 문구가 순서대로 쌓인다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",))
+    handle = store.create("u", "v", QUESTIONS)
     store.append_progress(handle.run_id, "1단계")
     store.append_progress(handle.run_id, "2단계")
     stored = store.get(handle.run_id)
@@ -83,7 +94,7 @@ def test_append_progress_ignores_unknown_id() -> None:
 def test_finish_records_result_and_status() -> None:
     """완료하면 결과와 종료 시각이 남는다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",))
+    handle = store.create("u", "v", QUESTIONS)
     result = make_result()
     store.finish(handle.run_id, result)
     stored = store.get(handle.run_id)
@@ -97,7 +108,7 @@ def test_finish_records_result_and_status() -> None:
 def test_fail_records_message_and_level() -> None:
     """실패하면 사용자 문구와 표시 수준이 남는다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",))
+    handle = store.create("u", "v", QUESTIONS)
     store.fail(handle.run_id, "자막이 없습니다.", "info")
     stored = store.get(handle.run_id)
     assert stored is not None
@@ -114,10 +125,10 @@ def test_list_all_puts_running_runs_first_in_start_order(
     """진행 중인 실행이 끝난 실행보다 먼저, 넣은 순서대로 온다."""
     use_ticking_clock(monkeypatch)
     store = run_store.RunStore()
-    done = store.create("u0", "v0", ("q",))
+    done = store.create("u0", "v0", QUESTIONS)
     store.finish(done.run_id, make_result())
-    first = store.create("u1", "v1", ("q",))
-    second = store.create("u2", "v2", ("q",))
+    first = store.create("u1", "v1", QUESTIONS)
+    second = store.create("u2", "v2", QUESTIONS)
 
     assert [item.run_id for item in store.list_all()] == [
         first.run_id,
@@ -130,8 +141,8 @@ def test_list_all_puts_the_latest_finished_run_first(monkeypatch) -> None:
     """끝난 실행은 만든 순서가 아니라 최근에 끝난 것부터 온다."""
     use_ticking_clock(monkeypatch)
     store = run_store.RunStore()
-    early = store.create("u1", "v1", ("q",))
-    late = store.create("u2", "v2", ("q",))
+    early = store.create("u1", "v1", QUESTIONS)
+    late = store.create("u2", "v2", QUESTIONS)
     store.finish(late.run_id, make_result())
     store.fail(early.run_id, "실패", "error")
 
@@ -147,8 +158,8 @@ def test_list_all_puts_the_newer_run_first_on_a_finish_tie(
     """끝난 시각이 같으면 나중에 만든 실행이 앞에 온다."""
     monkeypatch.setattr(run_store, "_now", lambda: "2026-09-30T10:00:00")
     store = run_store.RunStore()
-    older = store.create("u1", "v1", ("q",))
-    newer = store.create("u2", "v2", ("q",))
+    older = store.create("u1", "v1", QUESTIONS)
+    newer = store.create("u2", "v2", QUESTIONS)
     store.finish(older.run_id, make_result())
     store.finish(newer.run_id, make_result())
 
@@ -161,7 +172,7 @@ def test_list_all_puts_the_newer_run_first_on_a_finish_tie(
 def test_list_all_returns_copies() -> None:
     """목록이 돌려준 핸들을 바꿔도 보관소는 영향받지 않는다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",))
+    handle = store.create("u", "v", QUESTIONS)
     borrowed = store.list_all()[0]
     borrowed.progress.append("바깥에서 추가")
     borrowed.status = "done"
@@ -174,7 +185,7 @@ def test_list_all_returns_copies() -> None:
 def test_discard_removes_the_handle() -> None:
     """지운 실행은 목록에서 사라진다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",))
+    handle = store.create("u", "v", QUESTIONS)
     store.discard(handle.run_id)
     assert store.get(handle.run_id) is None
     assert store.list_all() == []
@@ -189,9 +200,9 @@ def test_discard_ignores_unknown_id() -> None:
 def test_discard_finished_keeps_running_runs() -> None:
     """끝난 실행만 지우고 지운 수를 돌려준다."""
     store = run_store.RunStore()
-    running = store.create("u1", "v1", ("q",))
-    done = store.create("u2", "v2", ("q",))
-    failed = store.create("u3", "v3", ("q",))
+    running = store.create("u1", "v1", QUESTIONS)
+    done = store.create("u2", "v2", QUESTIONS)
+    failed = store.create("u3", "v3", QUESTIONS)
     store.finish(done.run_id, make_result())
     store.fail(failed.run_id, "실패", "error")
 
@@ -207,8 +218,8 @@ def test_discard_finished_on_an_empty_store_returns_zero() -> None:
 def test_create_records_the_auto_save_choice() -> None:
     """넣을 때 고른 자동 저장 여부가 핸들에 남는다. 기본은 끔이다."""
     store = run_store.RunStore()
-    on = store.create("u1", "v1", ("q",), auto_save=True)
-    off = store.create("u2", "v2", ("q",))
+    on = store.create("u1", "v1", QUESTIONS, auto_save=True)
+    off = store.create("u2", "v2", QUESTIONS)
 
     assert on.auto_save is True
     assert off.auto_save is False
@@ -218,7 +229,7 @@ def test_create_records_the_auto_save_choice() -> None:
 def test_finish_keeps_the_save_outcome() -> None:
     """완료할 때 넘긴 자동 저장 결과가 핸들에 실린다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",), auto_save=True)
+    handle = store.create("u", "v", QUESTIONS, auto_save=True)
     outcome = runs.SaveOutcome("saved", "저장됨", "http://wiki/doc/x")
 
     store.finish(handle.run_id, make_result(), outcome)
@@ -231,7 +242,7 @@ def test_finish_keeps_the_save_outcome() -> None:
 def test_finish_without_a_save_leaves_it_empty() -> None:
     """자동 저장을 하지 않은 실행은 저장 결과가 없다."""
     store = run_store.RunStore()
-    handle = store.create("u", "v", ("q",))
+    handle = store.create("u", "v", QUESTIONS)
 
     store.finish(handle.run_id, make_result())
 

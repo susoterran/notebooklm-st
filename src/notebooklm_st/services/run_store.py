@@ -29,7 +29,7 @@ class RunStore:
         self,
         url: str,
         video_id: str,
-        question_texts: tuple[str, ...],
+        questions: tuple[models.Question, ...],
         auto_save: bool = False,
     ) -> runs.RunHandle:
         """새 실행을 running 상태로 등록한다.
@@ -37,7 +37,7 @@ class RunStore:
         Args:
             url: 질의할 영상 URL.
             video_id: URL 에서 뽑은 영상 ID.
-            question_texts: 물어볼 질문 본문들.
+            questions: 물어볼 질문들.
             auto_save: 답변을 받자마자 Outline 에 올릴지. 사람이
                 저장하는 입구(채널 화면)는 기본값을 쓴다.
 
@@ -49,7 +49,7 @@ class RunStore:
             run_id=uuid.uuid4().hex[:8],
             url=url,
             video_id=video_id,
-            question_texts=question_texts,
+            questions=questions,
             auto_save=auto_save,
             started_at=_now(),
             status="running",

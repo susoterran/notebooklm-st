@@ -60,7 +60,7 @@ def start_run(
     handle = registry.create(
         url,
         youtube.extract_video_id(url) or "",
-        tuple(question.text for question in questions),
+        tuple(questions),
         auto_save=auto_save,
     )
     thread = threading.Thread(

@@ -4,7 +4,7 @@ import datetime as dt
 import logging
 import os
 
-from notebooklm_st.core import login_protocol
+from notebooklm_st.core import login_protocol, models
 from notebooklm_st.services import digest_runner, login_session, run_registry
 
 
@@ -95,7 +95,10 @@ def test_pending_request_ignores_a_broken_file(tmp_path) -> None:
 def test_busy_sees_a_running_query() -> None:
     """질의가 돌고 있으면 바쁘다."""
     registry = run_registry.RunRegistry()
-    registry.create("https://youtu.be/x", "x", ("q",))
+    question = models.Question(
+        id=1, title="질문", text="질문?", created_at="", updated_at=""
+    )
+    registry.create("https://youtu.be/x", "x", (question,))
 
     assert login_session.busy(registry, digest_runner.DigestRegistry())
 
