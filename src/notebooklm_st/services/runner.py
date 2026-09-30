@@ -10,6 +10,7 @@ from typing import Any
 from notebooklm_st.core import errors, models, youtube
 from notebooklm_st.services import (
     nlm,
+    run_export,
     run_history,
     runs,
     store,
@@ -30,6 +31,8 @@ def start_run(
     questions: Sequence[models.Question],
     db_path: pathlib.Path,
     pipeline: PipelineCallable = nlm.run_pipeline,
+    *,
+    auto_save: bool = False,
 ) -> runs.RunHandle:
     """질의 실행을 백그라운드 스레드에서 시작한다.
 
@@ -42,6 +45,8 @@ def start_run(
         questions: 물어볼 질문 목록.
         db_path: 완료 시 이력을 저장할 DB 경로.
         pipeline: 실행할 파이프라인. 테스트가 가짜를 넣을 수 있게 뚫어 둔다.
+        auto_save: 참이면 이력을 남긴 직후 Outline 에 올린다. 핸들에
+            고정되므로 나중에 설정을 바꿔도 이 실행은 그대로다.
 
     Returns:
         시작된 실행의 핸들.
@@ -55,10 +60,19 @@ def start_run(
         url,
         youtube.extract_video_id(url) or "",
         tuple(question.text for question in questions),
+        auto_save=auto_save,
     )
     thread = threading.Thread(
         target=_work,
-        args=(registry, handle.run_id, url, list(questions), db_path, pipeline),
+        args=(
+            registry,
+            handle.run_id,
+            url,
+            list(questions),
+            db_path,
+            pipeline,
+            auto_save,
+        ),
         daemon=True,
     )
     _threads.append(thread)
@@ -86,8 +100,13 @@ def _work(
     questions: list[models.Question],
     db_path: pathlib.Path,
     pipeline: PipelineCallable,
+    auto_save: bool,
 ) -> None:
     """스레드 본체 — 파이프라인을 돌리고 결과를 남긴다.
+
+    이력을 먼저 남기고 자동 저장은 그 뒤에 한다. Outline 이 실패해도
+    결과가 사라지지 않는다. 자동 저장이 어떻게 끝나든 실행은 done
+    이다. 저장 결과는 표의 저장 칸이 따로 보여 준다.
 
     Streamlit API 를 부르지 않는다. 콜백이 화면을 건드리면 사용자가
     페이지를 이동한 순간 이 스레드가 중단되기 때문이다.
@@ -127,10 +146,34 @@ def _work(
         )
         raise
 
+    history_id = _save_history(registry, run_id, result, metadata, db_path)
+    if history_id is None:
+        return
+    save: runs.SaveOutcome | None = None
+    if auto_save:
+        registry.append_progress(run_id, "Outline 에 저장 중")
+        save = run_export.save_automatically(
+            db_path, history_id, result, metadata
+        )
+    registry.finish(run_id, result, save)
+
+
+def _save_history(
+    registry: runs.RunRegistry,
+    run_id: str,
+    result: models.RunResult,
+    metadata: models.VideoMetadata | None,
+    db_path: pathlib.Path,
+) -> int | None:
+    """결과를 이력에 남기고 이력 ID 를 돌려준다.
+
+    실패하면 실행을 실패로 마감하고 ``None`` 을 돌려준다. 이력이 없으면
+    올릴 것도 없으므로 자동 저장도 하지 않는다.
+    """
     try:
         connection = store.connect(db_path)
         try:
-            run_history.save_run(connection, result, metadata)
+            return run_history.save_run(connection, result, metadata)
         finally:
             connection.close()
     except Exception as error:
@@ -143,8 +186,7 @@ def _work(
             f"({type(error).__name__}): {error}",
             "error",
         )
-        return
-    registry.finish(run_id, result)
+        return None
 
 
 def _fetch_metadata(

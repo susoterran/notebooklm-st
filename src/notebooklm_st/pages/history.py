@@ -7,9 +7,9 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import answer_view
-from notebooklm_st.core import answer_text, labels, markdown_export, models
+from notebooklm_st.core import answer_text, labels, models
 from notebooklm_st.pages import _history_sync
-from notebooklm_st.services import outline, run_history
+from notebooklm_st.services import outline, run_export, run_history
 
 _SELECTED_KEY = "history_selected"
 
@@ -178,39 +178,20 @@ def _export(
     """문서를 만들고 링크를 기록한다.
 
     실패하면 로컬을 손대지 않는다. 원인을 고친 뒤 같은 버튼을 다시
-    누르면 된다.
+    누르면 된다. 문서는 만들었는데 기록에 실패하면 그 사실과 링크를
+    보인다(``run_export.RecordError``). 자동 저장도 같은 한 벌을 쓴다.
     """
     with st.spinner("Outline 에 저장 중"):
         try:
-            document = outline.create_document(
-                config,
-                title,
-                markdown_export.to_markdown(selected, items, title, metadata),
+            run_export.save(
+                connection, config, selected, title, items, metadata
             )
-        except outline.OutlineError as error:
+        except (
+            outline.OutlineError,
+            run_export.RecordError,
+            run_export.SaveConflictError,
+        ) as error:
             st.error(str(error))
-            return
-        try:
-            run_history.mark_exported(
-                connection,
-                selected.id,
-                document_id=document.id,
-                document_title=document.title,
-                document_url=document.url,
-            )
-        except (ValueError, sqlite3.Error) as error:
-            # mark_exported 가 실제로 내는 둘만 잡는다. 더 넓게 잡으면
-            # 나중에 생길 프로그래밍 오류까지 "문서가 둘이 됩니다" 로
-            # 둔갑해 진짜 버그가 드러나지 않는다.
-            # 되돌리지 않는다. 방금 만든 문서를 지우려면 그 삭제도
-            # 실패할 수 있어 틈이 한 겹 더 생길 뿐이다. 사실대로
-            # 보여 주고 사람이 링크를 들고 판단하게 한다.
-            st.error(
-                f"문서는 만들어졌습니다: {document.url} —"
-                " 로컬 기록에 실패했습니다"
-                f"({type(error).__name__})."
-                " 다시 저장하면 문서가 둘이 됩니다."
-            )
             return
     st.rerun()
 

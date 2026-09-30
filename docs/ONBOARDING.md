@@ -138,12 +138,12 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
 | `pages/ask.py` | simple | 질의 화면. URL 입력·질문 선택 후 백그라운드 실행을 시작만 하고 반환 |
-| `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링 |
+| `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기는 버튼 콜백이 한다 |
 | `pages/question_admin.py` | moderate | 질문 템플릿 CRUD. 검증 오류는 `st.error`, 성공 시 `st.rerun` |
 | `pages/history.py` | **complex** | 이력 조회·답변 수정·삭제·마크다운 내려받기. 인용 숨기기와 2단계 삭제 확인을 세션 키로 직접 관리 |
 | `pages/maintenance.py` | moderate | 남은 `tmp-` 노트북 조회·삭제. 실행 중이면 경고 |
 | `components/answer_view.py` | moderate | 답변 카드. 저장 콜백과 항목 ID 가 **둘 다** 있을 때만 편집 상자를 연다 |
-| `components/run_progress.py` | simple | 실행 카드(running/failed/done). 완료 시 요약 한 줄만, 상세는 이력 화면으로 |
+| `components/run_progress.py` | simple | 실행 표의 머리글과 한 줄(running/failed/done). 칸 글자는 순수 함수가 만든다. 완료 시 답변 수만, 상세는 이력 화면으로 |
 | `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다(브라우저 로그인 경로는 삭제됨 — `docs/how-to/2026-09-16-auth-reseed.md`) |
 | `components/schema_gate.py` | simple | 기동 직후 커넥션을 열어 보고 스키마 불일치면 안내 후 `st.stop()` |
 

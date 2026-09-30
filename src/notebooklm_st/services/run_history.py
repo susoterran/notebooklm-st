@@ -1,7 +1,8 @@
 """실행 이력 저장소.
 
 연결과 스키마는 ``store`` 가 맡는다. 진행 중인 실행을 메모리에 담는
-``runs`` 와 달리 이 모듈은 끝난 실행을 DB 에 남긴다.
+``runs`` 와 달리 이 모듈은 끝난 실행을 DB 에 남긴다. Outline 에 올린
+뒤 문서 링크를 적는 일은 ``run_links`` 가 맡는다.
 """
 
 import sqlite3
@@ -39,8 +40,8 @@ SUMMARY_SELECT = (
     " LEFT JOIN answers AS a ON a.run_id = r.id"
     " LEFT JOIN run_metadata AS m ON m.run_id = r.id"
 )
-"""``list_runs`` 와 ``run_history_sync.list_exported`` 가 함께 쓰는
-SELECT 머리.
+"""``list_runs``·``load_run``·``run_history_sync.list_exported`` 가
+함께 쓰는 SELECT 머리.
 
 ``run_metadata`` 는 실행 하나에 많아야 한 행이라 조인이 답변 행을
 불리지 않는다."""
@@ -147,6 +148,31 @@ def list_runs(
     return [row_to_summary(row) for row in rows]
 
 
+def load_run(
+    connection: sqlite3.Connection, run_id: int
+) -> models.RunSummary | None:
+    """실행 하나의 요약을 읽는다.
+
+    ``list_runs`` 의 한 건짜리다. 자동 저장이 문서 본문을 만들 때
+    쓴다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_id: 찾을 실행 ID.
+
+    Returns:
+        요약. 그런 실행이 없으면 ``None``.
+    """
+    # GROUP BY 를 빼면 집계 함수(COUNT) 때문에 없는 ID 에도 빈 칸으로
+    # 찬 행이 하나 온다.
+    row = connection.execute(
+        SUMMARY_SELECT + " WHERE r.id = ? GROUP BY r.id", (run_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    return row_to_summary(row)
+
+
 def load_run_items(
     connection: sqlite3.Connection, run_id: int
 ) -> list[models.AnswerItem]:
@@ -199,63 +225,6 @@ def load_metadata(
     return models.VideoMetadata(
         channel=row["channel"], upload_date=row["upload_date"]
     )
-
-
-def mark_exported(
-    connection: sqlite3.Connection,
-    run_id: int,
-    *,
-    document_id: str,
-    document_title: str,
-    document_url: str,
-) -> None:
-    """문서 링크를 적고 로컬 답변을 지운다.
-
-    두 문장을 커밋 하나로 묶는다. 중간에 죽어도 "본문은 사라졌는데
-    링크는 없는" 상태가 생기지 않는다.
-
-    영상 메타데이터(``run_metadata``)는 지우지 않는다. 문서 머리에
-    적은 채널·업로드 일자와 같은 값의 캐시로 남아 정리본 재료 표가
-    쓴다. 정본은 Outline 이고, 이력 동기화가 문서에서 다시 읽어
-    맞춘다.
-
-    Outline 의 자료형을 받지 않고 문자열 셋을 받는다. 저장소가 외부
-    서비스를 알 이유가 없다.
-
-    Args:
-        connection: 열린 커넥션.
-        run_id: 링크를 걸 실행 ID.
-        document_id: Outline 문서 ID. 나중에 문서를 다시 읽을 때 쓴다.
-        document_title: Outline 에 붙은 문서 제목.
-        document_url: 사람이 열 수 있는 절대 URL.
-
-    Raises:
-        ValueError: 그 ID 의 실행이 없는 경우. 이때는 아무것도 지우지
-            않는다.
-    """
-    # 커넥션은 앱 전체가 함께 쓴다. UPDATE 만 걸린 채로 예외가 빠져
-    # 나가면 다음 조회가 그 실행을 저장된 것으로 그리고, 다른 곳의
-    # commit 이 반쪽짜리 내보내기를 확정해 버린다. 그래서 어떤 실패든
-    # 여기서 되돌리고 다시 던진다.
-    try:
-        cursor = connection.execute(
-            "UPDATE runs SET outline_id = ?, outline_url = ?,"
-            " outline_title = ?, exported_at = ? WHERE id = ?",
-            (
-                document_id,
-                document_url,
-                document_title,
-                store.now(),
-                run_id,
-            ),
-        )
-        if cursor.rowcount == 0:
-            raise ValueError(f"실행 {run_id} 을 찾을 수 없습니다.")
-        connection.execute("DELETE FROM answers WHERE run_id = ?", (run_id,))
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
 
 
 def delete_run(connection: sqlite3.Connection, run_id: int) -> None:

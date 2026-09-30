@@ -9,7 +9,15 @@ from notebooklm import exceptions
 from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import models
-from notebooklm_st.services import run_history, runner, runs, store
+from notebooklm_st.services import (
+    outline,
+    run_export,
+    run_history,
+    run_links,
+    runner,
+    runs,
+    store,
+)
 
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -385,3 +393,294 @@ def test_start_run_survives_a_metadata_failure(db_path, monkeypatch) -> None:
     assert len(saved) == 1
     assert metadata is None
     assert any("못 가져왔습니다" in line for line in finished.progress)
+
+
+DOC_URL = "http://192.168.0.10:3000/doc/x"
+
+
+def set_outline_env(monkeypatch) -> None:
+    """자동 저장이 Outline 에 닿도록 설정을 채운다."""
+    monkeypatch.setenv(outline.URL_ENV_VAR, "http://192.168.0.10:3000")
+    monkeypatch.setenv(outline.TOKEN_ENV_VAR, "ol_secret")
+    monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
+
+
+def record_create(monkeypatch) -> list[tuple[str, str]]:
+    """``outline.create_document`` 를 막고 제목과 본문을 기록한다."""
+    calls: list[tuple[str, str]] = []
+
+    def create(config, title, markdown, **kwargs):
+        """호출을 기록하고 만들어진 문서를 돌려준다."""
+        calls.append((title, markdown))
+        return outline.SavedDocument(id="doc-1", title=title, url=DOC_URL)
+
+    monkeypatch.setattr(outline, "create_document", create)
+    return calls
+
+
+def answering(title: str | None = "어떤 영상", error: str | None = None):
+    """인용 달린 답변 하나를 돌려주는 가짜 파이프라인을 만든다.
+
+    오류를 주면 그 답변이 실패한 결과를 돌려준다.
+    """
+
+    async def pipeline(url, questions, on_progress, **kwargs):
+        """정해 둔 결과를 돌려준다."""
+        citations = (models.Citation(number=1, text="근거 구절", score=0.9),)
+        return models.RunResult(
+            url=url,
+            video_id="dQw4w9WgXcQ",
+            title=title,
+            items=(
+                models.AnswerItem(
+                    question_title=questions[0].title,
+                    question_text=questions[0].text,
+                    answer=None if error else "세 가지다 [1].",
+                    citations=() if error else citations,
+                    error=error,
+                ),
+            ),
+        )
+
+    return pipeline
+
+
+def auto_saved(db_path, pipeline) -> runs.RunHandle:
+    """자동 저장을 켜고 실행해 끝난 핸들을 돌려준다."""
+    registry = runs.RunRegistry()
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        pipeline,
+        auto_save=True,
+    )
+    return wait_for(registry, started.run_id)
+
+
+def saved_runs(db_path) -> list[models.RunSummary]:
+    """이력 목록을 읽는다."""
+    connection = store.connect(db_path)
+    try:
+        return run_history.list_runs(connection)
+    finally:
+        connection.close()
+
+
+def test_auto_save_uploads_the_answer_without_citations(
+    db_path, monkeypatch
+) -> None:
+    """켜면 인용을 뺀 본문이 올라가고 이력이 문서가 된다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "done"
+    assert handle.save == runs.SaveOutcome("saved", "저장됨", DOC_URL)
+    assert "Outline 에 저장 중" in handle.progress
+    [(title, markdown)] = calls
+    assert title == "어떤 영상"
+    assert "세 가지다." in markdown
+    assert "[1]" not in markdown
+    assert "근거 구절" not in markdown
+    run = saved_runs(db_path)[0]
+    assert run.outline_url == DOC_URL
+    assert run.answer_count == 0
+
+
+def test_auto_save_strips_the_title(db_path, monkeypatch) -> None:
+    """영상 제목의 앞뒤 공백은 문서 제목에서 빠진다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+
+    auto_saved(db_path, answering(title="  어떤 영상  "))
+
+    assert calls[0][0] == "어떤 영상"
+
+
+def test_auto_save_skips_a_run_without_a_title(db_path, monkeypatch) -> None:
+    """제목이 없으면 올리지 않고 이력에 미저장으로 남긴다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+
+    handle = auto_saved(db_path, answering(title=None))
+
+    assert handle.status == "done"
+    assert handle.save == runs.SaveOutcome(
+        "skipped", "미저장 · 제목 없음", None
+    )
+    assert calls == []
+    run = saved_runs(db_path)[0]
+    assert run.exported_at is None
+    assert run.answer_count == 1
+
+
+def test_auto_save_skips_a_partial_failure(db_path, monkeypatch) -> None:
+    """답변 일부가 실패하면 올리지 않는다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+
+    handle = auto_saved(db_path, answering(error="응답이 비어 있습니다."))
+
+    assert handle.save == runs.SaveOutcome(
+        "skipped", "미저장 · 답변 일부 실패", None
+    )
+    assert calls == []
+    assert saved_runs(db_path)[0].exported_at is None
+
+
+def test_auto_save_without_configuration_skips(db_path, monkeypatch) -> None:
+    """Outline 설정이 없으면 건너뛰고 Outline 을 부르지 않는다."""
+    calls = record_create(monkeypatch)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.save == runs.SaveOutcome(
+        "skipped", "미저장 · Outline 설정 없음", None
+    )
+    assert calls == []
+
+
+def test_auto_save_reports_an_outline_failure(db_path, monkeypatch) -> None:
+    """Outline 이 거부하면 실패로 적고 이력은 미저장으로 둔다."""
+    set_outline_env(monkeypatch)
+
+    def refuse(config, title, markdown, **kwargs):
+        """항상 거부한다."""
+        raise outline.OutlineError("토큰이 거부되었습니다.")
+
+    monkeypatch.setattr(outline, "create_document", refuse)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "done"
+    assert handle.save == runs.SaveOutcome(
+        "failed", "미저장 · 저장 실패: 토큰이 거부되었습니다.", None
+    )
+    assert saved_runs(db_path)[0].exported_at is None
+
+
+def test_auto_save_reports_a_document_it_could_not_record(
+    db_path, monkeypatch
+) -> None:
+    """문서는 만들었는데 기록에 실패하면 링크와 경고를 싣는다."""
+    set_outline_env(monkeypatch)
+    record_create(monkeypatch)
+
+    def boom(*args, **kwargs):
+        """기록이 실패하는 상황을 만든다."""
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(run_links, "mark_exported", boom)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "done"
+    assert handle.save is not None
+    assert handle.save.state == "failed"
+    assert handle.save.url == DOC_URL
+    assert "다시 저장하면 문서가 둘이 됩니다." in handle.save.message
+    assert saved_runs(db_path)[0].exported_at is None
+
+
+def test_auto_save_skips_a_run_saved_elsewhere(db_path, monkeypatch) -> None:
+    """이력 화면이 먼저 저장했거나 저장 중이면 건너뛴 것으로 적는다."""
+    set_outline_env(monkeypatch)
+
+    def conflict(*args, **kwargs):
+        """이력 화면이 같은 실행을 올리고 있는 상황을 흉내 낸다."""
+        raise run_export.SaveConflictError()
+
+    monkeypatch.setattr(run_export, "save", conflict)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "done"
+    assert handle.save == runs.SaveOutcome(
+        "skipped", "이미 저장했거나 저장 중", None
+    )
+
+
+def test_auto_save_survives_an_unexpected_error(db_path, monkeypatch) -> None:
+    """예상 못 한 예외가 나도 실행은 done 이고 이유가 남는다."""
+    set_outline_env(monkeypatch)
+
+    def broken(config, title, markdown, **kwargs):
+        """응답 해석이 깨진 상황을 흉내 낸다."""
+        raise KeyError("data")
+
+    monkeypatch.setattr(outline, "create_document", broken)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "done"
+    assert handle.save == runs.SaveOutcome(
+        "failed", "미저장 · 예상 못 한 오류(KeyError)", None
+    )
+
+
+def test_run_without_auto_save_never_calls_outline(
+    db_path, monkeypatch
+) -> None:
+    """끄면 Outline 을 부르지 않고 저장 결과도 없다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+    registry = runs.RunRegistry()
+
+    started = runner.start_run(
+        registry, URL, make_questions("핵심 주장은?"), db_path, answering()
+    )
+    handle = wait_for(registry, started.run_id)
+
+    assert handle.status == "done"
+    assert handle.save is None
+    assert calls == []
+    assert "Outline 에 저장 중" not in handle.progress
+
+
+def test_history_failure_skips_the_auto_save(db_path, monkeypatch) -> None:
+    """이력 저장이 실패하면 올리지 않고 실행을 실패로 마감한다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+
+    def broken_save(connection, result, metadata=None):
+        """항상 실패하는 가짜 저장."""
+        raise sqlite3.OperationalError("disk is full")
+
+    monkeypatch.setattr(run_history, "save_run", broken_save)
+
+    handle = auto_saved(db_path, answering())
+
+    assert handle.status == "failed"
+    assert handle.save is None
+    assert calls == []
+
+
+def test_a_hidden_run_is_still_auto_saved(db_path, monkeypatch) -> None:
+    """도는 중에 목록에서 숨겨도 자동 저장은 끝까지 간다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+    registry = runs.RunRegistry()
+    answer = answering()
+
+    async def hiding_pipeline(url, questions, on_progress, **kwargs):
+        """돌던 중에 사람이 숨기기를 누른 것처럼 목록에서 지운다."""
+        for handle in registry.list_all():
+            registry.discard(handle.run_id)
+        return await answer(url, questions, on_progress)
+
+    started = runner.start_run(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        hiding_pipeline,
+        auto_save=True,
+    )
+    runner.join_all(timeout=5.0)
+
+    assert registry.get(started.run_id) is None
+    assert len(calls) == 1
+    assert saved_runs(db_path)[0].outline_url == DOC_URL

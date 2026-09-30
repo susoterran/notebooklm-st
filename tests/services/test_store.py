@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from notebooklm_st.services import channels, store
+from notebooklm_st.services import channels, settings, store
 
 
 def test_default_db_path_honors_env_override(monkeypatch, tmp_path) -> None:
@@ -245,3 +245,36 @@ def test_a_database_without_channels_still_opens(tmp_path) -> None:
         assert channels.list_channels(connection) == []
     finally:
         connection.close()
+
+
+def test_a_database_without_settings_still_opens(tmp_path) -> None:
+    """설정 테이블이 없는 기존 DB 도 지우지 않고 열린다."""
+    path = tmp_path / "old.db"
+    store.connect(path).close()
+    old = sqlite3.connect(path)
+    old.execute("DROP TABLE settings")
+    old.commit()
+    old.close()
+
+    connection = store.connect(path)
+    try:
+        assert settings.auto_save(connection) is False
+    finally:
+        connection.close()
+
+
+def test_connect_rejects_a_settings_table_without_the_value(tmp_path) -> None:
+    """설정 테이블에 값 칸이 없으면 오래된 스키마로 거부한다."""
+    path = tmp_path / "old.db"
+    store.connect(path).close()
+    old = sqlite3.connect(path)
+    old.executescript(
+        "DROP TABLE settings; CREATE TABLE settings (key TEXT PRIMARY KEY);"
+    )
+    old.commit()
+    old.close()
+
+    with pytest.raises(store.StaleSchemaError) as excinfo:
+        store.connect(path)
+    assert "settings 테이블" in str(excinfo.value)
+    assert "['value']" in str(excinfo.value)

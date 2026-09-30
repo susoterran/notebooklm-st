@@ -10,6 +10,7 @@ from notebooklm_st.services import (
     history_sync,
     run_history,
     run_history_sync,
+    run_links,
     store,
 )
 
@@ -330,7 +331,7 @@ def save_exported(
         ),
         metadata,
     )
-    run_history.mark_exported(
+    run_links.mark_exported(
         connection,
         run_id,
         document_id=doc_id,

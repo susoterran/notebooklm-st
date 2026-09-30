@@ -57,7 +57,7 @@ Outline 문서이고, 로컬 값은 표를 그리려고 들고 있는 사본이�
   (`2026-09-22-video-metadata-design.md`).
 - 업로드일은 `services/video_metadata._to_date` 가 `YYYY-MM-DD` 로
   만든다.
-- `run_history.mark_exported` 는 링크를 적는 UPDATE 와 함께
+- `run_links.mark_exported` 는 링크를 적는 UPDATE 와 함께
   `answers`·`run_metadata` 를 DELETE 하고 커밋 하나로 묶는다. R4
   (`2026-09-22-outline-storage-design.md`)의 "저장에 성공하면 본문을
   지우고 링크만 남긴다 — 진실의 원천이 하나여야 한다" 는 결정이다.
@@ -501,7 +501,8 @@ update.run.outline_id or "", update.metadata)` 로 쓴다. `False` 면
   `RunSummary.metadata`, `SyncCreate.metadata`, `SyncUpdate`,
   `SyncPlan.updates`
 - `src/notebooklm_st/services/run_history.py` — `SUMMARY_SELECT`,
-  `row_to_summary`, `mark_exported`
+  `row_to_summary`
+- `src/notebooklm_st/services/run_links.py` — `mark_exported`
 - `src/notebooklm_st/services/run_history_sync.py` —
   `insert_exported`, `write_metadata`
 - `src/notebooklm_st/services/history_sync.py` — `plan`, `apply`,
