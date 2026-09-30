@@ -2,8 +2,9 @@
 
 from streamlit.testing import v1
 
+from notebooklm_st import session
 from notebooklm_st.core import models
-from notebooklm_st.services import video_metadata
+from notebooklm_st.services import runner, video_metadata
 
 
 def rendered(app: v1.AppTest) -> str:
@@ -136,6 +137,96 @@ def test_cancel_removes_only_its_queued_run(app_db) -> None:
     assert "queued00001" not in text
     assert "queued00002" in text
     assert ":gray-badge[대기 1]" in text
+
+
+def paused_page():
+    """AppTest 진입점 — 대기 둘을 넣고 멈춘 뒤 현황을 그린다."""
+    from notebooklm_st import session
+    from notebooklm_st.core import models
+    from notebooklm_st.pages import dashboard
+
+    registry = session.get_registry()
+    if not registry.list_all():
+        question = models.Question(
+            id=1, title="질문", text="질문?", created_at="", updated_at=""
+        )
+        for video_id in ("queued00001", "queued00002"):
+            registry.enqueue(
+                f"https://youtu.be/{video_id}", video_id, (question,)
+            )
+        registry.pause("요청 한도를 초과했습니다. 잠시 후 다시 시도하세요.")
+    dashboard.render()
+
+
+def test_a_paused_queue_shows_why_and_offers_resume(app_db) -> None:
+    """멈춘 대기열은 표 위에 이유와 재개 버튼을 보인다."""
+    app = v1.AppTest.from_function(paused_page).run()
+
+    assert not app.exception
+    assert [item.value for item in app.warning] == [
+        "대기열을 멈췄습니다 — 요청 한도를 초과했습니다. 잠시 후 다시"
+        " 시도하세요. 원인을 해결한 뒤 재개하세요."
+    ]
+    assert app.button(key="dashboard_resume").label == "재개"
+
+
+def test_resume_hands_the_registry_to_the_runner(app_db, monkeypatch) -> None:
+    """재개를 누르면 러너가 멈춤을 풀고, 경고가 사라진다."""
+    calls: list[object] = []
+
+    def fake_resume(registry, db_path, is_blocked, **kwargs):
+        """워커를 띄우지 않고 멈춤만 푼다."""
+        calls.append(registry)
+        registry.resume()
+
+    monkeypatch.setattr(runner, "resume", fake_resume)
+    app = v1.AppTest.from_function(paused_page).run()
+
+    app.button(key="dashboard_resume").click().run()
+
+    assert not app.exception
+    assert calls == [session.get_registry()]
+    assert len(app.warning) == 0
+
+
+def test_queued_runs_waiting_for_a_digest_are_explained(app_db) -> None:
+    """정리본을 기다리는 대기 항목이 있으면 그 사실을 알린다."""
+    session.get_digest_registry().start()
+
+    def script():
+        """AppTest 진입점 — 대기 하나를 넣고 현황을 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            question = models.Question(
+                id=1, title="질문", text="질문?", created_at="", updated_at=""
+            )
+            registry.enqueue("https://youtu.be/x", "x", (question,))
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert [item.value for item in app.info] == [
+        "정리본을 작성 중입니다. 끝나면 대기열이 이어집니다."
+    ]
+
+
+def test_the_caption_warns_that_a_restart_drops_the_queue(app_db) -> None:
+    """서버를 재시작하면 대기 중인 질의도 사라진다고 알린다."""
+
+    def script():
+        """AppTest 진입점 — 실행 현황을 그린다."""
+        from notebooklm_st.pages import dashboard
+
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert "대기 중인 질의는 사라집니다" in app.caption[0].value
 
 
 def test_dashboard_draws_a_finished_run_without_the_answer(app_db) -> None:

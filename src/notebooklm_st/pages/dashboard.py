@@ -6,7 +6,7 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import run_progress
-from notebooklm_st.services import run_registry, runs
+from notebooklm_st.services import run_registry, runner, runs, store
 
 _POLL_INTERVAL = "1s"
 
@@ -17,8 +17,8 @@ def render() -> None:
     st.caption(
         "질의는 백그라운드에서 돕니다. 이 화면을 닫거나 다른 화면으로"
         " 이동해도 실행은 계속됩니다. 서버를 재시작하면 진행 중이던"
-        " 실행은 추적할 수 없습니다. 남은 임시 노트북은 정리 화면에서"
-        " 확인하세요."
+        " 실행과 대기 중인 질의는 사라집니다. 남은 임시 노트북은 정리"
+        " 화면에서 확인하세요."
     )
     _render_runs()
 
@@ -29,9 +29,9 @@ def _render_runs() -> None:
 
     **이 프래그먼트는 레지스트리를 읽기만 한다.** 안에서 상태를 바꾸면
     그 변경이 다음 재실행을 부르고 다시 상태를 바꿔 무한 루프가 된다.
-    지우기는 버튼의 ``on_click`` 콜백이 한다. 콜백은 사용자 클릭에서만,
-    재실행 전에 돌므로 안전하고, 치운 결과가 그 재실행의 표에 바로
-    보인다.
+    지우기·취소·재개는 버튼의 ``on_click`` 콜백이 한다. 콜백은 사용자
+    클릭에서만, 재실행 전에 돌므로 안전하고, 바꾼 결과가 그 재실행의
+    표에 바로 보인다.
     """
     registry = session.get_registry()
     handles = registry.list_all()
@@ -39,6 +39,7 @@ def _render_runs() -> None:
         st.info("아직 실행한 질의가 없습니다. 영상 질의 화면에서 시작하세요.")
         return
 
+    _render_queue_notice(registry, handles)
     st.button(
         "끝난 항목 모두 지우기",
         key="dashboard_discard_finished",
@@ -55,6 +56,32 @@ def _render_runs() -> None:
             registry.discard,
             functools.partial(_cancel, registry),
         )
+
+
+def _render_queue_notice(
+    registry: run_registry.RunRegistry, handles: list[runs.RunHandle]
+) -> None:
+    """대기열이 멈췄거나 정리본을 기다리면 표 위에 알린다.
+
+    멈춘 동안에는 정리본이 끝나도 이어지지 않으므로 정리본 안내를
+    보이지 않는다.
+
+    Args:
+        registry: 실행 레지스트리.
+        handles: ``list_all`` 이 돌려준 실행들.
+    """
+    reason = registry.paused_reason()
+    if reason is not None:
+        st.warning(
+            f"대기열을 멈췄습니다 — {reason} 원인을 해결한 뒤 재개하세요."
+        )
+        st.button(
+            "재개", key="dashboard_resume", on_click=_resume, args=(registry,)
+        )
+        return
+    waiting = any(handle.status == "queued" for handle in handles)
+    if waiting and session.get_digest_registry().is_running():
+        st.info("정리본을 작성 중입니다. 끝나면 대기열이 이어집니다.")
 
 
 def _queue_places(handles: list[runs.RunHandle]) -> dict[str, int]:
@@ -84,6 +111,22 @@ def _cancel(registry: run_registry.RunRegistry, run_id: str) -> None:
         run_id: 취소할 실행 ID.
     """
     registry.cancel(run_id)
+
+
+def _resume(registry: run_registry.RunRegistry) -> None:
+    """멈춘 대기열을 재개한다.
+
+    버튼 콜백으로 쓴다. 원인이 남아 있으면 다음 실행이 같은 이유로
+    실패하고 다시 멈춘다.
+
+    Args:
+        registry: 실행 레지스트리.
+    """
+    runner.resume(
+        registry,
+        store.default_db_path(),
+        session.get_digest_registry().is_running,
+    )
 
 
 def _discard_finished(registry: run_registry.RunRegistry) -> None:
