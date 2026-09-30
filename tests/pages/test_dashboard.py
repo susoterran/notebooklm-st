@@ -6,8 +6,18 @@ from notebooklm_st.core import models
 from notebooklm_st.services import video_metadata
 
 
+def rendered(app: v1.AppTest) -> str:
+    """화면의 마크다운을 한 문자열로 모은다."""
+    return " ".join(element.value for element in app.markdown)
+
+
+def labels_of(app: v1.AppTest) -> list[str]:
+    """화면의 버튼 라벨을 모은다."""
+    return [button.label for button in app.button]
+
+
 def test_dashboard_shows_notice_when_no_runs(app_db) -> None:
-    """실행이 하나도 없으면 안내를 보여준다."""
+    """실행이 하나도 없으면 안내만 보여 준다."""
 
     def script():
         """AppTest 진입점 — 실행 현황을 그린다."""
@@ -18,10 +28,11 @@ def test_dashboard_shows_notice_when_no_runs(app_db) -> None:
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
     assert len(app.info) == 1
+    assert len(app.button) == 0
 
 
-def test_dashboard_shows_a_running_run(app_db) -> None:
-    """진행 중인 실행의 최신 문구를 보여준다."""
+def test_dashboard_draws_a_running_run_as_a_row(app_db) -> None:
+    """진행 중인 실행은 배지·최신 진행 문구·숨기기 버튼의 한 줄이다."""
 
     def script():
         """AppTest 진입점 — 실행을 하나 등록하고 현황을 그린다."""
@@ -38,12 +49,17 @@ def test_dashboard_shows_a_running_run(app_db) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    rendered = " ".join(element.value for element in app.info)
-    assert "자막 인덱싱 중" in rendered
+    text = rendered(app)
+    assert "**상태**" in text
+    assert ":blue-badge[실행 중]" in text
+    assert "자막 인덱싱 중" in text
+    assert "숨기기" in labels_of(app)
+    assert app.button(key="dashboard_discard_finished").disabled is True
+    assert len(app.info) == 0
 
 
-def test_dashboard_shows_a_summary_of_a_finished_run(app_db) -> None:
-    """완료된 실행은 답변 대신 완료 요약을 보여준다."""
+def test_dashboard_draws_a_finished_run_without_the_answer(app_db) -> None:
+    """완료된 실행은 답변 수만 보이고 본문은 그리지 않는다."""
 
     def script():
         """AppTest 진입점 — 완료된 실행을 넣고 현황을 그린다."""
@@ -76,10 +92,142 @@ def test_dashboard_shows_a_summary_of_a_finished_run(app_db) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    summary = " ".join(element.value for element in app.success)
-    assert "답변 1건" in summary
-    rendered = " ".join(element.value for element in app.markdown)
-    assert "세 가지다." not in rendered
+    text = rendered(app)
+    assert ":green-badge[완료]" in text
+    assert "답변 1건" in text
+    assert "세 가지다." not in text
+    assert "지우기" in labels_of(app)
+    assert app.button(key="dashboard_discard_finished").disabled is False
+
+
+def test_discard_removes_only_its_run(app_db) -> None:
+    """한 줄의 지우기는 그 실행만 치운다."""
+
+    def script():
+        """AppTest 진입점 — 끝난 실행 둘을 넣고 현황을 그린다."""
+        import streamlit as st
+
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            ids = []
+            for video_id, title in (
+                ("aaaaaaaaaaa", "첫 영상"),
+                ("bbbbbbbbbbb", "둘째 영상"),
+            ):
+                url = f"https://youtu.be/{video_id}"
+                handle = registry.create(url, video_id, ("질문",))
+                registry.finish(
+                    handle.run_id,
+                    models.RunResult(
+                        url=url, video_id=video_id, items=(), title=title
+                    ),
+                )
+                ids.append(handle.run_id)
+            st.session_state["ids"] = ids
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    first = app.session_state["ids"][0]
+
+    app.button(key=f"dashboard_discard_{first}").click().run()
+
+    assert not app.exception
+    text = rendered(app)
+    assert "첫 영상" not in text
+    assert "둘째 영상" in text
+
+
+def test_discard_targets_its_run_after_a_new_run_arrives(app_db) -> None:
+    """표를 본 뒤 새 실행이 맨 위에 끼어도 누른 행의 실행만 치운다."""
+
+    def script():
+        """AppTest 진입점 — 끝난 실행 둘, 신호가 오면 새 실행 하나."""
+        import streamlit as st
+
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            ids = []
+            for video_id, title in (
+                ("aaaaaaaaaaa", "첫 영상"),
+                ("bbbbbbbbbbb", "둘째 영상"),
+            ):
+                url = f"https://youtu.be/{video_id}"
+                handle = registry.create(url, video_id, ("질문",))
+                registry.finish(
+                    handle.run_id,
+                    models.RunResult(
+                        url=url, video_id=video_id, items=(), title=title
+                    ),
+                )
+                ids.append(handle.run_id)
+            st.session_state["ids"] = ids
+        if st.session_state.get("arrive") and (
+            "arrived" not in st.session_state
+        ):
+            registry.create(
+                "https://youtu.be/ccccccccccc", "ccccccccccc", ("질문",)
+            )
+            st.session_state["arrived"] = True
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+    first = app.session_state["ids"][0]
+    app.session_state["arrive"] = True
+    app.run()
+
+    app.button(key=f"dashboard_discard_{first}").click().run()
+
+    assert not app.exception
+    text = rendered(app)
+    assert "첫 영상" not in text
+    assert "둘째 영상" in text
+    assert "ccccccccccc" in text
+
+
+def test_discard_finished_keeps_the_running_run(app_db) -> None:
+    """끝난 항목 모두 지우기는 진행 중인 실행을 남긴다."""
+
+    def script():
+        """AppTest 진입점 — 진행 중 하나, 끝난 것 하나를 넣는다."""
+        from notebooklm_st import session
+        from notebooklm_st.core import models
+        from notebooklm_st.pages import dashboard
+
+        registry = session.get_registry()
+        if not registry.list_all():
+            registry.create(
+                "https://youtu.be/runrunrun01", "runrunrun01", ("질문",)
+            )
+            url = "https://youtu.be/aaaaaaaaaaa"
+            done = registry.create(url, "aaaaaaaaaaa", ("질문",))
+            registry.finish(
+                done.run_id,
+                models.RunResult(
+                    url=url,
+                    video_id="aaaaaaaaaaa",
+                    items=(),
+                    title="끝난 영상",
+                ),
+            )
+        dashboard.render()
+
+    app = v1.AppTest.from_function(script).run()
+
+    app.button(key="dashboard_discard_finished").click().run()
+
+    assert not app.exception
+    text = rendered(app)
+    assert "끝난 영상" not in text
+    assert "runrunrun01" in text
+    assert app.button(key="dashboard_discard_finished").disabled is True
 
 
 def test_dashboard_polls_without_error_on_repeated_runs(app_db) -> None:
@@ -99,7 +247,7 @@ def test_dashboard_polls_without_error_on_repeated_runs(app_db) -> None:
 
 
 def test_real_background_run_reaches_the_dashboard(app_db, monkeypatch) -> None:
-    """진짜 스레드로 실행한 결과가 대시보드에 답변으로 나타난다."""
+    """진짜 스레드로 실행한 결과가 대시보드에 완료 줄로 나타난다."""
     monkeypatch.setattr(
         video_metadata,
         "fetch",
@@ -155,7 +303,7 @@ def test_real_background_run_reaches_the_dashboard(app_db, monkeypatch) -> None:
 
     app = v1.AppTest.from_function(script).run()
     assert not app.exception
-    summary = " ".join(element.value for element in app.success)
-    assert "답변 1건" in summary
-    rendered = " ".join(element.value for element in app.markdown)
-    assert "세 가지다." not in rendered
+    text = rendered(app)
+    assert ":green-badge[완료]" in text
+    assert "답변 1건" in text
+    assert "세 가지다." not in text

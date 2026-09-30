@@ -4,6 +4,7 @@ import streamlit as st
 
 from notebooklm_st import session
 from notebooklm_st.components import run_progress
+from notebooklm_st.services import runs
 
 _POLL_INTERVAL = "1s"
 
@@ -22,11 +23,13 @@ def render() -> None:
 
 @st.fragment(run_every=_POLL_INTERVAL)
 def _render_runs() -> None:
-    """레지스트리를 읽어 실행 카드를 그린다.
+    """레지스트리를 읽어 실행 표를 그린다.
 
     **이 프래그먼트는 레지스트리를 읽기만 한다.** 안에서 상태를 바꾸면
     그 변경이 다음 재실행을 부르고 다시 상태를 바꿔 무한 루프가 된다.
-    지우기는 사용자 클릭에서만 일어나므로 안전하다.
+    지우기는 버튼의 ``on_click`` 콜백이 한다. 콜백은 사용자 클릭에서만,
+    재실행 전에 돌므로 안전하고, 치운 결과가 그 재실행의 표에 바로
+    보인다.
     """
     registry = session.get_registry()
     handles = registry.list_all()
@@ -34,16 +37,25 @@ def _render_runs() -> None:
         st.info("아직 실행한 질의가 없습니다. 영상 질의 화면에서 시작하세요.")
         return
 
+    st.button(
+        "끝난 항목 모두 지우기",
+        key="dashboard_discard_finished",
+        disabled=not any(handle.status in runs.FINISHED for handle in handles),
+        on_click=_discard_finished,
+        args=(registry,),
+    )
+    run_progress.render_header()
     for handle in handles:
-        run_progress.render_run(handle)
-        if handle.status == "running":
-            if st.button(
-                "목록에서 제거 (실행은 계속됨)",
-                key=f"dashboard_force_{handle.run_id}",
-                help="응답이 없는 실행을 목록에서 치웁니다."
-                " 백그라운드 작업 자체는 멈추지 않습니다.",
-            ):
-                registry.discard(handle.run_id)
-        elif st.button("지우기", key=f"dashboard_discard_{handle.run_id}"):
-            registry.discard(handle.run_id)
-        st.divider()
+        run_progress.render_row(handle, registry.discard)
+
+
+def _discard_finished(registry: runs.RunRegistry) -> None:
+    """끝난 실행을 모두 지운다.
+
+    버튼 콜백으로 쓴다. ``discard_finished`` 가 돌려주는 지운 수는
+    화면에 쓸 곳이 없어 버린다.
+
+    Args:
+        registry: 실행 레지스트리.
+    """
+    registry.discard_finished()
