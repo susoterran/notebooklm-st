@@ -237,7 +237,7 @@ pages/ask.py              URL·질문·자동 저장 체크·넣기 (자동 저�
 pages/dashboard.py        실행 현황 표 · 재개 · 끝난 항목 지우기 (표, 대기열)
 components/run_progress.py  표의 한 줄을 그리는 함수들 (표)
 pages/history.py          저장 버튼이 공유 저장 함수를 부른다 (자동 저장)
-pages/digest.py·maintenance.py·_channel_check.py  가드 교체 (대기열)
+pages/digest.py·maintenance.py  가드 교체 (대기열)
 services/login_session.py busy 가 active_count 를 본다 (대기열)
 services/runs.py          핸들 값 — 대기·저장 결과 (셋 다)
 services/run_store.py     새 파일 — 핸들 보관소: 넣기·조회·기록·치우기 (대기열)

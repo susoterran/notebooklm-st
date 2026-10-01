@@ -344,10 +344,11 @@ def status_label(
     """그 영상의 실행 상태를 표에 적을 말로 옮긴다."""
 ```
 
-- **표**: `st.dataframe(rows, key=key, on_select="rerun",
-  selection_mode="multi-row", hide_index=True, placeholder="",
-  column_config=...)`. 표 위에 캡션 "행 왼쪽 칸을 눌러 고릅니다." 를
-  둔다.
+- **표**: `st.dataframe(rows, key=key, height="content",
+  on_select="rerun", selection_mode="multi-row", hide_index=True,
+  placeholder="", column_config=...)`. 표 위에 캡션 "행 왼쪽 칸을
+  눌러 고릅니다." 를 둔다. 표 높이는 내용을 따르므로 최대 15행이
+  스크롤 없이 모두 보인다.
 
   | 열 | 값 | 설정 |
   | --- | --- | --- |
@@ -489,7 +490,7 @@ questions_key, auto_save)`:
 | 대기열 멈춤 | 넣는다. 재개할 때까지 선다. 안내는 `st.warning` |
 | Outline 설정 없음 | 자동 저장이 꺼진 채 잠기고 이유를 적는다. 넣은 실행은 수동 저장 |
 | 대상 채널을 바꿈 | 결과를 그리지 않는다(지금과 같다) |
-| 확인을 다시 누름 | 목록이 새로 계산되고 key 가 바뀌어 선택이 비워진다. 끝나 이력에 남은 영상은 목록에서 빠진다 |
+| 확인을 다시 누름 | 목록이 새로 계산된다. 목록이 바뀌었으면 key 가 바뀌어 선택이 비워지고, 끝나 이력에 남은 영상은 목록에서 빠진다 |
 | 넣은 뒤 실행 현황에서 취소·지우기 | 핸들이 빠져 상태가 빈칸으로 돌아오고 다시 넣을 수 있다 |
 | 상태가 바뀜(대기 → 실행 → 끝남) | 이 탭은 스스로 새로 고치지 않는다. 다음 재실행 때 반영된다. 지켜보는 곳은 실행 현황 화면이다 |
 
