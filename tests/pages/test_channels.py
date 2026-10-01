@@ -497,6 +497,20 @@ def test_enqueue_waits_for_a_question_and_a_row(app_db, monkeypatch) -> None:
     assert button.disabled is True
 
 
+def test_a_picked_row_without_a_question_keeps_the_lock(
+    app_db, monkeypatch
+) -> None:
+    """행을 골랐어도 질문을 고르지 않았으면 버튼이 잠긴 채다."""
+    entries = (make_entry(),)
+    app = checked(app_db, monkeypatch, *entries, choose=False)
+    select_videos(app, entries, [0])
+    app.run()
+
+    button = app.button(key="channels_enqueue")
+    assert button.label == "선택한 영상 요약 (1건)"
+    assert button.disabled is True
+
+
 def test_enqueue_puts_the_picked_videos_in_list_order(
     app_db, monkeypatch
 ) -> None:
@@ -571,6 +585,43 @@ def test_only_pending_videos_add_nothing(app_db, monkeypatch) -> None:
     assert len(app.success) == 0
     assert "고른 영상은 모두 이미 대기 중이거나 실행 중입니다." in [
         item.value for item in app.info
+    ]
+    assert app.button(key="channels_enqueue").label == (
+        "선택한 영상 요약 (0건)"
+    )
+
+
+def test_done_and_failed_videos_can_be_enqueued_again(
+    app_db, monkeypatch
+) -> None:
+    """끝난 영상과 실패한 영상은 상태를 보이고 다시 넣을 수 있다."""
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, *BOTH)
+    registry = session.get_registry()
+    put_pending(app_db, "aaaaaaaaaaa")
+    put_pending(app_db, "bbbbbbbbbbb")
+    registry.acquire_worker()
+    first = registry.claim_next()
+    assert first is not None
+    registry.finish(
+        first.run_id,
+        models.RunResult(first.url, first.video_id, ()),
+    )
+    second = registry.claim_next()
+    assert second is not None
+    registry.fail(second.run_id, "요약에 실패했습니다.", "error")
+    app.run()
+
+    assert list(app.dataframe[0].value["status"]) == ["끝남", "실패"]
+    click_enqueue(app, BOTH, [0, 1])
+
+    assert not app.exception
+    assert [call[0] for call in calls] == [
+        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+    ]
+    assert [item.value for item in app.success] == [
+        "2건을 넣고 첫 영상부터 시작했습니다. 실행 현황 화면에서 확인하세요."
     ]
 
 
