@@ -52,6 +52,7 @@ def render(
             for entry in entries
         ],
         key=key,
+        height="content",
         on_select="rerun",
         selection_mode="multi-row",
         hide_index=True,
