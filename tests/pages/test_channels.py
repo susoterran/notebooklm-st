@@ -507,3 +507,165 @@ def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
 
     assert button_by(app, "요약").disabled is True
     assert any("질의" in item.value for item in app.info)
+
+
+def run_handle(video_id, status):
+    """상태 칸을 시험할 실행 핸들 하나를 만든다."""
+    from notebooklm_st.services import runs
+
+    return runs.RunHandle(
+        run_id=f"run-{video_id}-{status}",
+        url=f"https://www.youtube.com/watch?v={video_id}",
+        video_id=video_id,
+        questions=(),
+        auto_save=False,
+        queued_at="2026-10-01T10:00:00",
+        started_at=None,
+        status=status,
+        progress=[],
+        result=None,
+        save=None,
+        error_message=None,
+        error_level=None,
+        finished_at=None,
+    )
+
+
+def test_status_label_names_each_state() -> None:
+    """실행 상태 넷을 표에 적을 말로 옮기고, 실행이 없으면 비운다."""
+    from notebooklm_st.pages import _channel_videos
+
+    labels = [
+        _channel_videos.status_label(
+            "TbkUKCm3CHQ", [run_handle("TbkUKCm3CHQ", s)]
+        )
+        for s in ("queued", "running", "done", "failed")
+    ]
+
+    assert labels == ["대기 중", "실행 중", "끝남", "실패"]
+    assert _channel_videos.status_label("TbkUKCm3CHQ", []) is None
+    assert (
+        _channel_videos.status_label(
+            "TbkUKCm3CHQ", [run_handle("aaaaaaaaaaa", "queued")]
+        )
+        is None
+    )
+
+
+def test_status_label_takes_the_first_handle_of_the_video() -> None:
+    """같은 영상의 실행이 여럿이면 목록에서 처음 만난 것을 쓴다.
+
+    ``list_all`` 은 진행 중 → 대기 → 최근 끝난 순서다. 다시 넣어 도는
+    영상이 지난 실패 때문에 "실패" 로 보이면 안 된다.
+    """
+    from notebooklm_st.pages import _channel_videos
+
+    handles = [
+        run_handle("TbkUKCm3CHQ", "running"),
+        run_handle("TbkUKCm3CHQ", "failed"),
+    ]
+
+    assert _channel_videos.status_label("TbkUKCm3CHQ", handles) == "실행 중"
+
+
+def test_widget_key_follows_the_list_and_the_generation() -> None:
+    """같은 목록·같은 넣기 횟수는 같은 key, 하나라도 바뀌면 다른 key."""
+    from notebooklm_st.pages import _channel_videos
+
+    first = (make_entry("aaaaaaaaaaa"), make_entry("bbbbbbbbbbb"))
+    other = (make_entry("aaaaaaaaaaa"),)
+
+    key = _channel_videos.widget_key(first, 0)
+
+    assert key == _channel_videos.widget_key(first, 0)
+    assert key.startswith("channels_videos_")
+    assert key != _channel_videos.widget_key(first, 1)
+    assert key != _channel_videos.widget_key(other, 0)
+
+
+def test_selected_entries_keep_the_list_order() -> None:
+    """고른 행은 누른 순서가 아니라 목록 순서로, 낡은 번호는 버린다."""
+    from notebooklm_st.pages import _channel_videos
+
+    entries = (
+        make_entry("aaaaaaaaaaa"),
+        make_entry("bbbbbbbbbbb"),
+        make_entry("ccccccccccc"),
+    )
+
+    picked = _channel_videos.selected_entries(entries, [2, 0, 9])
+
+    assert [entry.video_id for entry in picked] == [
+        "aaaaaaaaaaa",
+        "ccccccccccc",
+    ]
+
+
+def video_table():
+    """AppTest 진입점 — 신규 영상 둘로 표를 그리고 고른 것을 적는다."""
+    import datetime
+
+    import streamlit as st
+
+    from notebooklm_st.core import models
+    from notebooklm_st.pages import _channel_videos
+
+    entries = (
+        models.FeedEntry(
+            video_id="aaaaaaaaaaa",
+            title="둘째 영상",
+            published=datetime.datetime.fromisoformat(
+                "2026-09-26T01:00:00+00:00"
+            ),
+        ),
+        models.FeedEntry(
+            video_id="bbbbbbbbbbb",
+            title="첫째 영상",
+            published=datetime.datetime.fromisoformat(
+                "2026-09-25T01:00:00+00:00"
+            ),
+        ),
+    )
+    key = _channel_videos.widget_key(entries, 0)
+    picked = _channel_videos.render(entries, [], key)
+    st.markdown("고른 영상: " + ",".join(e.video_id for e in picked))
+
+
+def test_video_table_shows_the_entries(app_db) -> None:
+    """표 하나에 제목·업로드일·상태·영상 링크가 목록 순서로 나온다."""
+    app = v1.AppTest.from_function(video_table).run()
+
+    assert not app.exception
+    table = app.dataframe[0].value
+    assert list(table.columns) == ["title", "published", "status", "url"]
+    assert list(table["title"]) == ["둘째 영상", "첫째 영상"]
+    local = [
+        datetime.datetime.fromisoformat(value).astimezone()
+        for value in ("2026-09-26T01:00:00+00:00", "2026-09-25T01:00:00+00:00")
+    ]
+    assert list(table["published"]) == [
+        f"{moment:%Y-%m-%d %H:%M}" for moment in local
+    ]
+    assert table["status"].isna().all()
+    assert list(table["url"]) == [
+        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+    ]
+    assert app.caption[0].value == "행 왼쪽 칸을 눌러 고릅니다."
+
+
+def test_video_table_returns_the_picked_entries(app_db) -> None:
+    """표에서 고른 행의 영상을 목록 순서로 돌려준다."""
+    from notebooklm_st.pages import _channel_videos
+
+    app = v1.AppTest.from_function(video_table).run()
+    entries = (make_entry("aaaaaaaaaaa"), make_entry("bbbbbbbbbbb"))
+    app.session_state[_channel_videos.widget_key(entries, 0)] = {
+        "selection": {"rows": [1, 0], "columns": [], "cells": []}
+    }
+    app.run()
+
+    assert not app.exception
+    assert "고른 영상: aaaaaaaaaaa,bbbbbbbbbbb" in [
+        item.value for item in app.markdown
+    ]
