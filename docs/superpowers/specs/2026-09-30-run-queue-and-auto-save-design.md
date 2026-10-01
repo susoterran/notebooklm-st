@@ -17,8 +17,9 @@
 - **범위**: 질의 화면에서 넣는 실행에 한해 (1) 실행 현황을 한 줄 표로
   바꾸고, (2) 체크 하나로 답변을 받자마자 인용을 뺀 채 Outline 에
   저장하고, (3) 실행 중에도 다음 질의를 대기열에 넣어 차례로 돌린다.
-  채널 화면의 "요약" 버튼은 새 러너 입구를 쓰지만 동작(비어 있을
-  때만 시작, 수동 저장)은 그대로다.
+  채널 화면의 신규 영상도 같은 대기열·같은 자동 저장 설정을 쓴다.
+  그 화면의 표와 여러 건 넣기는
+  `2026-10-01-channel-video-table-design.md` 가 적는다.
 - **전제**: Outline 1.10.0 이상. 자동 저장은 이력 화면의 저장과 같은
   `documents.create` 를 쓴다.
 
@@ -224,8 +225,6 @@
   이유를 영구히 남길 곳을 만들면 언제 지울지가 관리 대상이 된다.
 - **제목을 얻으려 대기 항목마다 yt-dlp 조회** — 네트워크 호출이 하나
   늘고, 파이프라인이 곧 같은 값을 준다.
-- **채널 화면의 "요약" 도 대기열·자동 저장에 태우기** — 이번 범위가
-  아니다. 뒤에 붙일 수 있도록 러너 입구를 하나로 둔다(→ 6.1).
 
 ---
 
@@ -238,7 +237,7 @@ pages/ask.py              URL·질문·자동 저장 체크·넣기 (자동 저�
 pages/dashboard.py        실행 현황 표 · 재개 · 끝난 항목 지우기 (표, 대기열)
 components/run_progress.py  표의 한 줄을 그리는 함수들 (표)
 pages/history.py          저장 버튼이 공유 저장 함수를 부른다 (자동 저장)
-pages/digest.py·maintenance.py·_channel_check.py  가드 교체 (대기열)
+pages/digest.py·maintenance.py  가드 교체 (대기열)
 services/login_session.py busy 가 active_count 를 본다 (대기열)
 services/runs.py          핸들 값 — 대기·저장 결과 (셋 다)
 services/run_store.py     새 파일 — 핸들 보관소: 넣기·조회·기록·치우기 (대기열)
@@ -379,8 +378,8 @@ def resume(
 - `resume` 은 `registry.resume()` 이 참이면 워커를 띄운다.
 - `is_blocked` 는 "지금 NotebookLM 을 다른 일이 쓰고 있는가" 다. 화면이
   `session.get_digest_registry().is_running` 을 넘긴다(→ 8.3).
-- 질의 화면과 채널 화면이 모두 `enqueue` 를 부른다. 채널 화면은
-  `auto_save=False` 를 넘긴다.
+- 질의 화면과 채널 화면이 모두 `enqueue` 를 부른다. 두 화면 모두
+  자동 저장 체크의 값을 넘긴다. 설정은 하나다.
 - 표 단계와 자동 저장 단계에서는 지금의 `start_run` 이 남는다. 자동
   저장 단계가 `auto_save` 인자를 더하고, 대기열 단계가 `start_run` 을
   `enqueue` 로 바꾼다.
@@ -637,12 +636,10 @@ def save(
 | `pages/ask.py` | 실행 중·대기 중·정리 중이어도 **막지 않는다.** 막는 것은 URL 이 틀렸을 때, 질문을 안 골랐을 때, 같은 영상이 대기·실행 중일 때(`is_pending`)다 |
 | `pages/digest.py` | `active_count() > 0` 이면 정리 시작을 잠근다 |
 | `pages/maintenance.py` | `active_count() > 0` 이면 삭제를 잠근다. 멈춘 대기 항목은 아직 노트북을 만들지 않았으므로 잠그지 않는다 |
-| `pages/_channel_check.py` | `active_count() > 0` 이거나 `paused_reason()` 이 있으면 "요약" 을 잠근다. 멈춘 대기열에 넣으면 돌지 않고 서 있기 때문이다 |
+| `pages/_channel_enqueue.py` | 질의 화면처럼 **막지 않는다.** 고른 영상 가운데 대기·실행 중인 것(`is_pending`)만 뺀다(`2026-10-01-channel-video-table-design.md` §8.2) |
 | `services/login_session.busy` | `active_count() > 0 or digests.is_running()`. 멈춘 동안에는 로그인을 막지 않는다 |
 
 잠글 때의 안내 문구는 "실행 중" 을 "실행 중이거나 대기 중" 으로 바꾼다.
-채널 화면의 멈춤 안내는 `대기열이 멈춰 있습니다. 실행 현황에서
-재개하거나 대기 항목을 취소한 뒤 시작하세요.` 다.
 
 원격 로그인 화면의 안내 문구(`pages/_remote_login.py`)는 바꾸지 않는다.
 실행 중인 것 없이 멈추지 않은 대기 항목만 남는 때는 워커가 정리본을
@@ -851,8 +848,7 @@ Outline 은 `runner.run_export.save` 또는 `outline.create_document` 를
 - `background-execution` — "동시 실행 1개, 실행 중이면 버튼 비활성",
   `running_count`, 실행 카드가 틀리게 된다.
 - `channel-watch` — `runner.start_run`, `running_count() > 0` 가드,
-  "대기열을 만들지 않는다" 가 틀리게 된다. 채널 화면이 대기열·자동
-  저장을 쓰지 않는다는 사실은 그대로 적는다.
+  "대기열을 만들지 않는다" 가 틀리게 된다.
 - `digest` — "질의 화면이 정리 중이면 실행을 막는다"(§10.5)가 틀리게
   된다. 이제 넣고 기다린다.
 - `remote-login` — `running_count()` 로 적힌 가드가 틀리게 된다.
@@ -884,8 +880,6 @@ Outline 은 `runner.run_export.save` 또는 `outline.create_document` 를
 
 ## 15. 범위 밖
 
-- **채널 화면의 대기열·자동 저장** — 나중에 붙인다. 러너 입구
-  `enqueue` 가 이미 `auto_save` 를 받는다.
 - **실행 중인 항목 멈추기** — 파이프라인 취소와 임시 노트북 정리가
   얽힌다.
 - **대기 순서 바꾸기** — 취소하고 다시 넣으면 된다.

@@ -138,12 +138,15 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
 | `pages/ask.py` | moderate | 질의 화면. URL 입력·질문 선택 후 대기열에 넣고 반환. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
+| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 확인한 신규를 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
 | `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기·취소·재개는 버튼 콜백이 한다. 대기열이 멈추면 이유와 재개 버튼을 보인다 |
 | `pages/question_admin.py` | moderate | 질문 템플릿 CRUD. 검증 오류는 `st.error`, 성공 시 `st.rerun` |
 | `pages/history.py` | **complex** | 이력 조회·답변 수정·삭제·마크다운 내려받기. 인용 숨기기와 2단계 삭제 확인을 세션 키로 직접 관리 |
 | `pages/maintenance.py` | moderate | 남은 `tmp-` 노트북 조회·삭제. 질의가 실행 중이거나 대기 중이면 경고 |
 | `components/answer_view.py` | moderate | 답변 카드. 저장 콜백과 항목 ID 가 **둘 다** 있을 때만 편집 상자를 연다 |
 | `components/run_progress.py` | simple | 실행 표의 머리글과 한 줄(queued/running/failed/done). 대기 줄은 차례 배지와 취소 버튼. 칸 글자는 순수 함수가 만든다. 완료 시 답변 수만, 상세는 이력 화면으로 |
+| `components/auto_save_toggle.py` | simple | 자동 저장 체크. 질의·채널 화면이 위젯 key 만 달리해 DB 설정 하나를 함께 쓴다 |
+| `components/queue_notice.py` | simple | 넣으면 언제 도는지 알리는 안내 셋과 넣은 뒤의 결과 문구. 질의·채널 화면이 함께 쓴다 |
 | `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다(브라우저 로그인 경로는 삭제됨 — `docs/how-to/2026-09-16-auth-reseed.md`) |
 | `components/schema_gate.py` | simple | 기동 직후 커넥션을 열어 보고 스키마 불일치면 안내 후 `st.stop()` |
 

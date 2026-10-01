@@ -1,4 +1,4 @@
-"""채널 화면의 "새 영상 확인" 탭 — 고른 채널의 신규를 찾아 요약한다.
+"""채널 화면의 "새 영상 확인" 탭 — 신규를 골라 대기열에 넣는다.
 
 ``pages/channels.py`` 가 이 모듈을 부른다. 네비게이션에 직접 등록되지
 않으므로 이름 앞에 밑줄을 둔다.
@@ -8,7 +8,9 @@
 확인할 때 그 채널에 저장되어, 기준일을 정하는 자리가 화면에 하나만
 남는다.
 
-진행 상황과 결과는 실행 현황 화면에서 본다. 이 탭은 시작만 한다.
+신규는 표에서 여러 건을 골라 한 번에 질의 대기열에 넣는다. 표는
+``pages/_channel_videos.py``, 넣기는 ``pages/_channel_enqueue.py`` 가
+맡는다. 진행 상황과 결과는 실행 현황 화면에서 본다.
 """
 
 import dataclasses
@@ -18,20 +20,21 @@ import sqlite3
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.core import labels, models, new_videos, youtube
+from notebooklm_st.components import auto_save_toggle, queue_notice
+from notebooklm_st.core import models, new_videos
+from notebooklm_st.pages import _channel_enqueue, _channel_videos
 from notebooklm_st.services import (
     channel_feed,
     channels,
     questions,
     run_history,
-    runner,
-    store,
 )
 
 _TARGET_KEY = "channels_target"
 _QUESTIONS_KEY = "channels_questions"
 _FOUND_KEY = "channels_found"
-_STARTED_KEY = "channels_started"
+_AUTO_SAVE_KEY = "channels_auto_save"
+_AUTO_SAVE_LOCKED_KEY = "channels_auto_save_locked"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -52,7 +55,7 @@ class _Checked:
 def render(
     connection: sqlite3.Connection, channel_list: list[models.Channel]
 ) -> None:
-    """대상 채널과 기준일을 받아 신규를 찾고 요약을 시작한다.
+    """대상 채널과 기준일을 받아 신규를 찾고 대기열에 넣게 한다.
 
     Args:
         connection: 열린 커넥션.
@@ -106,7 +109,6 @@ def _start_check(
         st.error(str(error))
         return
     st.session_state[_FOUND_KEY] = _check(connection, target, baseline)
-    st.session_state[_STARTED_KEY] = set()
 
 
 def _check(
@@ -141,18 +143,22 @@ def _check(
 
 
 def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
-    """확인 결과를 그리고 요약을 시작할 수 있게 한다."""
+    """확인 결과를 표로 그리고 고른 영상을 넣을 수 있게 한다.
+
+    질문 선택은 결과보다 먼저 그린다. 결과가 오류나 빈 목록이어도
+    위젯이 그려져야 고른 질문이 남는다.
+    """
     question_list = questions.list_questions(connection)
-    selected: list[models.Question] = []
+    chosen: list[models.Question] = []
     if not question_list:
         st.info("질문 관리 화면에서 질문을 먼저 등록하세요.")
     else:
-        selected = st.multiselect(
+        chosen = st.multiselect(
             "질문 선택",
             options=question_list,
             format_func=lambda question: question.title,
             key=_QUESTIONS_KEY,
-            help="고른 질문을 이 목록의 모든 요약에 씁니다.",
+            help="고른 질문을 이번에 넣는 영상 모두에 씁니다.",
         )
     if found.error is not None:
         st.error(f"{found.title}: {found.error}")
@@ -160,91 +166,25 @@ def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
     if not found.entries:
         st.info("새 영상이 없습니다.")
         return
-    # 등록된 질문이 아예 없으면 위에서 이미 안내를 냈다. 그 위에
-    # "질문을 하나 이상 고르세요" 를 겹쳐 적지 않는다.
-    reason = _blocked_reason(selected) if question_list else None
-    if reason is not None:
-        # 영상마다 그리면 같은 문장이 목록을 도배한다. 한 번만 적는다.
-        st.info(reason)
-    st.subheader(found.title)
-    for entry in found.entries:
-        _render_entry(entry, selected, reason, bool(question_list))
-
-
-def _blocked_reason(selected: list[models.Question]) -> str | None:
-    """요약을 막을 이유를 찾아 문장으로 돌려준다.
-
-    질의와 정리는 같은 쿠키로 NotebookLM 에 붙으므로 동시에 돌리지
-    않는다. 채널 화면의 요약은 대기열을 기다리지 않고 비어 있을 때만
-    시작한다. 멈춘 대기열에 넣으면 돌지 않고 서 있으므로 그때도 막는다.
-
-    Args:
-        selected: 고른 질문들.
-
-    Returns:
-        막을 이유. 없으면 ``None``.
-    """
     registry = session.get_registry()
-    if registry.active_count() > 0:
-        return (
-            "이미 실행 중이거나 대기 중인 질의가 있습니다. 실행 현황"
-            " 화면에서 완료를 확인한 뒤 시작하세요."
+    auto_save = False
+    if question_list:
+        auto_save = auto_save_toggle.render(
+            connection, _AUTO_SAVE_KEY, _AUTO_SAVE_LOCKED_KEY
         )
-    if registry.paused_reason() is not None:
-        return (
-            "대기열이 멈춰 있습니다. 실행 현황에서 재개하거나 대기 항목을"
-            " 취소한 뒤 시작하세요."
-        )
-    if session.get_digest_registry().is_running():
-        return (
-            "정리본을 작성 중입니다. 정리본 화면에서 완료를 확인한 뒤"
-            " 시작하세요."
-        )
-    if not selected:
-        return "질문을 하나 이상 고르세요."
-    return None
-
-
-def _render_entry(
-    entry: models.FeedEntry,
-    selected: list[models.Question],
-    reason: str | None,
-    can_run: bool,
-) -> None:
-    """신규 영상 한 줄과 요약 버튼을 그린다.
-
-    Args:
-        entry: 그릴 신규 영상.
-        selected: 고른 질문들.
-        reason: 요약을 막을 이유. 없으면 ``None``.
-        can_run: 등록된 질문이 하나라도 있는가. 없으면 버튼 자체를
-            그리지 않는다. 미선택·실행 중과 달리 질문이 없으면 누를
-            길이 아예 없기 때문이다.
-    """
-    url = youtube.watch_url(entry.video_id)
-    started = st.session_state.get(_STARTED_KEY, set())
-    left, right = st.columns([4, 1])
-    left.markdown(
-        f"[{labels.shorten(entry.title)}]({url})"
-        f" · {entry.published.astimezone():%Y-%m-%d %H:%M}"
+        queue_notice.render(registry)
+    st.subheader(found.title)
+    key = _channel_videos.widget_key(
+        found.entries, _channel_enqueue.generation()
     )
-    if entry.video_id in started:
-        right.caption("실행 중")
-        return
-    if not can_run:
-        return
-    if right.button(
-        "요약",
-        key=f"channels_run_{entry.video_id}",
-        disabled=reason is not None,
-    ):
-        runner.enqueue(
-            session.get_registry(),
-            url,
+    selected = _channel_videos.render(found.entries, registry.list_all(), key)
+    if question_list:
+        _channel_enqueue.render(
+            registry,
+            found.entries,
+            key,
+            _QUESTIONS_KEY,
             selected,
-            store.default_db_path(),
-            auto_save=False,
-            is_blocked=session.get_digest_registry().is_running,
+            chosen,
+            auto_save,
         )
-        st.session_state[_STARTED_KEY] = started | {entry.video_id}
-        st.rerun()

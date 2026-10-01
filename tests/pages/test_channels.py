@@ -15,7 +15,8 @@ import datetime
 import pytest
 from streamlit.testing import v1
 
-from notebooklm_st.core import models
+from notebooklm_st import session
+from notebooklm_st.core import models, youtube
 from notebooklm_st.services import (
     channel_feed,
     channel_lookup,
@@ -110,6 +111,110 @@ def fake_sources(monkeypatch):
 
     monkeypatch.setattr(channels_page.channel_lookup, "lookup", lookup)
     monkeypatch.setattr(channels_page.channel_feed, "fetch", feed_with())
+
+
+NEWER = make_entry("aaaaaaaaaaa", "2026-09-26T01:00:00+00:00")
+OLDER = make_entry("bbbbbbbbbbb", "2026-09-25T01:00:00+00:00")
+BOTH = (NEWER, OLDER)
+"""신규 영상 둘. 표는 업로드가 늦은 것부터라 이 순서로 오른다."""
+
+
+def set_outline_env(monkeypatch) -> None:
+    """자동 저장 체크가 열리도록 Outline 설정을 채운다."""
+    monkeypatch.setenv(outline.URL_ENV_VAR, "http://192.168.0.10:3000")
+    monkeypatch.setenv(outline.TOKEN_ENV_VAR, "ol_secret")
+    monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
+
+
+def record_enqueue(monkeypatch) -> list[tuple[str, list[str], bool]]:
+    """``runner.enqueue`` 를 막고 넘어온 값을 기록한다.
+
+    스레드를 띄우지 않고 레지스트리에 대기로만 넣는다. 그래야 같은
+    영상 판정(``is_pending``)과 상태 칸이 실제처럼 돈다.
+
+    Returns:
+        부른 순서대로 (URL, 질문 제목들, 자동 저장).
+    """
+    from notebooklm_st.pages import _channel_enqueue
+
+    calls: list[tuple[str, list[str], bool]] = []
+
+    def fake_enqueue(registry, url, question_list, db_path, **kwargs):
+        """넘어온 값을 기록하고 대기로만 넣는다."""
+        titles = [question.title for question in question_list]
+        calls.append((url, titles, kwargs["auto_save"]))
+        return registry.enqueue(
+            url, youtube.extract_video_id(url) or "", tuple(question_list)
+        )
+
+    monkeypatch.setattr(_channel_enqueue.runner, "enqueue", fake_enqueue)
+    return calls
+
+
+def put_pending(connection, video_id) -> None:
+    """그 영상을 대기열에 넣어 둔다. 워커는 띄우지 않는다."""
+    session.get_registry().enqueue(
+        youtube.watch_url(video_id),
+        video_id,
+        tuple(questions.list_questions(connection)),
+    )
+
+
+def checked(app_db, monkeypatch, *entries, choose=True):
+    """채널과 질문을 하나씩 두고 확인을 눌러 신규를 띄운다.
+
+    Args:
+        app_db: 앱이 쓰는 임시 DB.
+        monkeypatch: 피드를 막을 pytest 도구.
+        *entries: 피드가 줄 항목들.
+        choose: 참이면 등록한 질문을 고른다.
+
+    Returns:
+        확인을 마친 AppTest.
+    """
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    check_feed(monkeypatch, feed_with(*entries))
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    if choose:
+        app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
+    return app
+
+
+def select_videos(app, entries, rows, generation=0) -> None:
+    """신규 영상 표에서 행을 고른다.
+
+    AppTest 는 표 클릭을 흉내 내지 못한다. 대신 Streamlit 이 허용하는
+    세션 상태 주입을 쓴다. 브라우저가 선택을 되돌려 보내지 않으므로
+    선택은 바로 다음 실행 한 번에만 반영된다.
+
+    Args:
+        app: 확인을 마친 AppTest.
+        entries: 표에 오른 순서 그대로의 신규 영상.
+        rows: 고를 행의 위치 번호.
+        generation: 이 화면에서 넣기를 한 횟수.
+    """
+    from notebooklm_st.pages import _channel_videos
+
+    key = _channel_videos.widget_key(entries, generation)
+    app.session_state[key] = {
+        "selection": {"rows": rows, "columns": [], "cells": []}
+    }
+
+
+def click_enqueue(app, entries, rows) -> None:
+    """영상을 고른 채로 넣기 버튼을 누른다.
+
+    AppTest 는 직전 실행에서 잠긴 버튼을 누르지 못하게 막는다. 한 번
+    골라 버튼을 풀고, 누르는 실행에서 다시 고른다 — 선택이 한 실행만
+    가기 때문이다.
+    """
+    select_videos(app, entries, rows)
+    app.run()
+    select_videos(app, entries, rows)
+    app.button(key="channels_enqueue").click().run()
 
 
 def test_no_channels_shows_a_notice(app_db) -> None:
@@ -248,18 +353,12 @@ def test_deleting_removes_the_channel(app_db) -> None:
 
 
 def test_checking_lists_new_videos(app_db, monkeypatch) -> None:
-    """확인을 누르면 신규 영상이 목록에 나온다."""
-    registered(app_db)
-    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    check_feed(monkeypatch, feed_with(make_entry()))
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    button_by(app, "새 영상 확인").click().run()
+    """확인을 누르면 신규 영상이 채널 이름 아래 표로 나온다."""
+    app = checked(app_db, monkeypatch, make_entry())
 
     assert not app.exception
-    rendered = " ".join(item.value for item in app.markdown)
-    assert "새 영상" in rendered
+    assert [item.value for item in app.subheader] == ["Fireship"]
+    assert list(app.dataframe[0].value["title"]) == ["새 영상"]
 
 
 def test_an_already_summarized_video_is_not_listed(app_db, monkeypatch) -> None:
@@ -341,13 +440,13 @@ def test_switching_the_target_channel_clears_the_result(
     app = v1.AppTest.from_function(script)
     app.run()
     button_by(app, "새 영상 확인").click().run()
-    assert "새 영상" in " ".join(item.value for item in app.markdown)
+    assert len(app.dataframe) == 1
 
     second = channels.list_channels(app_db)[1]
     app.selectbox[0].set_value(second).run()
 
     assert not app.exception
-    assert "새 영상" not in " ".join(item.value for item in app.markdown)
+    assert len(app.dataframe) == 0
 
 
 def test_a_feed_failure_on_the_target_shows_the_reason(
@@ -366,8 +465,10 @@ def test_a_feed_failure_on_the_target_shows_the_reason(
     assert any("일시적인 오류" in item.value for item in app.error)
 
 
-def test_no_questions_blocks_the_summary(app_db, monkeypatch) -> None:
-    """질문이 없으면 요약 버튼을 그리지 않는다."""
+def test_no_questions_shows_the_table_without_a_button(
+    app_db, monkeypatch
+) -> None:
+    """질문이 없으면 안내와 표만 그리고 넣기 쪽은 그리지 않는다."""
     registered(app_db)
     check_feed(monkeypatch, feed_with(make_entry()))
 
@@ -375,135 +476,416 @@ def test_no_questions_blocks_the_summary(app_db, monkeypatch) -> None:
     app.run()
     button_by(app, "새 영상 확인").click().run()
 
+    assert not app.exception
     assert any("질문 관리" in item.value for item in app.info)
-    assert all(item.label != "요약" for item in app.button)
+    assert len(app.dataframe) == 1
+    assert len(app.checkbox) == 0
+    assert all(item.key != "channels_enqueue" for item in app.button)
 
 
-def test_summary_hands_the_video_to_the_runner(app_db, monkeypatch) -> None:
-    """요약을 누르면 그 영상 URL 과 고른 질문이 러너로 넘어간다."""
-    from notebooklm_st.pages import _channel_check
+def test_enqueue_waits_for_a_question_and_a_row(app_db, monkeypatch) -> None:
+    """질문을 고르지 않았거나 행을 고르지 않았으면 버튼이 잠긴다."""
+    app = checked(app_db, monkeypatch, make_entry(), choose=False)
 
-    registered(app_db)
-    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    check_feed(monkeypatch, feed_with(make_entry()))
-    received: dict[str, object] = {}
+    assert "질문을 하나 이상 고르세요." in [item.value for item in app.info]
+    assert app.button(key="channels_enqueue").disabled is True
 
-    def fake_start(registry, url, question_list, db_path, **kwargs):
-        """넘어온 인자를 기록한다."""
-        received["url"] = url
-        received["questions"] = [item.title for item in question_list]
-        return None
-
-    monkeypatch.setattr(_channel_check.runner, "enqueue", fake_start)
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    button_by(app, "새 영상 확인").click().run()
     app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
-    button_by(app, "요약").click().run()
 
-    assert received["url"] == "https://www.youtube.com/watch?v=TbkUKCm3CHQ"
-    assert received["questions"] == ["핵심 주장"]
+    button = app.button(key="channels_enqueue")
+    assert button.label == "선택한 영상 요약 (0건)"
+    assert button.disabled is True
 
 
-def test_summary_never_auto_saves(app_db, monkeypatch) -> None:
-    """자동 저장을 켜 두어도 채널 화면의 요약은 사람이 저장한다."""
-    from notebooklm_st.pages import _channel_check
-
-    monkeypatch.setenv(outline.URL_ENV_VAR, "http://192.168.0.10:3000")
-    monkeypatch.setenv(outline.TOKEN_ENV_VAR, "ol_secret")
-    monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
-    settings.set_auto_save(app_db, True)
-    registered(app_db)
-    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    check_feed(monkeypatch, feed_with(make_entry()))
-    calls: list[dict[str, object]] = []
-
-    def fake_start(registry, url, question_list, db_path, **kwargs):
-        """넘어온 키워드 인자를 기록한다."""
-        calls.append(kwargs)
-
-    monkeypatch.setattr(_channel_check.runner, "enqueue", fake_start)
-
-    app = v1.AppTest.from_function(script)
+def test_a_picked_row_without_a_question_keeps_the_lock(
+    app_db, monkeypatch
+) -> None:
+    """행을 골랐어도 질문을 고르지 않았으면 버튼이 잠긴 채다."""
+    entries = (make_entry(),)
+    app = checked(app_db, monkeypatch, *entries, choose=False)
+    select_videos(app, entries, [0])
     app.run()
-    button_by(app, "새 영상 확인").click().run()
-    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
-    button_by(app, "요약").click().run()
 
-    assert len(calls) == 1
-    assert calls[0]["auto_save"] is False
+    button = app.button(key="channels_enqueue")
+    assert button.label == "선택한 영상 요약 (1건)"
+    assert button.disabled is True
 
 
-def test_a_queued_query_blocks_the_summary(app_db, monkeypatch) -> None:
-    """채널 화면의 요약은 대기열을 기다리지 않고 비어 있을 때만 연다."""
-    from notebooklm_st import session
+def test_enqueue_puts_the_picked_videos_in_list_order(
+    app_db, monkeypatch
+) -> None:
+    """고른 영상을 누른 순서가 아니라 목록 순서로 넣는다."""
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, *BOTH)
+    select_videos(app, BOTH, [1, 0])
+    app.run()
 
-    registered(app_db)
-    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    check_feed(monkeypatch, feed_with(make_entry()))
-    session.get_registry().enqueue(
-        "https://youtu.be/dQw4w9WgXcQ",
-        "dQw4w9WgXcQ",
-        tuple(questions.list_questions(app_db)),
+    assert app.button(key="channels_enqueue").label == (
+        "선택한 영상 요약 (2건)"
     )
+    click_enqueue(app, BOTH, [1, 0])
 
-    app = v1.AppTest.from_function(script)
-    app.run()
-    button_by(app, "새 영상 확인").click().run()
-    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
-
-    assert button_by(app, "요약").disabled is True
-    assert any("대기 중인 질의" in item.value for item in app.info)
-
-
-def test_a_paused_queue_blocks_the_summary(app_db, monkeypatch) -> None:
-    """멈춘 대기열에 넣으면 돌지 않으므로 재개나 취소를 먼저 권한다."""
-    from notebooklm_st import session
-
-    registered(app_db)
-    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    check_feed(monkeypatch, feed_with(make_entry()))
-    registry = session.get_registry()
-    registry.enqueue(
-        "https://youtu.be/dQw4w9WgXcQ",
-        "dQw4w9WgXcQ",
-        tuple(questions.list_questions(app_db)),
-    )
-    registry.pause("요청 한도를 초과했습니다.")
-
-    app = v1.AppTest.from_function(script)
-    app.run()
-    button_by(app, "새 영상 확인").click().run()
-    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
-
-    assert button_by(app, "요약").disabled is True
-    assert [item.value for item in app.info] == [
-        "대기열이 멈춰 있습니다. 실행 현황에서 재개하거나 대기 항목을"
-        " 취소한 뒤 시작하세요."
+    assert not app.exception
+    assert calls == [
+        ("https://www.youtube.com/watch?v=aaaaaaaaaaa", ["핵심 주장"], False),
+        ("https://www.youtube.com/watch?v=bbbbbbbbbbb", ["핵심 주장"], False),
     ]
 
 
-def test_a_running_query_blocks_the_summary(app_db, monkeypatch) -> None:
-    """질의가 돌고 있으면 요약을 시작할 수 없다."""
-    from notebooklm_st import session
+def test_enqueue_reports_and_clears_the_selection(app_db, monkeypatch) -> None:
+    """넣으면 결과를 한 번 알리고, 넣기 전 선택은 새 표에 안 붙는다."""
+    record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, *BOTH)
+    click_enqueue(app, BOTH, [0, 1])
 
-    registered(app_db)
-    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
-    check_feed(monkeypatch, feed_with(make_entry()))
-    registry = session.get_registry()
-    registry.enqueue(
-        "https://youtu.be/dQw4w9WgXcQ",
-        "dQw4w9WgXcQ",
-        tuple(questions.list_questions(app_db)),
+    assert not app.exception
+    assert [item.value for item in app.success] == [
+        "2건을 넣고 첫 영상부터 시작했습니다. 실행 현황 화면에서 확인하세요."
+    ]
+    assert list(app.dataframe[0].value["status"]) == ["대기 중", "대기 중"]
+
+    select_videos(app, BOTH, [0, 1])
+    app.run()
+
+    assert app.button(key="channels_enqueue").label == (
+        "선택한 영상 요약 (0건)"
     )
+    assert len(app.success) == 0
+
+
+def test_a_pending_video_is_left_out(app_db, monkeypatch) -> None:
+    """대기 중인 영상은 다시 넣지 않고, 뺀 수를 결과 끝에 적는다."""
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, *BOTH)
+    put_pending(app_db, "aaaaaaaaaaa")
+    app.run()
+
+    assert app.dataframe[0].value["status"].iloc[0] == "대기 중"
+    click_enqueue(app, BOTH, [0, 1])
+
+    assert not app.exception
+    assert [call[0] for call in calls] == [
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb"
+    ]
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다 — 앞에 1건. 실행 현황 화면에서 확인하세요."
+        " 이미 대기 중이거나 실행 중인 1건은 뺐습니다."
+    ]
+
+
+def test_only_pending_videos_add_nothing(app_db, monkeypatch) -> None:
+    """고른 영상이 모두 대기 중이면 아무것도 넣지 않고 그렇게 알린다."""
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+    put_pending(app_db, "TbkUKCm3CHQ")
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert calls == []
+    assert len(app.success) == 0
+    assert "고른 영상은 모두 이미 대기 중이거나 실행 중입니다." in [
+        item.value for item in app.info
+    ]
+    assert app.button(key="channels_enqueue").label == (
+        "선택한 영상 요약 (0건)"
+    )
+
+
+def test_done_and_failed_videos_can_be_enqueued_again(
+    app_db, monkeypatch
+) -> None:
+    """끝난 영상과 실패한 영상은 상태를 보이고 다시 넣을 수 있다."""
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, *BOTH)
+    registry = session.get_registry()
+    put_pending(app_db, "aaaaaaaaaaa")
+    put_pending(app_db, "bbbbbbbbbbb")
+    registry.acquire_worker()
+    first = registry.claim_next()
+    assert first is not None
+    registry.finish(
+        first.run_id,
+        models.RunResult(first.url, first.video_id, ()),
+    )
+    second = registry.claim_next()
+    assert second is not None
+    registry.fail(second.run_id, "요약에 실패했습니다.", "error")
+    app.run()
+
+    assert list(app.dataframe[0].value["status"]) == ["끝남", "실패"]
+    click_enqueue(app, BOTH, [0, 1])
+
+    assert not app.exception
+    assert [call[0] for call in calls] == [
+        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+    ]
+    assert [item.value for item in app.success] == [
+        "2건을 넣고 첫 영상부터 시작했습니다. 실행 현황 화면에서 확인하세요."
+    ]
+
+
+def test_a_running_query_does_not_lock_the_enqueue(app_db, monkeypatch) -> None:
+    """질의가 돌고 있어도 넣을 수 있고, 몇 번째인지 알린다."""
+    record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+    registry = session.get_registry()
+    put_pending(app_db, "dQw4w9WgXcQ")
     registry.acquire_worker()
     registry.claim_next()
-
-    app = v1.AppTest.from_function(script)
+    select_videos(app, (make_entry(),), [0])
     app.run()
-    button_by(app, "새 영상 확인").click().run()
-    app.multiselect[0].select(questions.list_questions(app_db)[0]).run()
 
-    assert button_by(app, "요약").disabled is True
-    assert any("질의" in item.value for item in app.info)
+    assert app.button(key="channels_enqueue").disabled is False
+    assert (
+        "실행 중이거나 대기 중인 질의가 1건 있습니다. 넣으면 그 뒤에"
+        " 실행됩니다."
+    ) in [item.value for item in app.info]
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다 — 앞에 1건. 실행 현황 화면에서 확인하세요."
+    ]
+
+
+def test_a_paused_queue_still_takes_videos(app_db, monkeypatch) -> None:
+    """멈춘 대기열에도 넣고, 재개할 때까지 기다린다고 알린다."""
+    record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+    put_pending(app_db, "dQw4w9WgXcQ")
+    session.get_registry().pause("요청 한도를 초과했습니다.")
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert [item.value for item in app.warning] == [
+        "대기열이 멈춰 있습니다. 넣은 질의는 실행 현황에서 재개할 때까지"
+        " 기다립니다."
+    ]
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다. 대기열이 멈춰 있어 재개할 때까지 기다립니다."
+    ]
+
+
+def test_a_digest_does_not_lock_the_enqueue(app_db, monkeypatch) -> None:
+    """정리본을 작성 중이어도 넣고, 끝난 뒤 시작한다고 알린다."""
+    record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+    session.get_digest_registry().start()
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert (
+        "정리본을 작성 중입니다. 넣은 질의는 정리본이 끝난 뒤 시작합니다."
+    ) in [item.value for item in app.info]
+    assert [item.value for item in app.success] == [
+        "대기열에 넣었습니다. 정리본이 끝나면 시작합니다."
+    ]
+
+
+def test_enqueue_follows_the_auto_save_setting(app_db, monkeypatch) -> None:
+    """자동 저장은 질의 화면과 같은 설정에서 시작해 그 값으로 넣는다."""
+    set_outline_env(monkeypatch)
+    settings.set_auto_save(app_db, True)
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+
+    assert app.checkbox(key="channels_auto_save").value is True
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert [call[2] for call in calls] == [True]
+
+
+def test_enqueue_hands_the_shown_auto_save(app_db, monkeypatch) -> None:
+    """방금 끈 체크 값이 그대로 넘어가고 설정에도 남는다."""
+    set_outline_env(monkeypatch)
+    settings.set_auto_save(app_db, True)
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+    app.checkbox(key="channels_auto_save").uncheck().run()
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert [call[2] for call in calls] == [False]
+    assert settings.auto_save(app_db) is False
+
+
+def test_enqueue_without_outline_hands_no_auto_save(
+    app_db, monkeypatch
+) -> None:
+    """Outline 설정이 없으면 체크가 잠기고 자동 저장 없이 넣는다."""
+    settings.set_auto_save(app_db, True)
+    calls = record_enqueue(monkeypatch)
+    app = checked(app_db, monkeypatch, make_entry())
+
+    box = app.checkbox(key="channels_auto_save_locked")
+    assert box.disabled is True
+    assert box.value is False
+    click_enqueue(app, (make_entry(),), [0])
+
+    assert not app.exception
+    assert [call[2] for call in calls] == [False]
+    assert settings.auto_save(app_db) is True
+
+
+def run_handle(video_id, status):
+    """상태 칸을 시험할 실행 핸들 하나를 만든다."""
+    from notebooklm_st.services import runs
+
+    return runs.RunHandle(
+        run_id=f"run-{video_id}-{status}",
+        url=f"https://www.youtube.com/watch?v={video_id}",
+        video_id=video_id,
+        questions=(),
+        auto_save=False,
+        queued_at="2026-10-01T10:00:00",
+        started_at=None,
+        status=status,
+        progress=[],
+        result=None,
+        save=None,
+        error_message=None,
+        error_level=None,
+        finished_at=None,
+    )
+
+
+def test_status_label_names_each_state() -> None:
+    """실행 상태 넷을 표에 적을 말로 옮기고, 실행이 없으면 비운다."""
+    from notebooklm_st.pages import _channel_videos
+
+    labels = [
+        _channel_videos.status_label(
+            "TbkUKCm3CHQ", [run_handle("TbkUKCm3CHQ", s)]
+        )
+        for s in ("queued", "running", "done", "failed")
+    ]
+
+    assert labels == ["대기 중", "실행 중", "끝남", "실패"]
+    assert _channel_videos.status_label("TbkUKCm3CHQ", []) is None
+    assert (
+        _channel_videos.status_label(
+            "TbkUKCm3CHQ", [run_handle("aaaaaaaaaaa", "queued")]
+        )
+        is None
+    )
+
+
+def test_status_label_takes_the_first_handle_of_the_video() -> None:
+    """같은 영상의 실행이 여럿이면 목록에서 처음 만난 것을 쓴다.
+
+    ``list_all`` 은 진행 중 → 대기 → 최근 끝난 순서다. 다시 넣어 도는
+    영상이 지난 실패 때문에 "실패" 로 보이면 안 된다.
+    """
+    from notebooklm_st.pages import _channel_videos
+
+    handles = [
+        run_handle("TbkUKCm3CHQ", "running"),
+        run_handle("TbkUKCm3CHQ", "failed"),
+    ]
+
+    assert _channel_videos.status_label("TbkUKCm3CHQ", handles) == "실행 중"
+
+
+def test_widget_key_follows_the_list_and_the_generation() -> None:
+    """같은 목록·같은 넣기 횟수는 같은 key, 하나라도 바뀌면 다른 key."""
+    from notebooklm_st.pages import _channel_videos
+
+    first = (make_entry("aaaaaaaaaaa"), make_entry("bbbbbbbbbbb"))
+    other = (make_entry("aaaaaaaaaaa"),)
+
+    key = _channel_videos.widget_key(first, 0)
+
+    assert key == _channel_videos.widget_key(first, 0)
+    assert key.startswith("channels_videos_")
+    assert key != _channel_videos.widget_key(first, 1)
+    assert key != _channel_videos.widget_key(other, 0)
+
+
+def test_selected_entries_keep_the_list_order() -> None:
+    """고른 행은 누른 순서가 아니라 목록 순서로, 낡은 번호는 버린다."""
+    from notebooklm_st.pages import _channel_videos
+
+    entries = (
+        make_entry("aaaaaaaaaaa"),
+        make_entry("bbbbbbbbbbb"),
+        make_entry("ccccccccccc"),
+    )
+
+    picked = _channel_videos.selected_entries(entries, [2, 0, 9])
+
+    assert [entry.video_id for entry in picked] == [
+        "aaaaaaaaaaa",
+        "ccccccccccc",
+    ]
+
+
+def video_table():
+    """AppTest 진입점 — 신규 영상 둘로 표를 그리고 고른 것을 적는다."""
+    import datetime
+
+    import streamlit as st
+
+    from notebooklm_st.core import models
+    from notebooklm_st.pages import _channel_videos
+
+    entries = (
+        models.FeedEntry(
+            video_id="aaaaaaaaaaa",
+            title="둘째 영상",
+            published=datetime.datetime.fromisoformat(
+                "2026-09-26T01:00:00+00:00"
+            ),
+        ),
+        models.FeedEntry(
+            video_id="bbbbbbbbbbb",
+            title="첫째 영상",
+            published=datetime.datetime.fromisoformat(
+                "2026-09-25T01:00:00+00:00"
+            ),
+        ),
+    )
+    key = _channel_videos.widget_key(entries, 0)
+    picked = _channel_videos.render(entries, [], key)
+    st.markdown("고른 영상: " + ",".join(e.video_id for e in picked))
+
+
+def test_video_table_shows_the_entries(app_db) -> None:
+    """표 하나에 제목·업로드일·상태·영상 링크가 목록 순서로 나온다."""
+    app = v1.AppTest.from_function(video_table).run()
+
+    assert not app.exception
+    table = app.dataframe[0].value
+    assert list(table.columns) == ["title", "published", "status", "url"]
+    assert list(table["title"]) == ["둘째 영상", "첫째 영상"]
+    local = [
+        datetime.datetime.fromisoformat(value).astimezone()
+        for value in ("2026-09-26T01:00:00+00:00", "2026-09-25T01:00:00+00:00")
+    ]
+    assert list(table["published"]) == [
+        f"{moment:%Y-%m-%d %H:%M}" for moment in local
+    ]
+    assert table["status"].isna().all()
+    assert list(table["url"]) == [
+        "https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+    ]
+    assert app.caption[0].value == "행 왼쪽 칸을 눌러 고릅니다."
+
+
+def test_video_table_returns_the_picked_entries(app_db) -> None:
+    """표에서 고른 행의 영상을 목록 순서로 돌려준다."""
+    from notebooklm_st.pages import _channel_videos
+
+    app = v1.AppTest.from_function(video_table).run()
+    entries = (make_entry("aaaaaaaaaaa"), make_entry("bbbbbbbbbbb"))
+    app.session_state[_channel_videos.widget_key(entries, 0)] = {
+        "selection": {"rows": [1, 0], "columns": [], "cells": []}
+    }
+    app.run()
+
+    assert not app.exception
+    assert "고른 영상: aaaaaaaaaaa,bbbbbbbbbbb" in [
+        item.value for item in app.markdown
+    ]
