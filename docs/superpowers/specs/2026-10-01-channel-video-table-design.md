@@ -1,11 +1,13 @@
 # 채널 신규 영상 표 설계 — 골라서 한 번에 대기열에 넣기
 
 - **작성일**: 2026-10-01
-- **상태**: 설계 (구현 계획 수립 전)
-- **대상**: 신규 `pages/_channel_videos.py`·
+- **상태**: 구현 계획 수립 (계획:
+  `docs/superpowers/plans/2026-10-01-channel-video-table.md`)
+- **대상**: 신규 `pages/_channel_videos.py`·`pages/_channel_enqueue.py`·
   `components/auto_save_toggle.py`·`components/queue_notice.py`,
-  수정 `pages/_channel_check.py`·`pages/ask.py`·`README.md`·
-  `docs/ONBOARDING.md`. 러너·레지스트리(`services/runner.py`·
+  수정 `pages/_channel_check.py`·`pages/ask.py`·
+  `services/run_store.py`(독스트링 한 줄)·`README.md`·
+  `docs/ONBOARDING.md`. 러너·레지스트리의 동작(`services/runner.py`·
   `services/run_registry.py`·`services/run_store.py`·
   `services/runs.py`), 피드·채널 저장소(`services/channel_feed.py`·
   `services/channels.py`·`services/channel_lookup.py`), 신규 판정
@@ -28,10 +30,10 @@
 찾아와 눌러야 하고, 끝난 요약은 이력 화면에서 하나씩 저장해야 한다.
 
 질의 화면은 이미 대기열에 넣고 떠나는 흐름이다. 채널 화면만 "비어
-있을 때 한 건" 에 묶여 있다. 그렇게 둔 이유는 "사람이 한 건씩 시작하는
-흐름으로 충분하다" 였는데(`2026-09-23-channel-watch-design.md` 의 옛
-결정), 대기열이 생긴 뒤에는 그 제약이 지키는 것이 없다. NotebookLM 에는
-여전히 워커 하나가 한 번에 하나만 붙는다.
+있을 때 한 건" 에 묶여 있다. 채널 화면을 만들 때는 사람이 한 건씩
+시작하는 흐름으로 충분하다고 보았지만, 대기열이 생긴 뒤에는 그 제약이
+지키는 것이 없다. NotebookLM 에는 여전히 워커 하나가 한 번에 하나만
+붙는다.
 
 목록 모양도 문제다. 한 줄이 "제목 링크 · 시각" 과 버튼이라 머리글이
 없고 칸이 맞지 않는다.
@@ -79,7 +81,12 @@ is_blocked)` 는 대기열 끝에 넣고, 도는 워커가 없으면 띄운 뒤 
 반환한다. 여러 번 부르면 첫 호출이 워커를 띄우고 나머지는 줄만 선다.
 대기열 설계 §15 가 "채널 화면의 대기열·자동 저장 — 나중에 붙인다.
 러너 입구 `enqueue` 가 이미 `auto_save` 를 받는다" 로 남겨 둔 자리다.
-러너·레지스트리는 바꿀 것이 없다.
+러너·레지스트리의 동작은 바꿀 것이 없다.
+
+`run_store.RunStore.enqueue` 의 `auto_save` 독스트링은 "사람이 저장하는
+입구(채널 화면)는 기본값을 쓴다" 고 적는다. 소스에서 이 메서드를 부르는
+곳은 `runner.enqueue` 하나이고 늘 값을 넘긴다. 기본값을 쓰는 것은
+핸들을 만드는 테스트뿐이다.
 
 ### 2.3 표의 선택은 원래 목록의 위치로 온다
 
@@ -103,8 +110,9 @@ key 를 목록의 ID 구성에서 만들어, 목록이 바뀌면 새 표로 보�
 
 정리본 테스트의 `select_rows` 는 표의 key 에 `{"selection": {"rows":
 [...], "columns": [], "cells": []}}` 를 세션 상태로 넣어 선택을
-흉내 낸다. 선택은 바로 다음 실행 한 번에만 반영된다. 채널 화면
-테스트도 같은 방법을 쓴다.
+흉내 낸다. 선택은 바로 다음 실행 한 번에만 반영된다. AppTest 는 직전
+실행에서 잠긴 버튼을 누르지 못하게 막으므로, 한 번 골라 버튼을 풀고
+누르는 실행에서 다시 고른다. 채널 화면 테스트도 같은 방법을 쓴다.
 
 ### 2.6 레지스트리에서 영상의 상태를 읽을 수 있다
 
@@ -140,6 +148,29 @@ ID 가 바뀌어 다음 조작이 버려진다 — 그래서 이 모양이다.
 이후이고 아직 요약하지 않은 것이므로 표는 많아야 15행이다. 정렬·검색은
 덤이고, 고르기 쉬운 모양이 핵심이다.
 
+### 2.9 버튼 콜백에서 표 선택을 읽을 수 있다
+
+넣기 버튼의 `on_click` 콜백에서 `st.session_state[표 key]` 의
+`selection.rows` 로 표에서 고른 행을 읽는다. AppTest 는 주입한 값을
+읽을 뿐이라 증거가 되지 않으므로, 실제 브라우저(Streamlit 1.64,
+1920×950)에서 가짜 피드·가짜 파이프라인으로 확인했다(2026-10-01).
+
+- 셋째 줄을 먼저, 첫째 줄을 나중에 고르고 넣었더니 첫째 줄 영상이
+  먼저 시작하고 셋째 줄 영상이 대기로 섰다. 누른 순서가 아니라 목록
+  순서다.
+- 넣은 뒤 버튼이 `(0건)` 으로 돌아오고 체크가 모두 풀렸다.
+- 실행 중인 영상과 새 영상을 함께 고르자 새 영상만 들어가고 결과
+  끝에 "이미 대기 중이거나 실행 중인 1건은 뺐습니다." 가 붙었다.
+- 표의 상태 칸이 "실행 중"·"대기 중" 을 보였고, 대괄호가 든 제목이
+  글자 그대로 보였다.
+
+### 2.10 확인 탭 한 파일에 넣기까지 두면 300줄을 넘는다
+
+표를 `pages/_channel_videos.py` 로 떼어도, 넣기 버튼·콜백·결과
+문구를 `pages/_channel_check.py` 에 두면 323줄이 된다(예행 실측). 한
+파일이 300줄을 넘으면 쪼개는 것이 이 저장소의 규약이다
+(`.claude/rules/streamlit-implement.md` §2).
+
 ---
 
 ## 3. 설계 결정
@@ -154,7 +185,8 @@ ID 가 바뀌어 다음 조작이 버려진다 — 그래서 이 모양이다.
 | 자동 저장은 **질의 화면과 설정 하나** | 여러 건을 넣고 이력에서 하나씩 저장하는 수고를 없앤다. 설정이 둘이면 어느 쪽이 적용됐는지 헷갈린다(2.7) |
 | 상태 열은 **레지스트리에서 읽는다** | 세션 집합(`_STARTED_KEY`)은 취소·실패를 모른다. 레지스트리는 취소하면 빈칸으로, 실패하면 "실패" 로 돌아온다(2.6) |
 | 넣은 뒤 **선택을 비운다** | 같은 영상을 두 번 넣는 클릭을 막는다. 표 key 에 넣기 횟수를 섞어 새 표로 그린다(2.3) |
-| 넣는 일은 **버튼의 `on_click` 콜백** | 질의 화면과 같다. 콜백은 재실행 전에 돌아 바뀐 key·상태·결과 문구가 다음 그림에 바로 보인다. `st.rerun()` 이 필요 없다 |
+| 넣는 일은 **버튼의 `on_click` 콜백** | 질의 화면과 같다. 콜백은 재실행 전에 돌아 바뀐 key·상태·결과 문구가 다음 그림에 바로 보인다. `st.rerun()` 이 필요 없다(2.9) |
+| 넣기는 **`pages/_channel_enqueue.py`** 로 뗀다 | 확인 탭 한 파일이 300줄을 넘는다(2.10). 버튼·콜백·결과 문구는 넣기 한 덩어리라 함께 떼어도 경계가 깔끔하다 |
 | 공유할 것은 **`components/` 로 뗀다** | 자동 저장 체크와 대기열 안내를 두 화면이 똑같이 그려야 한다. 복사하면 문구가 어긋난다 |
 
 ### 3.1 기각한 안
@@ -177,6 +209,8 @@ ID 가 바뀌어 다음 조작이 버려진다 — 그래서 이 모양이다.
   "끝남" 을 보여 주므로 사람이 알아본다.
 - **잠금 유지(비어 있을 때만 넣기)** — 한 번에 여러 건을 넣는 순간 이미
   "비어 있을 때만" 이 아니다. 잠금을 남길 이유가 없다.
+- **넣기를 `_channel_videos.py` 에 합치기** — 표 모듈이 300줄 가까이로
+  커지고, "무엇을 보여 주나" 와 "무엇을 넣나" 가 한 파일에 섞인다.
 
 ---
 
@@ -186,15 +220,19 @@ ID 가 바뀌어 다음 조작이 버려진다 — 그래서 이 모양이다.
 | --- | --- |
 | `components/auto_save_toggle.py`(신규) | 자동 저장 체크. `ask.py` 의 `_render_auto_save`·`_remember_auto_save`·도움말을 옮기고 위젯 key 를 인자로 받는다 |
 | `components/queue_notice.py`(신규) | 대기열 안내 세 줄, 앞선 질의 수, 넣은 뒤 결과 문구. `ask.py` 의 `_count_ahead`·`_enqueued_text` 와 안내 세 줄을 옮긴다 |
-| `pages/_channel_videos.py`(신규) | 신규 영상 표. 행 만들기, 상태 라벨, 표 key. 고른 영상을 돌려준다 |
-| `pages/_channel_check.py` | `_render_found` 를 위 셋으로 다시 짠다. 넣기 콜백을 더하고 `_render_entry`·`_STARTED_KEY`·잠금 셋을 지운다 |
+| `pages/_channel_videos.py`(신규) | 신규 영상 표. 행 만들기, 상태 라벨, 고른 행을 영상으로 옮기기, 표 key. 고른 영상을 돌려준다 |
+| `pages/_channel_enqueue.py`(신규) | 넣기. 질문 안내·버튼·결과 문구를 그리고, 버튼 콜백이 고른 영상을 대기열에 넣는다. 넣기 횟수를 쥔다 |
+| `pages/_channel_check.py` | `_render_found` 를 위 넷으로 다시 짠다. `_render_entry`·`_STARTED_KEY`·`_blocked_reason` 을 지운다 |
 | `pages/ask.py` | 옮긴 함수를 부르게만 바꾼다. 동작·문구·위젯 key 는 그대로다 |
+| `services/run_store.py` | `enqueue` 독스트링의 `auto_save` 한 줄을 사실에 맞춘다(2.2) |
 
 ```
-pages/_channel_check.py ──┬─ pages/_channel_videos.py ── services/runs (상태 이름)
-                          ├─ components/auto_save_toggle.py ── services/settings·outline
+pages/_channel_check.py ──┬─ components/auto_save_toggle.py ── services/settings·outline
                           ├─ components/queue_notice.py ── services/runs
-                          └─ services/runner.enqueue
+                          ├─ pages/_channel_videos.py ── services/runs (상태 이름)
+                          └─ pages/_channel_enqueue.py ──┬─ pages/_channel_videos.py
+                                                          ├─ components/queue_notice.py
+                                                          └─ services/runner.enqueue
 pages/ask.py ─────────────┬─ components/auto_save_toggle.py
                           └─ components/queue_notice.py
 ```
@@ -211,9 +249,7 @@ HELP = (
 )
 
 
-def render(
-    connection: sqlite3.Connection, key: str, locked_key: str
-) -> bool:
+def render(connection: sqlite3.Connection, key: str, locked_key: str) -> bool:
     """자동 저장 체크를 그리고, 넣을 실행에 줄 값을 돌려준다."""
 ```
 
@@ -242,7 +278,7 @@ def render(registry: run_registry.RunRegistry) -> None:
 
 
 def enqueued_text(
-    added: int, skipped: int, ahead: int, paused: bool, digesting: bool
+    *, added: int, skipped: int, ahead: int, paused: bool, digesting: bool
 ) -> str:
     """넣은 뒤 한 번 보일 문구. ``added`` 는 1 이상이다."""
 ```
@@ -257,8 +293,9 @@ def enqueued_text(
 | 정리본 작성 중 | `st.info` 정리본을 작성 중입니다. 넣은 질의는 정리본이 끝난 뒤 시작합니다. |
 | 대기열 멈춤 | `st.warning` 대기열이 멈춰 있습니다. 넣은 질의는 실행 현황에서 재개할 때까지 기다립니다. |
 
-`enqueued_text` 는 위에서부터 처음 맞는 줄을 쓴다. `added` 가 1 이면
-**지금 질의 화면 문구와 글자 하나 다르지 않다.**
+`enqueued_text` 는 인자를 이름으로만 받는다. 숫자 셋과 참거짓 둘이
+자리로 섞이면 알아보기 어렵다. 위에서부터 처음 맞는 줄을 쓰고, `added`
+가 1 이면 **지금 질의 화면 문구와 글자 하나 다르지 않다.**
 
 | 조건 | `added == 1` | `added > 1` |
 | --- | --- | --- |
@@ -288,7 +325,13 @@ def render(
     handles: Sequence[runs.RunHandle],
     key: str,
 ) -> list[models.FeedEntry]:
-    """신규 영상 표를 그리고 고른 영상을 목록 순서로 돌려준다."""
+    """신규 영상 표를 그리고 고른 영상을 돌려준다."""
+
+
+def selected_entries(
+    entries: Sequence[models.FeedEntry], rows: Sequence[int]
+) -> list[models.FeedEntry]:
+    """고른 행 번호를 영상으로 옮긴다."""
 
 
 def widget_key(entries: Sequence[models.FeedEntry], generation: int) -> str:
@@ -298,7 +341,7 @@ def widget_key(entries: Sequence[models.FeedEntry], generation: int) -> str:
 def status_label(
     video_id: str, handles: Sequence[runs.RunHandle]
 ) -> str | None:
-    """그 영상의 실행 상태 라벨. 실행이 없으면 ``None``."""
+    """그 영상의 실행 상태를 표에 적을 말로 옮긴다."""
 ```
 
 - **표**: `st.dataframe(rows, key=key, on_select="rerun",
@@ -315,20 +358,21 @@ def status_label(
 
   표 칸은 일반 글자라 2.1 의 마크다운 이스케이프 문제가 없다. 긴
   제목은 칸에서 잘리고 칸에 올리면 전체가 보인다.
-- **돌려주는 값**: `[entries[row] for row in sorted(event.selection.rows)]`.
-  범위를 벗어난 번호는 버린다.
+- **`selected_entries`**: 번호를 정렬해 목록 순서로 영상을 돌려주고,
+  목록 밖의 번호는 버린다. `render` 와 넣기 콜백(8.2)이 함께 쓴다.
 - **`widget_key`**: `channels_videos_` + `sha256(",".join(video_ids) +
   f"#{generation}")` 앞 16자. 확인을 다시 눌러 목록이 바뀌거나 넣기를
-  한 번 하면 key 가 바뀌어 선택이 비워진다.
+  한 번 하면 key 가 바뀌어 선택이 비워진다. 상태 칸은 key 에 넣지
+  않는다 — 고르는 사이 실행이 끝나기만 해도 고른 것이 사라지면 안 된다.
 - **`status_label`**: `handles` 를 앞에서부터 보아 `video_id` 가 같은
   첫 핸들의 상태를 `STATUS_LABELS` 로 옮긴다. `handles` 는
   `registry.list_all()` 이다(2.6).
 
 ---
 
-## 8. `pages/_channel_check.py`
+## 8. `pages/_channel_check.py` · `pages/_channel_enqueue.py`
 
-### 8.1 그리는 순서
+### 8.1 그리는 순서 — `_channel_check._render_found`
 
 확인 결과(`_Checked`)가 지금 고른 채널의 것일 때만 그린다(지금과
 같다).
@@ -344,40 +388,57 @@ def status_label(
    `queue_notice.render(registry)`.
 5. `st.subheader(채널 이름)`.
 6. `_channel_videos.render(found.entries, registry.list_all(), key)`.
-   `key` 는 `widget_key(found.entries, 넣기 횟수)` 다. 넣기 횟수는
-   세션의 `_GENERATION_KEY` 이고 없으면 0 이다.
-7. 질문이 있으면:
-   - 질문을 하나도 고르지 않았으면 `st.info("질문을 하나 이상
-     고르세요.")`.
-   - 버튼 `선택한 영상 요약 (n건)`(`key="channels_enqueue"`). 고른
-     행이 없거나 질문을 고르지 않았으면 잠긴다. `on_click` 은 8.2.
-8. 세션에 결과 문구가 있으면 꺼내 한 번 보인다. 넣은 것이 있으면
-   `st.success`, 모두 건너뛰었으면 `st.info`.
+   `key` 는 `widget_key(found.entries, _channel_enqueue.generation())`
+   다.
+7. 질문이 있으면 `_channel_enqueue.render(registry, found.entries, key,
+   _QUESTIONS_KEY, selected, chosen, auto_save)`.
 
-### 8.2 넣기 콜백
+### 8.2 넣기 — `_channel_enqueue`
 
 ```python
-def _enqueue_selected(
+def generation() -> int:
+    """이 화면에서 넣기를 한 횟수. 표의 key 에 섞는다."""
+
+
+def render(
     registry: run_registry.RunRegistry,
     entries: tuple[models.FeedEntry, ...],
-    key: str,
+    table_key: str,
+    questions_key: str,
+    selected: list[models.FeedEntry],
+    chosen: list[models.Question],
     auto_save: bool,
 ) -> None:
-    """고른 영상을 목록 순서로 대기열에 넣고 표의 선택을 비운다."""
+    """질문 안내, 넣기 버튼, 넣은 뒤의 결과를 그린다."""
 ```
 
-1. 표 선택은 `st.session_state[key]` 의 `selection.rows`, 질문은
-   `st.session_state[_QUESTIONS_KEY]` 에서 **누른 순간의 값**을 읽는다.
-   고른 영상이나 질문이 없으면 아무것도 하지 않는다.
+**`generation`** 은 세션의 `channels_generation` 이고 없으면 0 이다.
+
+**`render`** 가 그리는 것:
+
+- 질문을 하나도 고르지 않았으면 `st.info("질문을 하나 이상
+  고르세요.")`.
+- 버튼 `선택한 영상 요약 (n건)`(`key="channels_enqueue"`). 고른 행이
+  없거나 질문을 고르지 않았으면 잠긴다. `on_click` 은 아래 콜백이다.
+- 세션(`channels_enqueued`)에 결과가 있으면 꺼내 한 번 보인다. 넣은
+  것이 있으면 `st.success`, 모두 건너뛰었으면 `st.info`.
+
+**넣기 콜백** `_enqueue_selected(registry, entries, table_key,
+questions_key, auto_save)`:
+
+1. 표 선택은 `st.session_state[table_key]` 의 `selection.rows`, 질문은
+   `st.session_state[questions_key]` 에서 **누른 순간의 값**을 읽는다
+   (2.9). 고른 영상이나 질문이 없으면 아무것도 하지 않는다.
 2. 넣기 전에 `queue_notice.count_ahead`·`paused_reason()`·정리본
    `is_running()` 을 한 번 읽어 둔다. 결과 문구가 "넣기 직전" 을
    말하게 한다(질의 화면과 같다).
-3. 고른 영상을 목록 순서로 돈다. `registry.is_pending(video_id)` 이면
-   건너뛰고 센다. 아니면 `runner.enqueue(registry,
-   youtube.watch_url(video_id), 질문들, store.default_db_path(),
-   auto_save=auto_save, is_blocked=digests.is_running)`.
-4. 넣기 횟수(`_GENERATION_KEY`)를 1 올려 다음 그림의 표 key 를 바꾼다.
-5. 결과 문구를 세션(`_ENQUEUED_KEY`)에 적는다. 하나라도 넣었으면
+3. `_channel_videos.selected_entries` 로 고른 영상을 목록 순서로 돈다.
+   `registry.is_pending(video_id)` 이면 건너뛴다. 아니면
+   `runner.enqueue(registry, youtube.watch_url(video_id), 질문들,
+   store.default_db_path(), auto_save=auto_save,
+   is_blocked=digests.is_running)`.
+4. 넣기 횟수를 1 올려 다음 그림의 표 key 를 바꾼다.
+5. 결과를 세션에 적는다. 하나라도 넣었으면
    `queue_notice.enqueued_text(...)`, 모두 건너뛰었으면 "고른 영상은
    모두 이미 대기 중이거나 실행 중입니다." 다.
 
@@ -391,7 +452,8 @@ def _enqueue_selected(
 - `_render_entry` — 표가 대신한다.
 - `_STARTED_KEY` 와 `_start_check` 의 초기화 — 상태 열이 대신한다.
 - `_blocked_reason` — 잠금 셋(실행·대기 중, 멈춤, 정리본)은 안내로
-  바뀌고, 남는 "질문을 하나 이상 고르세요" 는 8.1 의 7번이 그린다.
+  바뀌고, 남는 "질문을 하나 이상 고르세요" 는 `_channel_enqueue.render`
+  가 그린다.
 
 ---
 
@@ -403,8 +465,8 @@ def _enqueue_selected(
 - `_render_queue_notices` 는 `queue_notice.render(registry)` 를 부른 뒤
   같은 영상 확인만 한다.
 - `_count_ahead`·`_enqueued_text` 를 지우고 `queue_notice.count_ahead`·
-  `queue_notice.enqueued_text(1, 0, ahead, paused, digesting)` 를
-  부른다.
+  `queue_notice.enqueued_text(added=1, skipped=0, ahead=…, paused=…,
+  digesting=…)` 를 부른다.
 
 질의 화면 테스트(`tests/pages/test_ask.py`)는 이 파일의 내부 이름을
 쓰지 않는다. **손대지 않고 통과하는 것**이 옮기기가 동작을 바꾸지
@@ -436,41 +498,51 @@ def _enqueue_selected(
 ## 11. 테스트
 
 외부 호출은 지금처럼 가짜로 막는다. 피드는 `check_feed`, 러너는
-`monkeypatch` 로 `_channel_check.runner.enqueue` 를 바꾼다.
+`monkeypatch` 로 `_channel_enqueue.runner.enqueue` 를 바꾼다. 가짜
+러너는 스레드를 띄우지 않고 레지스트리에 대기로만 넣어, 같은 영상
+판정과 상태 칸이 실제처럼 돌게 한다.
 
 | 파일 | 내용 |
 | --- | --- |
 | `tests/pages/test_ask.py` | **바꾸지 않는다.** 그대로 통과해야 한다 |
-| `tests/test_components.py` | `queue_notice.enqueued_text` — `added == 1` 의 네 문구가 지금 질의 화면 문구와 같음 · `added > 1` 의 네 문구 · `skipped` 꼬리 · 위에서부터 처음 맞는 줄 |
+| `tests/test_components.py` | `auto_save_toggle` — key 가 다른 두 화면이 설정 하나를 쓴다 · `queue_notice.enqueued_text` — `added == 1` 의 네 문구가 지금 질의 화면 문구와 같음 · `added > 1` 의 네 문구 · `skipped` 꼬리 · 위에서부터 처음 맞는 줄 · `queue_notice.render` — 아무것도 없으면 안내도 없다 |
 | `tests/pages/test_channels.py` | 아래 |
 
-`test_channels.py` 는 정리본의 `select_rows` 처럼 표 key 에 선택을
-주입하는 `select_videos(app, entries, rows, generation=0)` 를 둔다.
+`test_channels.py` 는 정리본의 `select_rows`·`click_start` 처럼 표
+key 에 선택을 주입하는 `select_videos(app, entries, rows,
+generation=0)` 와, 골라 버튼을 푼 뒤 누르는 `click_enqueue(app,
+entries, rows)` 를 둔다(2.5).
 
-- **표**: 확인하면 표 하나에 신규가 행으로 나온다 · 제목·업로드일·
-  링크 값 · 대기열에 있는 영상은 상태 "대기 중".
+- **표**: 확인하면 채널 이름 아래 표 하나에 신규가 행으로 나온다 ·
+  제목·업로드일·상태·링크 값과 열 순서 · 캡션 · 대기열에 있는 영상은
+  상태 "대기 중".
 - **순수 함수**: `status_label` — 없음·대기·실행·끝남·실패, 같은
   영상이 여럿이면 `list_all` 의 첫 핸들 · `widget_key` — 같은 목록과
-  횟수는 같은 key, 목록이나 횟수가 바뀌면 다른 key.
-- **넣기**: 두 건을 고르면 목록 순서로 두 번 `enqueue` · URL·질문이
-  넘어간다 · 자동 저장 체크 값이 `auto_save` 로 간다(켬·끔) · Outline
-  설정이 없으면 `auto_save=False` 이고 체크가 잠긴다 · 넣은 뒤 결과
-  문구 · 넣은 뒤 표 key 가 바뀐다.
+  횟수는 같은 key, 목록이나 횟수가 바뀌면 다른 key ·
+  `selected_entries` — 목록 순서, 목록 밖 번호는 버림.
+- **넣기**: 두 건을 거꾸로 골라도 목록 순서로 두 번 `enqueue` ·
+  URL·질문이 넘어간다 · 자동 저장 체크 값이 `auto_save` 로 간다(DB
+  값에서 시작, 끈 값) · Outline 설정이 없으면 `auto_save=False` 이고
+  체크가 잠긴다 · 넣은 뒤 결과 문구 · 넣기 전 key 로 다시 고른 선택이
+  새 표에 붙지 않는다.
 - **건너뛰기**: 대기 중인 영상은 건너뛰고 꼬리 문구 · 전부 건너뛰면
   `enqueue` 를 부르지 않고 안내.
-- **잠그지 않음**: 앞선 질의가 있어도, 대기열이 멈춰도, 정리본을
-  작성 중이어도 넣는다. 지금의 잠금 테스트 세 건
+- **잠그지 않음**: 질의가 실행 중이어도, 대기열이 멈춰도, 정리본을
+  작성 중이어도 넣고 안내한다. 지금의 잠금 테스트 세 건
   (`test_a_queued_query_blocks_the_summary`·
   `test_a_paused_queue_blocks_the_summary`·
   `test_a_running_query_blocks_the_summary`)을 이 기대로 뒤집는다.
-- **질문**: 질문이 없으면 버튼이 없다 · 질문을 고르지 않으면 버튼이
-  잠긴다.
+- **질문**: 질문이 없으면 표만 있고 체크·버튼이 없다 · 질문이나 행을
+  고르지 않으면 버튼이 잠긴다.
 - 지금의 `test_summary_hands_the_video_to_the_runner`·
-  `test_summary_never_auto_saves` 는 위 넣기 테스트로 바뀐다. 뒤의 것은
-  "자동 저장 설정을 따른다" 로 기대가 뒤집힌다.
+  `test_summary_never_auto_saves`·`test_no_questions_blocks_the_summary`
+  는 위 테스트로 바뀐다. 마크다운에서 제목을 찾던 두 테스트
+  (`test_checking_lists_new_videos`·
+  `test_switching_the_target_channel_clears_the_result`)는 표에서
+  찾는다.
 
 AppTest 는 표를 클릭하지 못하므로 클릭 선택, 정렬 뒤 선택, 링크 열,
-넣은 뒤 선택이 비는 모습은 **실제 브라우저에서 확인한다**(→ 13).
+넣은 뒤 선택이 비는 모습은 **실제 브라우저에서 확인한다**(2.9).
 
 ---
 
@@ -480,11 +552,13 @@ AppTest 는 표를 클릭하지 못하므로 클릭 선택, 정렬 뒤 선택, �
 
 | 파일 | 변경 |
 | --- | --- |
-| `src/notebooklm_st/components/auto_save_toggle.py` | 신규 |
-| `src/notebooklm_st/components/queue_notice.py` | 신규 |
-| `src/notebooklm_st/pages/_channel_videos.py` | 신규 |
-| `src/notebooklm_st/pages/_channel_check.py` | 8 |
+| `src/notebooklm_st/components/auto_save_toggle.py` | 신규(5) |
+| `src/notebooklm_st/components/queue_notice.py` | 신규(6) |
+| `src/notebooklm_st/pages/_channel_videos.py` | 신규(7) |
+| `src/notebooklm_st/pages/_channel_enqueue.py` | 신규(8.2) |
+| `src/notebooklm_st/pages/_channel_check.py` | 8.1·8.3 |
 | `src/notebooklm_st/pages/ask.py` | 9 |
+| `src/notebooklm_st/services/run_store.py` | 독스트링 한 줄(2.2) |
 | `tests/test_components.py` | 11 |
 | `tests/pages/test_channels.py` | 11 |
 
@@ -492,29 +566,34 @@ AppTest 는 표를 클릭하지 못하므로 클릭 선택, 정렬 뒤 선택, �
 적지 않는다.
 
 - `2026-09-23-channel-watch-design.md` — 머리의 대상(대기열이 채널
-  화면에 더하는 것), §1.1 "여러 건을 한 번에 돌리지 않는다", §3 "실행은
-  한 건씩", §3.1 "여러 건 대기열" 기각, §10 화면 그림, §10.3 신규 목록과
-  실행, §11 엣지의 잠금 줄, §12 테스트의 "실행 중 잠금", §13 파일, §15
-  범위 밖의 "여러 건 한 번에 요약" 이 틀리게 된다.
+  화면에 더하는 것), §1 의 "바로 요약을 시작한다", §1.1 "여러 건을 한
+  번에 돌리지 않는다", §3 "실행은 한 건씩", §3.1 "여러 건 대기열" 기각,
+  §4 구조 그림, §10 화면 그림, §10.3 신규 목록과 실행, §11 엣지의 질문·
+  잠금 줄, §12 테스트의 "실행 중 잠금"과 AppTest 메모, §13 의 다른 설계
+  가리키기, §15 범위 밖의 "여러 건 한 번에 요약"·"자동 저장" 이 틀리게
+  된다.
 - `2026-09-30-run-queue-and-auto-save-design.md` — 머리의 범위
-  ("채널 화면의 요약 버튼은 … 동작은 그대로다"), §2.1 가드 표의 채널
-  줄, §3.1 "채널 화면의 요약도 대기열·자동 저장에 태우기" 기각, §6.3
-  "채널 화면은 `auto_save=False`", §8.5 가드 표의 채널 줄과 멈춤 안내,
-  §13 "채널 화면이 대기열·자동 저장을 쓰지 않는다", §15 범위 밖의
-  "채널 화면의 대기열·자동 저장" 이 틀리게 된다.
-- `README.md` — 채널 사용법 줄(고른 영상을 대기열에, 자동 저장 체크).
-- `docs/ONBOARDING.md` — 모듈 표에 새 모듈 셋.
+  ("채널 화면의 요약 버튼은 … 동작은 그대로다"), §3.1 "채널 화면의
+  요약도 대기열·자동 저장에 태우기" 기각, §6.3 "채널 화면은
+  `auto_save=False`", §8.5 가드 표의 채널 줄과 멈춤 안내, §13
+  "채널 화면이 대기열·자동 저장을 쓰지 않는다", §15 범위 밖의 "채널
+  화면의 대기열·자동 저장" 이 틀리게 된다. §2.1 의 가드 표는 대기열을
+  설계할 때 조사한 사실이라 그대로 둔다.
+- `README.md` — 채널 사용법 줄(고른 영상을 대기열에, 자동 저장 체크)과
+  Outline 설정이 없을 때 잠기는 체크.
+- `docs/ONBOARDING.md` — UI 레이어 표에 공유 컴포넌트 둘과 채널 화면.
 
 지난 구현 계획(`docs/superpowers/plans/`)은 그때의 기록이라 고치지
 않는다.
 
 **구현 순서**(커밋 단위)
 
-1. 공유 컴포넌트 두 개 떼어내기 — 질의 화면 동작 불변, `test_ask.py`
-   그대로 통과.
-2. 신규 영상 표 모듈과 그 순수 함수 테스트.
-3. 채널 화면에서 여러 건 넣기와 자동 저장.
-4. 문서.
+1. 자동 저장 체크를 공유 컴포넌트로 떼어내기 — 질의 화면 동작 불변.
+2. 대기열 안내를 공유 컴포넌트로 떼어내기 — 질의 화면 동작 불변,
+   여러 건 문구 추가.
+3. 신규 영상 표 모듈과 그 순수 함수 테스트.
+4. 채널 화면에서 여러 건 넣기와 자동 저장.
+5. 문서.
 
 ---
 
@@ -522,8 +601,7 @@ AppTest 는 표를 클릭하지 못하므로 클릭 선택, 정렬 뒤 선택, �
 
 | 가정 | 확인 방법 | 틀리면 |
 | --- | --- | --- |
-| 버튼 콜백에서 `st.session_state[key]` 로 표 선택을 읽을 수 있다 | AppTest 는 주입한 값을 읽으므로 증거가 되지 않는다. 실제 브라우저에서 행을 고르고 버튼을 눌러 본다 | 콜백 대신 `if st.button(...)` 으로 받아 `render` 가 돌려준 선택을 쓰고, 넣기 횟수를 올린 뒤 `st.rerun()` 한다 |
-| 표 key 가 바뀌면 이전 key 의 선택 상태가 남아 쌓이지 않는다 | 브라우저에서 여러 번 넣으며 세션 상태를 본다 | 넣을 때 이전 key 를 세션에서 지운다 |
+| 표 key 가 바뀌면 이전 key 의 선택 상태가 세션에 쌓이지 않는다 | 그려지지 않은 위젯의 상태는 Streamlit 이 다음 실행에서 버린다. 브라우저에서 여러 번 넣으며 세션 상태를 본다 | 넣을 때 이전 key 를 세션에서 지운다 |
 | 진행 중 실행을 숨기면 같은 영상을 다시 넣을 수 있다(2.6) | 질의 화면과 같은 한계로 받아들인다 | 고치려면 `is_pending` 이 숨긴 실행도 봐야 한다. 이번 범위가 아니다 |
 
 ---
