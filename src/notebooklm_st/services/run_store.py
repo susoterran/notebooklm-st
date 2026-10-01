@@ -38,8 +38,8 @@ class RunStore:
             url: 질의할 영상 URL.
             video_id: URL 에서 뽑은 영상 ID.
             questions: 물어볼 질문들.
-            auto_save: 답변을 받자마자 Outline 에 올릴지. 사람이
-                저장하는 입구(채널 화면)는 기본값을 쓴다.
+            auto_save: 답변을 받자마자 Outline 에 올릴지. 러너는 늘
+                값을 넘긴다. 기본값은 테스트가 핸들을 만들 때 쓴다.
 
         Returns:
             넣은 핸들. 보관소가 쥔 것과 같은 객체가 아니라 호출자가
