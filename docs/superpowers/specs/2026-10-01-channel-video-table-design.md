@@ -1,7 +1,7 @@
 # 채널 신규 영상 표 설계 — 골라서 한 번에 대기열에 넣기
 
 - **작성일**: 2026-10-01
-- **상태**: 구현 계획 수립 (계획:
+- **상태**: 구현 완료 (2026-10-01, 계획:
   `docs/superpowers/plans/2026-10-01-channel-video-table.md`)
 - **대상**: 신규 `pages/_channel_videos.py`·`pages/_channel_enqueue.py`·
   `components/auto_save_toggle.py`·`components/queue_notice.py`,
