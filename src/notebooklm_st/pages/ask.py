@@ -3,9 +3,9 @@
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.components import auto_save_toggle
+from notebooklm_st.components import auto_save_toggle, queue_notice
 from notebooklm_st.core import youtube
-from notebooklm_st.services import questions, run_registry, runner, runs, store
+from notebooklm_st.services import questions, run_registry, runner, store
 
 _URL_KEY = "ask_url"
 _SELECTED_KEY = "ask_selected"
@@ -76,21 +76,7 @@ def _render_queue_notices(
     Returns:
         그 영상이 이미 대기 중이거나 실행 중이면 참. 버튼을 잠근다.
     """
-    ahead = _count_ahead(registry)
-    if ahead > 0:
-        st.info(
-            f"실행 중이거나 대기 중인 질의가 {ahead}건 있습니다."
-            " 넣으면 그 뒤에 실행됩니다."
-        )
-    if session.get_digest_registry().is_running():
-        st.info(
-            "정리본을 작성 중입니다. 넣은 질의는 정리본이 끝난 뒤 시작합니다."
-        )
-    if registry.paused_reason() is not None:
-        st.warning(
-            "대기열이 멈춰 있습니다. 넣은 질의는 실행 현황에서 재개할"
-            " 때까지 기다립니다."
-        )
+    queue_notice.render(registry)
     duplicate = video_id is not None and registry.is_pending(video_id)
     if duplicate:
         st.info("이 영상은 이미 대기 중이거나 실행 중입니다.")
@@ -115,7 +101,7 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
     video_id = youtube.extract_video_id(url)
     if video_id is None or not selected or registry.is_pending(video_id):
         return
-    ahead = _count_ahead(registry)
+    ahead = queue_notice.count_ahead(registry)
     paused = registry.paused_reason() is not None
     digests = session.get_digest_registry()
     digesting = digests.is_running()
@@ -128,36 +114,6 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
         is_blocked=digests.is_running,
     )
     st.session_state[_URL_KEY] = ""
-    st.session_state[_ENQUEUED_KEY] = _enqueued_text(ahead, paused, digesting)
-
-
-def _count_ahead(registry: run_registry.RunRegistry) -> int:
-    """지금 넣으면 앞에 설 질의 수. 멈춤과 상관없이 센다."""
-    return sum(
-        1 for handle in registry.list_all() if handle.status in runs.PENDING
+    st.session_state[_ENQUEUED_KEY] = queue_notice.enqueued_text(
+        added=1, skipped=0, ahead=ahead, paused=paused, digesting=digesting
     )
-
-
-def _enqueued_text(ahead: int, paused: bool, digesting: bool) -> str:
-    """넣은 뒤 보일 문구. 위에서부터 처음 맞는 것을 쓴다.
-
-    Args:
-        ahead: 넣기 직전에 센 앞선 질의 수.
-        paused: 대기열이 멈춰 있었는가.
-        digesting: 정리본을 작성 중이었는가.
-
-    Returns:
-        화면에 한 번 보일 문구.
-    """
-    if paused:
-        return (
-            "대기열에 넣었습니다. 대기열이 멈춰 있어 재개할 때까지 기다립니다."
-        )
-    if ahead > 0:
-        return (
-            f"대기열에 넣었습니다 — 앞에 {ahead}건. 실행 현황 화면에서"
-            " 확인하세요."
-        )
-    if digesting:
-        return "대기열에 넣었습니다. 정리본이 끝나면 시작합니다."
-    return "실행을 시작했습니다. 실행 현황 화면에서 확인하세요."

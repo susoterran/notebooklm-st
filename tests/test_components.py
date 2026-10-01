@@ -897,3 +897,77 @@ def test_auto_save_toggle_shares_one_setting_across_keys(
     assert settings.auto_save(app_db) is True
     other = v1.AppTest.from_function(second).run()
     assert other.checkbox(key="second_auto_save").value is True
+
+
+def test_enqueued_text_for_one_keeps_the_ask_page_words() -> None:
+    """한 건이면 질의 화면이 써 오던 문구와 글자 하나 다르지 않다.
+
+    위에서부터 처음 맞는 줄을 쓴다 — 멈춤이 앞선 질의보다, 앞선
+    질의가 정리본보다 먼저다.
+    """
+    from notebooklm_st.components import queue_notice
+
+    assert queue_notice.enqueued_text(
+        added=1, skipped=0, ahead=2, paused=True, digesting=True
+    ) == ("대기열에 넣었습니다. 대기열이 멈춰 있어 재개할 때까지 기다립니다.")
+    assert queue_notice.enqueued_text(
+        added=1, skipped=0, ahead=2, paused=False, digesting=True
+    ) == ("대기열에 넣었습니다 — 앞에 2건. 실행 현황 화면에서 확인하세요.")
+    assert queue_notice.enqueued_text(
+        added=1, skipped=0, ahead=0, paused=False, digesting=True
+    ) == ("대기열에 넣었습니다. 정리본이 끝나면 시작합니다.")
+    assert queue_notice.enqueued_text(
+        added=1, skipped=0, ahead=0, paused=False, digesting=False
+    ) == ("실행을 시작했습니다. 실행 현황 화면에서 확인하세요.")
+
+
+def test_enqueued_text_counts_many() -> None:
+    """여러 건이면 문구 앞에 건수를 적는다."""
+    from notebooklm_st.components import queue_notice
+
+    assert queue_notice.enqueued_text(
+        added=3, skipped=0, ahead=1, paused=True, digesting=False
+    ) == (
+        "3건을 대기열에 넣었습니다. 대기열이 멈춰 있어 재개할 때까지"
+        " 기다립니다."
+    )
+    assert queue_notice.enqueued_text(
+        added=3, skipped=0, ahead=1, paused=False, digesting=False
+    ) == (
+        "3건을 대기열에 넣었습니다 — 앞에 1건. 실행 현황 화면에서 확인하세요."
+    )
+    assert queue_notice.enqueued_text(
+        added=3, skipped=0, ahead=0, paused=False, digesting=True
+    ) == ("3건을 대기열에 넣었습니다. 정리본이 끝나면 시작합니다.")
+    assert queue_notice.enqueued_text(
+        added=3, skipped=0, ahead=0, paused=False, digesting=False
+    ) == ("3건을 넣고 첫 영상부터 시작했습니다. 실행 현황 화면에서 확인하세요.")
+
+
+def test_enqueued_text_adds_the_skipped_tail() -> None:
+    """뺀 영상이 있으면 문구 끝에 그 수를 붙인다."""
+    from notebooklm_st.components import queue_notice
+
+    assert queue_notice.enqueued_text(
+        added=2, skipped=1, ahead=0, paused=False, digesting=False
+    ) == (
+        "2건을 넣고 첫 영상부터 시작했습니다. 실행 현황 화면에서"
+        " 확인하세요. 이미 대기 중이거나 실행 중인 1건은 뺐습니다."
+    )
+
+
+def test_queue_notice_is_silent_when_nothing_waits(app_db) -> None:
+    """앞선 질의도 정리본도 멈춤도 없으면 아무 안내도 그리지 않는다."""
+
+    def script():
+        """AppTest 진입점 — 빈 레지스트리로 안내를 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.components import queue_notice
+
+        queue_notice.render(session.get_registry())
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert len(app.info) == 0
+    assert len(app.warning) == 0
