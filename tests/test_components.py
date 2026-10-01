@@ -8,7 +8,7 @@ from streamlit.testing import v1
 from notebooklm_st import session
 from notebooklm_st.components import run_progress
 from notebooklm_st.core import errors, models
-from notebooklm_st.services import auth, runs, store
+from notebooklm_st.services import auth, outline, runs, settings, store
 
 
 def test_answer_view_renders_success_and_failure() -> None:
@@ -858,3 +858,42 @@ def test_render_row_links_the_raw_url_without_a_video_id() -> None:
     assert not app.exception
     text = " ".join(element.value for element in app.markdown)
     assert "(https://example.com/v)" in text
+
+
+def test_auto_save_toggle_shares_one_setting_across_keys(
+    app_db, monkeypatch
+) -> None:
+    """두 화면이 위젯 key 를 달리 해도 자동 저장 설정은 하나다.
+
+    한 화면에서 켜면 DB 에 남고, 다른 key 로 처음 그린 체크도 켜진
+    채로 시작한다.
+    """
+    monkeypatch.setenv(outline.URL_ENV_VAR, "http://192.168.0.10:3000")
+    monkeypatch.setenv(outline.TOKEN_ENV_VAR, "ol_secret")
+    monkeypatch.setenv(outline.COLLECTION_ENV_VAR, "col-1")
+
+    def first():
+        """AppTest 진입점 — 첫 화면의 key 로 체크를 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.components import auto_save_toggle
+
+        auto_save_toggle.render(
+            session.get_connection(), "first_auto_save", "first_locked"
+        )
+
+    def second():
+        """AppTest 진입점 — 다른 화면의 key 로 체크를 그린다."""
+        from notebooklm_st import session
+        from notebooklm_st.components import auto_save_toggle
+
+        auto_save_toggle.render(
+            session.get_connection(), "second_auto_save", "second_locked"
+        )
+
+    app = v1.AppTest.from_function(first).run()
+    app.checkbox(key="first_auto_save").check().run()
+
+    assert not app.exception
+    assert settings.auto_save(app_db) is True
+    other = v1.AppTest.from_function(second).run()
+    assert other.checkbox(key="second_auto_save").value is True
