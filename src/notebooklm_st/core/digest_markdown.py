@@ -7,7 +7,7 @@
 from notebooklm_st.core import markdown_export, models
 
 _NESTED_INDENT = "    "
-"""하위 리스트 항목 앞에 붙일 들여쓰기.
+"""하위 목록 항목 앞에 붙일 들여쓰기.
 
 CommonMark 는 부모 항목의 내용 시작(``- `` 뒤, 2칸)만큼만 들여 써도
 하위 리스트로 읽지만, 4칸을 요구하는 파서도 있어 4칸을 쓴다.
@@ -49,7 +49,8 @@ def _metadata_block(draft: models.DigestDraft) -> str:
     문서를 읽는 사람에게 필요한 정보가 아니다.
 
     출처도 메타데이터 항목 하나다. 재료가 된 요약본들을 ``- 출처:``
-    아래 하위 리스트로 적는다.
+    아래 순번 있는 하위 목록으로 적는다. 번호는 1 부터다 — CommonMark
+    에서 문단 바로 뒤의 순번 목록은 1 로 시작해야 목록으로 읽힌다.
 
     Args:
         draft: 저장할 초안.
@@ -62,12 +63,15 @@ def _metadata_block(draft: models.DigestDraft) -> str:
         f"- 작성일자: {draft.created_on}",
         "- 출처:",
     ]
-    lines.extend(_NESTED_INDENT + _source_line(run) for run in draft.sources)
+    lines.extend(
+        f"{_NESTED_INDENT}{number}. {_source_link(run)}"
+        for number, run in enumerate(draft.sources, start=1)
+    )
     return "\n".join(lines)
 
 
-def _source_line(run: models.RunSummary) -> str:
-    """요약본 하나를 출처 한 줄로 적는다.
+def _source_link(run: models.RunSummary) -> str:
+    """요약본 하나를 출처 링크로 적는다.
 
     글자는 위키에 붙은 문서 제목이다. 정리본을 읽는 사람이 원본을
     찾을 때 보는 이름이 그것이기 때문이다.
@@ -81,9 +85,9 @@ def _source_line(run: models.RunSummary) -> str:
         run: 재료가 된 실행.
 
     Returns:
-        영상으로 이어지는 마크다운 링크 항목.
+        영상으로 이어지는 ``[글](URL)`` 꼴의 마크다운 링크.
     """
     label = markdown_export.one_line(
         run.outline_title or run.title or run.video_id
     )
-    return f"- [{label}]({markdown_export.source_url(run)})"
+    return f"[{label}]({markdown_export.source_url(run)})"

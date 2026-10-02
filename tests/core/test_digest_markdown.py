@@ -66,8 +66,8 @@ def test_metadata_lists_kind_date_and_sources() -> None:
         "- 종류: 정리본",
         "- 작성일자: 2026-09-23",
         "- 출처:",
-        f"    - [AI 에이전트의 미래]({WATCH_URL})",
-        "    - [두 번째 글](https://www.youtube.com/watch?v=9bZkp7q19f0)",
+        f"    1. [AI 에이전트의 미래]({WATCH_URL})",
+        "    2. [두 번째 글](https://www.youtube.com/watch?v=9bZkp7q19f0)",
         "",
     ]
 
@@ -94,7 +94,7 @@ def test_source_without_a_video_id_uses_the_stored_url() -> None:
 
     lines = digest_markdown.to_markdown(draft).splitlines()
 
-    assert "    - [AI 에이전트의 미래](https://youtu.be/old)" in lines
+    assert "    1. [AI 에이전트의 미래](https://youtu.be/old)" in lines
 
 
 def test_instruction_is_not_written() -> None:
@@ -111,7 +111,7 @@ def test_source_uses_video_title_when_no_outline() -> None:
 
     lines = digest_markdown.to_markdown(draft).splitlines()
 
-    assert f"    - [영상 제목]({WATCH_URL})" in lines
+    assert f"    1. [영상 제목]({WATCH_URL})" in lines
 
 
 def test_source_falls_back_to_the_video_id() -> None:
@@ -120,7 +120,7 @@ def test_source_falls_back_to_the_video_id() -> None:
 
     lines = digest_markdown.to_markdown(draft).splitlines()
 
-    assert f"    - [dQw4w9WgXcQ]({WATCH_URL})" in lines
+    assert f"    1. [dQw4w9WgXcQ]({WATCH_URL})" in lines
 
 
 def test_rule_is_preceded_by_a_blank_line() -> None:
