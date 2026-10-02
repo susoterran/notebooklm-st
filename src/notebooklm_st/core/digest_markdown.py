@@ -39,6 +39,9 @@ def _metadata_block(draft: models.DigestDraft) -> str:
     그대로 실으면 Outline 이 여러 줄을 머리글 하나로 뭉쳐 버린다.
     요약본에서 실물로 확인한 함정이다(→ ``markdown_export``).
 
+    정리 지시는 적지 않는다. 지시는 질문 관리가 가진 작업용 글이지
+    문서를 읽는 사람에게 필요한 정보가 아니다.
+
     Args:
         draft: 저장할 초안.
 
@@ -48,8 +51,7 @@ def _metadata_block(draft: models.DigestDraft) -> str:
     return "\n".join(
         [
             "- 종류: 정리본",
-            f"- 만든 날: {draft.created_on}",
-            f"- 정리 지시: {markdown_export.one_line(draft.instruction)}",
+            f"- 작성일자: {draft.created_on}",
         ]
     )
 

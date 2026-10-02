@@ -17,15 +17,7 @@ SUMMARY = (
     "세 가지다.\n"
 )
 
-DIGEST = (
-    "- 종류: 정리본\n"
-    "- 만든 날: 2026-09-23\n"
-    "- 정리 지시: 공통점을 뽑아라\n"
-    "\n"
-    "---\n"
-    "\n"
-    "## 정리\n"
-)
+DIGEST = "- 종류: 정리본\n- 작성일자: 2026-09-23\n\n---\n\n## 정리\n"
 
 
 def test_finds_the_source_url_in_the_head_block() -> None:
@@ -58,7 +50,7 @@ def test_searches_the_whole_text_without_a_rule() -> None:
 
 
 def test_a_digest_body_is_not_a_summary() -> None:
-    """정리본 본문은 만든 날·정리 지시만 있고 영상 URL 이 없다."""
+    """정리본 본문은 종류·작성일자만 있고 영상 URL 이 없다."""
     assert outline_import.find_source_url(DIGEST) is None
 
 
@@ -191,7 +183,7 @@ def test_metadata_keeps_the_one_line_it_found() -> None:
 
 
 def test_a_digest_body_has_no_metadata() -> None:
-    """정리본 본문은 만든 날·정리 지시만 있다."""
+    """정리본 본문은 종류·작성일자만 있다."""
     assert outline_import.find_metadata(DIGEST) is None
 
 

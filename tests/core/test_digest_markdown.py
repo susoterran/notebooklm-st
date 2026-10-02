@@ -29,13 +29,12 @@ def make_source(
 def make_draft(
     body: str = "## 공통 주장\n\n셋 다 같은 말을 한다.",
     sources=None,
-    instruction: str = INSTRUCTION,
 ) -> models.DigestDraft:
     """테스트용 초안을 만든다."""
     return models.DigestDraft(
         body=body,
         sources=tuple(sources if sources is not None else [make_source()]),
-        instruction=instruction,
+        instruction=INSTRUCTION,
         created_on="2026-09-23",
     )
 
@@ -47,14 +46,22 @@ def test_document_has_no_h1() -> None:
     assert not any(line.startswith("# ") for line in document.splitlines())
 
 
-def test_metadata_lists_kind_date_and_instruction() -> None:
-    """맨 앞이 종류·만든 날·정리 지시 세 줄이다."""
+def test_metadata_lists_kind_and_date() -> None:
+    """맨 앞이 종류·작성일자 두 줄이고 바로 빈 줄이 온다."""
     document = digest_markdown.to_markdown(make_draft())
 
     lines = document.splitlines()
     assert lines[0] == "- 종류: 정리본"
-    assert lines[1] == "- 만든 날: 2026-09-23"
-    assert lines[2] == f"- 정리 지시: {INSTRUCTION}"
+    assert lines[1] == "- 작성일자: 2026-09-23"
+    assert lines[2] == ""
+
+
+def test_instruction_is_not_written() -> None:
+    """정리 지시는 문서 어디에도 적지 않는다."""
+    document = digest_markdown.to_markdown(make_draft())
+
+    assert "정리 지시" not in document
+    assert INSTRUCTION not in document
 
 
 def test_sources_are_links() -> None:
@@ -106,24 +113,6 @@ def test_rule_is_preceded_by_a_blank_line() -> None:
 
     index = lines.index("---")
     assert lines[index - 1] == ""
-
-
-def test_instruction_newlines_are_folded() -> None:
-    """여러 줄 지시가 리스트 항목을 두 동강 내지 않는다."""
-    draft = make_draft(instruction="첫 줄\n둘째 줄")
-
-    document = digest_markdown.to_markdown(draft)
-
-    assert "- 정리 지시: 첫 줄 둘째 줄" in document
-
-
-def test_control_characters_are_dropped() -> None:
-    """제3자 문자열의 제어문자를 지운다."""
-    draft = make_draft(instruction="앞\x85뒤")
-
-    document = digest_markdown.to_markdown(draft)
-
-    assert "- 정리 지시: 앞뒤" in document
 
 
 def test_body_comes_last() -> None:
