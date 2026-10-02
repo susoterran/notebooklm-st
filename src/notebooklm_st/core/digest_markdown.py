@@ -69,18 +69,21 @@ def _metadata_block(draft: models.DigestDraft) -> str:
 def _source_line(run: models.RunSummary) -> str:
     """요약본 하나를 출처 한 줄로 적는다.
 
-    위키에 붙은 문서 제목을 쓴다. 정리본을 읽는 사람이 원본을 찾을 때
-    보는 이름이 그것이기 때문이다.
+    글자는 위키에 붙은 문서 제목이다. 정리본을 읽는 사람이 원본을
+    찾을 때 보는 이름이 그것이기 때문이다.
+
+    링크는 요약본 문서가 아니라 그 원본인 영상으로 건다. 요약본은
+    지우거나 다시 만들 수 있어 링크가 깨지지만, 영상은 위키에서 무슨
+    일이 있어도 그대로다. 주소는 요약본의 영상 URL 줄과 같은 규칙으로
+    고른다(``markdown_export.source_url``).
 
     Args:
         run: 재료가 된 실행.
 
     Returns:
-        링크가 있으면 마크다운 링크, 없으면 제목만.
+        영상으로 이어지는 마크다운 링크 항목.
     """
     label = markdown_export.one_line(
         run.outline_title or run.title or run.video_id
     )
-    if run.outline_url:
-        return f"- [{label}]({run.outline_url})"
-    return f"- {label}"
+    return f"- [{label}]({markdown_export.source_url(run)})"

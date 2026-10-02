@@ -4,23 +4,26 @@ from notebooklm_st.core import digest_markdown, models
 
 INSTRUCTION = "공통 주장과 엇갈리는 지점을 정리해 줘"
 
+WATCH_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
 
 def make_source(
     run_id: int = 1,
     outline_title: str | None = "AI 에이전트의 미래",
-    outline_url: str | None = "https://wiki.example.com/doc/ai-abc",
     title: str | None = "영상 제목",
+    video_id: str = "dQw4w9WgXcQ",
+    url: str = "https://youtu.be/dQw4w9WgXcQ?si=share",
 ) -> models.RunSummary:
     """저장된 요약본 하나를 만든다."""
     return models.RunSummary(
         id=run_id,
-        url="https://youtu.be/dQw4w9WgXcQ",
-        video_id="dQw4w9WgXcQ",
+        url=url,
+        video_id=video_id,
         title=title,
         created_at="2026-09-20T14:02:11",
         answer_count=0,
         outline_id=f"doc-{run_id}",
-        outline_url=outline_url,
+        outline_url=f"https://wiki.example.com/doc/summary-{run_id}",
         outline_title=outline_title,
         exported_at="2026-09-20T15:00:00",
     )
@@ -52,9 +55,7 @@ def test_metadata_lists_kind_date_and_sources() -> None:
         sources=[
             make_source(),
             make_source(
-                run_id=2,
-                outline_title="두 번째 글",
-                outline_url="https://wiki.example.com/doc/two-def",
+                run_id=2, outline_title="두 번째 글", video_id="9bZkp7q19f0"
             ),
         ]
     )
@@ -65,8 +66,8 @@ def test_metadata_lists_kind_date_and_sources() -> None:
         "- 종류: 정리본",
         "- 작성일자: 2026-09-23",
         "- 출처:",
-        "    - [AI 에이전트의 미래](https://wiki.example.com/doc/ai-abc)",
-        "    - [두 번째 글](https://wiki.example.com/doc/two-def)",
+        f"    - [AI 에이전트의 미래]({WATCH_URL})",
+        "    - [두 번째 글](https://www.youtube.com/watch?v=9bZkp7q19f0)",
         "",
     ]
 
@@ -78,6 +79,24 @@ def test_sources_have_no_heading() -> None:
     assert "## 출처" not in document
 
 
+def test_sources_do_not_link_to_the_wiki() -> None:
+    """요약본을 지우면 깨지므로 위키 문서로 잇지 않는다."""
+    document = digest_markdown.to_markdown(make_draft())
+
+    assert "wiki.example.com" not in document
+
+
+def test_source_without_a_video_id_uses_the_stored_url() -> None:
+    """영상 ID 가 없는 옛 기록은 저장된 URL 로 잇는다."""
+    draft = make_draft(
+        sources=[make_source(video_id="", url="https://youtu.be/old")]
+    )
+
+    lines = digest_markdown.to_markdown(draft).splitlines()
+
+    assert "    - [AI 에이전트의 미래](https://youtu.be/old)" in lines
+
+
 def test_instruction_is_not_written() -> None:
     """정리 지시는 문서 어디에도 적지 않는다."""
     document = digest_markdown.to_markdown(make_draft())
@@ -86,36 +105,22 @@ def test_instruction_is_not_written() -> None:
     assert INSTRUCTION not in document
 
 
-def test_source_without_a_link_is_plain_text() -> None:
-    """링크가 없는 옛 기록은 제목만 적는다."""
-    draft = make_draft(sources=[make_source(outline_url=None)])
-
-    document = digest_markdown.to_markdown(draft)
-
-    assert "    - AI 에이전트의 미래" in document.splitlines()
-    assert "](" not in document
-
-
 def test_source_uses_video_title_when_no_outline() -> None:
     """문서 제목이 없으면 영상 제목으로 대신한다."""
-    draft = make_draft(
-        sources=[make_source(outline_title=None, outline_url=None)]
-    )
+    draft = make_draft(sources=[make_source(outline_title=None)])
 
-    document = digest_markdown.to_markdown(draft)
+    lines = digest_markdown.to_markdown(draft).splitlines()
 
-    assert "    - 영상 제목" in document.splitlines()
+    assert f"    - [영상 제목]({WATCH_URL})" in lines
 
 
 def test_source_falls_back_to_the_video_id() -> None:
     """둘 다 없으면 영상 ID 로 대신한다."""
-    draft = make_draft(
-        sources=[make_source(outline_title=None, outline_url=None, title=None)]
-    )
+    draft = make_draft(sources=[make_source(outline_title=None, title=None)])
 
-    document = digest_markdown.to_markdown(draft)
+    lines = digest_markdown.to_markdown(draft).splitlines()
 
-    assert "    - dQw4w9WgXcQ" in document.splitlines()
+    assert f"    - [dQw4w9WgXcQ]({WATCH_URL})" in lines
 
 
 def test_rule_is_preceded_by_a_blank_line() -> None:
