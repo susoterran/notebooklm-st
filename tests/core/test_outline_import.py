@@ -17,7 +17,17 @@ SUMMARY = (
     "세 가지다.\n"
 )
 
-DIGEST = "- 종류: 정리본\n- 작성일자: 2026-09-23\n\n---\n\n## 정리\n"
+DIGEST = (
+    "- 종류: 정리본\n"
+    "- 작성일자: 2026-09-23\n"
+    "- 출처:\n"
+    "    - [밸류에이션 강의](https://wiki.example.com/doc/a-slug)\n"
+    "    - [채널 소개](https://wiki.example.com/doc/b-slug)\n"
+    "\n"
+    "---\n"
+    "\n"
+    "## 정리\n"
+)
 
 
 def test_finds_the_source_url_in_the_head_block() -> None:

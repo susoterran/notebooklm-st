@@ -46,14 +46,36 @@ def test_document_has_no_h1() -> None:
     assert not any(line.startswith("# ") for line in document.splitlines())
 
 
-def test_metadata_lists_kind_and_date() -> None:
-    """맨 앞이 종류·작성일자 두 줄이고 바로 빈 줄이 온다."""
+def test_metadata_lists_kind_date_and_sources() -> None:
+    """맨 앞이 종류·작성일자·출처 리스트이고 바로 빈 줄이 온다."""
+    draft = make_draft(
+        sources=[
+            make_source(),
+            make_source(
+                run_id=2,
+                outline_title="두 번째 글",
+                outline_url="https://wiki.example.com/doc/two-def",
+            ),
+        ]
+    )
+
+    lines = digest_markdown.to_markdown(draft).splitlines()
+
+    assert lines[:6] == [
+        "- 종류: 정리본",
+        "- 작성일자: 2026-09-23",
+        "- 출처:",
+        "    - [AI 에이전트의 미래](https://wiki.example.com/doc/ai-abc)",
+        "    - [두 번째 글](https://wiki.example.com/doc/two-def)",
+        "",
+    ]
+
+
+def test_sources_have_no_heading() -> None:
+    """출처는 메타데이터 항목이라 따로 머리글을 두지 않는다."""
     document = digest_markdown.to_markdown(make_draft())
 
-    lines = document.splitlines()
-    assert lines[0] == "- 종류: 정리본"
-    assert lines[1] == "- 작성일자: 2026-09-23"
-    assert lines[2] == ""
+    assert "## 출처" not in document
 
 
 def test_instruction_is_not_written() -> None:
@@ -64,24 +86,13 @@ def test_instruction_is_not_written() -> None:
     assert INSTRUCTION not in document
 
 
-def test_sources_are_links() -> None:
-    """출처가 원본 요약본 링크로 달린다."""
-    document = digest_markdown.to_markdown(make_draft())
-
-    assert "## 출처" in document
-    assert (
-        "- [AI 에이전트의 미래](https://wiki.example.com/doc/ai-abc)"
-        in document
-    )
-
-
 def test_source_without_a_link_is_plain_text() -> None:
     """링크가 없는 옛 기록은 제목만 적는다."""
     draft = make_draft(sources=[make_source(outline_url=None)])
 
     document = digest_markdown.to_markdown(draft)
 
-    assert "- AI 에이전트의 미래" in document
+    assert "    - AI 에이전트의 미래" in document.splitlines()
     assert "](" not in document
 
 
@@ -93,7 +104,7 @@ def test_source_uses_video_title_when_no_outline() -> None:
 
     document = digest_markdown.to_markdown(draft)
 
-    assert "- 영상 제목" in document
+    assert "    - 영상 제목" in document.splitlines()
 
 
 def test_source_falls_back_to_the_video_id() -> None:
@@ -104,7 +115,7 @@ def test_source_falls_back_to_the_video_id() -> None:
 
     document = digest_markdown.to_markdown(draft)
 
-    assert "- dQw4w9WgXcQ" in document
+    assert "    - dQw4w9WgXcQ" in document.splitlines()
 
 
 def test_rule_is_preceded_by_a_blank_line() -> None:

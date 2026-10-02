@@ -6,11 +6,18 @@
 
 from notebooklm_st.core import markdown_export, models
 
+_NESTED_INDENT = "    "
+"""하위 리스트 항목 앞에 붙일 들여쓰기.
+
+CommonMark 는 부모 항목의 내용 시작(``- `` 뒤, 2칸)만큼만 들여 써도
+하위 리스트로 읽지만, 4칸을 요구하는 파서도 있어 4칸을 쓴다.
+"""
+
 
 def to_markdown(draft: models.DigestDraft) -> str:
     """정리본 초안을 Outline 문서 본문으로 만든다.
 
-    메타데이터 리스트, 출처, 구분선, 정리 본문 순으로 쌓는다.
+    메타데이터 리스트, 구분선, 정리 본문 순으로 쌓는다.
 
     ``# 제목`` 머리글을 넣지 않는다. Outline 이 문서 제목을 따로
     가지므로 넣으면 제목이 두 번 보인다.
@@ -24,7 +31,6 @@ def to_markdown(draft: models.DigestDraft) -> str:
     """
     blocks = [
         _metadata_block(draft),
-        _sources_block(draft),
         "---",
         draft.body.strip(),
     ]
@@ -42,31 +48,22 @@ def _metadata_block(draft: models.DigestDraft) -> str:
     정리 지시는 적지 않는다. 지시는 질문 관리가 가진 작업용 글이지
     문서를 읽는 사람에게 필요한 정보가 아니다.
 
+    출처도 메타데이터 항목 하나다. 재료가 된 요약본들을 ``- 출처:``
+    아래 하위 리스트로 적는다.
+
     Args:
         draft: 저장할 초안.
 
     Returns:
         ``- 라벨: 값`` 꼴의 마크다운 리스트.
     """
-    return "\n".join(
-        [
-            "- 종류: 정리본",
-            f"- 작성일자: {draft.created_on}",
-        ]
-    )
-
-
-def _sources_block(draft: models.DigestDraft) -> str:
-    """재료가 된 요약본들을 링크 목록으로 적는다.
-
-    Args:
-        draft: 저장할 초안.
-
-    Returns:
-        ``## 출처`` 머리글과 링크 리스트.
-    """
-    items = "\n".join(_source_line(run) for run in draft.sources)
-    return f"## 출처\n\n{items}"
+    lines = [
+        "- 종류: 정리본",
+        f"- 작성일자: {draft.created_on}",
+        "- 출처:",
+    ]
+    lines.extend(_NESTED_INDENT + _source_line(run) for run in draft.sources)
+    return "\n".join(lines)
 
 
 def _source_line(run: models.RunSummary) -> str:

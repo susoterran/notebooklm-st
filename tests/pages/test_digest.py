@@ -650,7 +650,7 @@ def test_saving_creates_an_outline_document(
 
     assert not app.exception
     assert received["title"] == "[정리] 2026-09-23"
-    assert "## 출처" in str(received["markdown"])
+    assert "- 출처:" in str(received["markdown"])
     assert len(app.success) == 1
 
 
