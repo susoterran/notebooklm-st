@@ -102,16 +102,24 @@ def _metadata_block(
         lines.append(f"- {CHANNEL_LABEL}: {one_line(metadata.channel)}")
     if metadata is not None and metadata.upload_date:
         lines.append(f"- {UPLOAD_DATE_LABEL}: {metadata.upload_date}")
-    lines.append(f"- {SOURCE_URL_LABEL}: {_source_url(summary)}")
+    lines.append(f"- {SOURCE_URL_LABEL}: {source_url(summary)}")
     return "\n".join(lines)
 
 
-def _source_url(summary: models.RunSummary) -> str:
+def source_url(summary: models.RunSummary) -> str:
     """메타데이터에 적을 영상 URL 을 고른다.
 
     저장된 원문에는 재생목록·추적 파라미터가 붙어 있을 수 있다.
     검증된 영상 ID 가 있으면 정규 URL 을 다시 짓고, ID 가 없는 옛
     이력만 원문을 쓴다.
+
+    정리본의 출처 링크도 같은 주소를 써야 하므로 공개한다.
+
+    Args:
+        summary: 영상 URL 을 고를 실행 요약.
+
+    Returns:
+        정규 URL, 또는 한 줄로 접은 원문.
     """
     if summary.video_id:
         return youtube.watch_url(summary.video_id)
