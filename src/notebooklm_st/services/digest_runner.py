@@ -223,7 +223,16 @@ def _work(
         return
     except errors.MAPPED_ERRORS as error:
         message = errors.to_message(error)
-        logger.info("정리본 실패: %s", message.text)
+        # 화면 문구는 한 문장으로 바꾼 것이라 서버가 왜 거부했는지
+        # (길이 초과·요청 한도 등)는 라이브러리 원문에만 있다. 앱이
+        # 로깅을 설정하지 않아 INFO 는 어디에도 찍히지 않으므로
+        # WARNING 으로 남긴다.
+        logger.warning(
+            "정리본 실패: %s (%s: %s)",
+            message.text,
+            type(error).__name__,
+            error,
+        )
         registry.fail(message.text, message.level)
         return
     except Exception as error:

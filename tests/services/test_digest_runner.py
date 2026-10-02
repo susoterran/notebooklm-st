@@ -1,5 +1,7 @@
 """정리본 백그라운드 실행 테스트."""
 
+import logging
+
 from notebooklm import exceptions
 
 from notebooklm_st.core import models
@@ -122,6 +124,32 @@ def test_auth_failure_becomes_the_login_hint() -> None:
 
     assert handle.status == "failed"
     assert "notebooklm login" in (handle.error_message or "")
+
+
+def test_mapped_failure_logs_the_library_message(caplog) -> None:
+    """화면 문구에 없는 라이브러리 원문이 경고 로그에 남는다.
+
+    서버가 왜 거부했는지(길이 초과·요청 한도 등)는 원문에만 있다.
+    앱이 로깅을 설정하지 않으므로 WARNING 이상이어야 출력된다.
+    """
+    registry = digest_runner.DigestRegistry()
+    detail = "Chat request was rejected by the server (status 3)."
+
+    def build(config, runs, instruction, on_progress):
+        """서버 거부를 만든다."""
+        raise exceptions.ChatError(detail)
+
+    with caplog.at_level(logging.WARNING, logger=digest_runner.__name__):
+        start(registry, build)
+        handle = wait_for(registry)
+
+    assert handle.error_message == "답변을 받지 못했습니다."
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+    ]
+    assert any("ChatError" in m and detail in m for m in messages)
 
 
 def test_unexpected_error_is_reported() -> None:
