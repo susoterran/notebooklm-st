@@ -4,6 +4,7 @@
 - **상태**: 구현됨
 - **대상**: `services/digest.py`, `services/digest_runner.py`,
   `core/digest_markdown.py`, `core/digest_title.py`,
+  `core/digest_sources.py`,
   `pages/digest.py`, `pages/_digest_materials.py`,
   `services/outline.py`, `services/nlm.py`, `core/models.py`,
   `core/markdown_export.py`, `pages/maintenance.py`, `pages/ask.py`,
@@ -223,6 +224,7 @@ services/digest.py             잇는 자리
     └──► services/nlm.py       run_digest_pipeline
              │                     └─ tmp- 노트북 → add_text × N
              │                        → ask 1회 → 노트북 삭제
+             ├──► core/digest_sources.py 지시 앞에 S 번호 소스 목록
              └──► core/digest_title.py   지시에 제목 요구 · 답변 파싱
     ▼
 core/digest_markdown.py        저장할 본문 조립(순수 함수)
@@ -332,8 +334,9 @@ async def run_digest_pipeline(
 
 소스는 `wait=True`, `wait_timeout=SOURCE_WAIT_TIMEOUT` 로 등록해
 준비될 때까지 기다린다. 다 되면 `chat.ask` 를 **한 번** 부른다.
-질문은 `digest_title.wrap(instruction)` — 사람이 고른 지시 뒤에 제목
-요구가 붙은 글이다.
+질문은 `digest_title.wrap(digest_sources.prepend(instruction, 소스
+제목들))` — 맨 앞에 S 번호를 매긴 소스 목록(→ 6.4), 빈 줄 하나 뒤에
+사람이 고른 지시, 그 뒤에 제목 요구가 붙은 글이다.
 
 돌아온 답변은 **이 순서로** 다듬는다.
 
@@ -354,6 +357,48 @@ async def run_digest_pipeline(
 소스 하나에 최대 120초를 기다리므로 상한이 곧 최악의 대기 시간이다
 (10건이면 약 20분). 상한은 `nlm.py` 의 상수로 두고 화면이 초과
 선택을 막는다(→ 10.1).
+
+### 6.4 질의 맨 앞의 소스 목록 — `core/digest_sources.py`
+
+NotebookLM 은 노트북의 소스에 번호를 매겨 주지 않는다. 정리 지시가
+출처를 밝히라고 하면 모델이 번호를 스스로 지어 `S3`·`소스3` 같은
+표기가 섞이고, 그 번호가 저장된 문서의 출처 목록과 맞는다는 보장도
+없다. 그래서 코드가 번호를 정해 질의 맨 앞에 싣는다.
+
+```python
+HEADER = "[소스 목록]"
+INTRO: str
+
+def prepend(instruction: str, titles: Sequence[str]) -> str
+```
+
+```
+[소스 목록]
+이 노트북의 소스 목록입니다. 소스를 가리킬 때는 아래 S 번호만 쓰고, 번호를 새로 매기거나 바꾸지 마세요. 소스 패널의 이름과 아래 이름이 조금 달라도 가장 비슷한 소스로 대응시키세요.
+- S1: <첫 소스 제목>
+- S2: <둘째 소스 제목>
+
+<사람이 고른 정리 지시>
+
+<제목 요구>
+```
+
+- **번호는 소스를 넣은 순서대로 S1 부터다.** 이 순서는 재료를 고른
+  순서이자 저장되는 문서의 출처 목록 순번이다(→ 11). 본문의 `S3` 은
+  출처 목록의 `3.` 이다.
+- **목록의 이름은 노트북에 넣은 소스 제목이다.** 정리 직전에 위키에서
+  읽어 온 문서 제목이라 소스 패널의 이름과 글자가 같다. 줄바꿈·
+  제어문자는 `markdown_export.one_line` 으로 한 줄로 접는다. 영상
+  URL 은 싣지 않는다 — 모델이 짝을 맞추는 데 필요 없고 본문에 옮겨
+  적을 수 있다.
+- **노트북의 소스 이름에는 번호를 붙이지 않는다.** 같은 제목의 재료가
+  함께 들어오는 드문 경우는 안내 문장의 마지막 요구("가장 비슷한
+  소스로 대응")에 맡긴다.
+- **사람의 지시는 손대지 않는다.** 근거를 `(S1)` 처럼 어떤 꼴로 적을지는
+  정리 지시가 정한다. 정리본이 들고 있는 `instruction` 도 사람이 고른
+  원문 그대로다.
+- 모델이 이 형식을 지키는지는 단위 테스트로 확인할 수 없다. 실제
+  정리본으로 본다.
 
 ---
 
@@ -652,10 +697,11 @@ DB 삭제를 요구했지만 R5 는 요구하지 않는다. 배포는 이미지�
 
 | 대상 | 무엇을 단언하나 |
 | --- | --- |
-| `core/digest_title` | 지시가 프롬프트 맨 앞에 남음 · 꾸민 제목 표시·전각 콜론·따옴표를 읽음 · 표시가 없으면 본문을 손대지 않음 · 본문이 남지 않으면 아무것도 자르지 않음 · 접두어·한 줄 접기·길이 상한 · 주제가 없으면 날짜 |
+| `core/digest_title` | `wrap` 결과가 받은 지시로 시작함 · 꾸민 제목 표시·전각 콜론·따옴표를 읽음 · 표시가 없으면 본문을 손대지 않음 · 본문이 남지 않으면 아무것도 자르지 않음 · 접두어·한 줄 접기·길이 상한 · 주제가 없으면 날짜 |
+| `core/digest_sources` | 안내 문장이 정한 문구 그대로 · 머리 줄·안내·목록 뒤 빈 줄 하나를 두고 지시 · S 번호가 주어진 순서대로 1 부터 · 지시는 공백·줄바꿈까지 그대로 · 제목의 줄바꿈·제어문자가 한 줄로 접힘 |
 | `core/digest_markdown` | `#` 머리글 없음 · 메타데이터가 종류·작성일자·출처 순 · 출처는 `- 출처:` 아래 4칸 들여 쓴 1 부터의 순번 목록이고 `## 출처` 머리글이 없음 · 출처 링크가 정규 영상 URL 이고 위키 주소가 없음 · 영상 ID 가 없으면 저장된 URL · 링크 글자가 문서 제목 → 영상 제목 → 영상 ID 순 · 정리 지시가 문서에 없음 · `---` 가 문단 바로 뒤에 오지 않음 |
 | `outline.fetch_document` | 가짜 `poster` 로 성공 · 401(scope 를 짚는지) · 403 · 404 · 깨진 JSON · 토큰이 섞인 설명은 통째로 버려짐 |
-| `nlm.run_digest_pipeline` | `add_text` 가 소스 수만큼 · `ask` 는 한 번 · 프롬프트에 사람의 지시와 제목 요구가 함께 실림 · 제목 줄이 주제가 되고 본문에서 빠짐 · 제목 줄 뒤 수평선이 본문을 삼키지 않음 · 주제와 본문 양쪽에서 인용 번호가 사라짐 · 소스 등록이 실패해도 노트북이 지워짐 |
+| `nlm.run_digest_pipeline` | `add_text` 가 소스 수만큼 · `ask` 는 한 번 · 프롬프트가 소스 목록 → 사람의 지시 → 제목 요구 순이고 소스가 넣은 순서대로 S1·S2 · 제목 줄이 주제가 되고 본문에서 빠짐 · 제목 줄 뒤 수평선이 본문을 삼키지 않음 · 주제와 본문 양쪽에서 인용 번호가 사라짐 · 소스 등록이 실패해도 노트북이 지워짐 |
 | `services/digest` | 읽기가 한 건 실패하면 멈추고 메시지에 그 문서 제목이 들어감 · 주제가 초안에 실림 |
 | `services/digest_runner` | 스레드 종료 후 상태 전이 · 인증 만료가 재로그인 안내로 매핑됨 · 이미 돌고 있으면 거절 |
 | `pages/digest` | 설정 없음 · 재료 없음 · **질문 없음** · 상한 초과 · 질의 중 각 상태에서 버튼이 잠기거나 그려지지 않고 이유가 보임 · 고른 질문의 본문이 지시로 넘어감 · 지워진 질문이 화면을 깨뜨리지 않음 · 제목 기본값이 주제 또는 날짜 · 저장 성공과 실패 |
@@ -690,6 +736,7 @@ Streamlit 이 검증해 받아들인다. 선택을 되돌려 보낼 브라우저
 
 - `services/digest.py` · `services/digest_runner.py`
 - `core/digest_markdown.py` · `core/digest_title.py` ·
+  `core/digest_sources.py` ·
   `pages/digest.py` · `pages/_digest_materials.py`
 - 각 대응 테스트
 
