@@ -206,6 +206,22 @@ def test_the_prompt_asks_for_a_title():
     assert digest_title.DIRECTIVE in asks[0][2]
 
 
+def test_the_prompt_starts_with_the_source_list():
+    """소스 목록이 맨 앞, 정리 지시가 그 뒤, 제목 요구가 끝에 온다."""
+    calls = []
+
+    digest(make_sources("요약 A", "요약 B"), FakeClient(calls))
+
+    prompt = next(call for call in calls if call[0] == "ask")[2]
+    assert prompt.startswith("[소스 목록]\n")
+    assert prompt.splitlines()[2:4] == ["- S1: 요약 A", "- S2: 요약 B"]
+    assert (
+        prompt.index("- S2: 요약 B")
+        < prompt.index(INSTRUCTION)
+        < prompt.index(digest_title.DIRECTIVE)
+    )
+
+
 def test_the_topic_comes_from_the_title_line():
     """첫 줄의 제목 표시가 주제가 되고 본문에서 빠진다."""
     calls = []

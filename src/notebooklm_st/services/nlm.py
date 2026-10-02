@@ -10,6 +10,7 @@ from notebooklm import exceptions
 
 from notebooklm_st.core import (
     answer_text,
+    digest_sources,
     digest_title,
     errors,
     models,
@@ -235,9 +236,10 @@ async def run_digest_pipeline(
     ``run_pipeline`` 과 대칭이다 — 임시 노트북을 만들어 쓰고 반드시
     지운다. 다른 점은 소스가 여럿이고 질문이 하나라는 것뿐이다.
 
-    지시에는 제목 요구가 함께 실려 나가고(→ ``core.digest_title``)
-    돌아온 답변에서 그 줄을 떼어 주제로 돌려준다. 질의를 두 번
-    던지지 않는다.
+    지시 앞에는 넣은 순서대로 S 번호를 매긴 소스 목록이 붙고
+    (→ ``core.digest_sources``), 뒤에는 제목 요구가 함께 실려 나간다
+    (→ ``core.digest_title``). 돌아온 답변에서 그 줄을 떼어 주제로
+    돌려준다. 질의를 두 번 던지지 않는다.
 
     Args:
         sources: 노트북에 넣을 글들. 상한은 호출자가 지킨다
@@ -276,9 +278,12 @@ async def run_digest_pipeline(
                     wait_timeout=SOURCE_WAIT_TIMEOUT,
                 )
             on_progress("정리 중")
-            result = await client.chat.ask(
-                notebook.id, digest_title.wrap(instruction)
+            prompt = digest_title.wrap(
+                digest_sources.prepend(
+                    instruction, [source.title for source in sources]
+                )
             )
+            result = await client.chat.ask(notebook.id, prompt)
         finally:
             # run_pipeline 과 같은 이유로 여기서 on_progress 를 부르지
             # 않는다. 콜백이 Streamlit 을 건드리는데, 사용자가 페이지를
