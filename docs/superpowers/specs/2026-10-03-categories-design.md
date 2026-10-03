@@ -327,6 +327,9 @@ CREATE TABLE IF NOT EXISTS channel_categories (
   """붙은 카테고리 이름. 이름 순이다."""
   ```
 
+  클래스 독스트링의 "로컬에는 링크와 영상 메타데이터만 남아 있다" 는
+  "로컬에는 링크와 영상 메타데이터, 카테고리만 남아 있다" 가 된다.
+
 ### 5.3 `core/sync_models.py` — 동기화 값 객체를 옮긴다
 
 `models.py` 가 5.2 와 동기화 추가분을 받으면 300줄을 넘는다(2.11).
@@ -800,7 +803,11 @@ YouTube 영상 URL [__________________]
 ### 8.7 바뀌지 않는 화면
 
 이력 화면(`pages/history.py`)과 실행 현황(`pages/dashboard.py`)은
-카테고리를 보이지 않는다(14).
+카테고리를 보이지 않는다(14). 이력 화면은 "Outline 에 저장" 버튼의
+도움말 한 줄만 고친다. 지금 문구 "올린 뒤에는 로컬에 링크와
+채널·업로드일만 남습니다." 는 카테고리가 빠져 사실이 아니게 되므로
+"올린 뒤에는 로컬에 링크와 채널·업로드일·카테고리만 남습니다." 로
+바꾼다.
 
 ---
 
@@ -857,7 +864,8 @@ YouTube 영상 URL [__________________]
 | `tests/services/test_run_history_sync.py` | `insert_exported` 가 이름으로 잇고 이미 있는 문서면 아무것도 안 씀 · `replace_categories` 가 다르면 바꾸고 `True`, 같으면 `False`, 문서 ID 가 다르면 `False` 이고 쓰지 않음 · 커밋하지 않음 · `list_exported` 가 카테고리를 실음 |
 | `tests/services/test_history_sync.py` | `plan`: 생성 대상에 카테고리 · 7.6 의 세 판정 · `new_categories` 가 알려진 이름을 빼고 이름 순 · 카테고리 갱신만 있으면 `is_empty` 가 거짓 / `apply`: 새 카테고리 등록과 연결과 교체가 한 커밋 · 교체가 실패하면 앞 단계도 되돌림 · 낡은 계획이 다시 쓰인 ID 의 미저장 실행에 쓰지 않음 / **멱등**: 계획 → 적용 → 다시 계획하면 카테고리 갱신과 새 카테고리가 없음 |
 | `tests/services/test_channels.py` | 기본값과 함께 등록 · 기본값 읽기와 바꾸기 · 없는 채널이면 거부 |
-| `tests/services/test_run_steps.py`·`test_runner_*.py` | 핸들이 `category_ids` 를 쥠 · 끝난 실행의 이력에 카테고리가 붙음 · 자동 저장이 만드는 문서 본문에 카테고리 줄이 있음(가짜 `create_document` 가 받은 본문으로 본다) |
+| `tests/services/test_run_store.py`·`test_runner_start.py` | 핸들이 `category_ids` 를 쥠 · 끝난 실행의 이력에 카테고리가 붙음 · 자동 저장이 만드는 문서 본문에 카테고리 줄이 있음(가짜 `create_document` 가 받은 본문으로 본다). 옮긴 워커 단계는 러너 테스트가 그대로 덮는다 |
+| `tests/services/test_run_export.py` | 이력 화면의 저장(목록이 준 요약을 넘기는 길)도 문서 머리에 카테고리 줄을 쓴다 |
 | `tests/pages/test_category_admin.py` (신규) | 등록 · 같은 이름과 규칙 위반의 오류 · 이름 변경 · 삭제 · 이력이 쓰는 카테고리는 이름 칸과 버튼이 잠기고 이유가 보임 · 대기 중 핸들이 쥔 카테고리도 잠김 · 채널 기본값으로만 쓰이면 경고 문구와 함께 지울 수 있음 |
 | `tests/pages/test_ask.py` | 카테고리가 없으면 안내만 있고 실행 버튼이 없음 · 카테고리를 고르기 전에는 버튼이 잠김 · 넣은 핸들이 고른 ID 를 쥠 · 넣은 뒤 카테고리 선택이 남음 |
 | `tests/pages/test_channels.py` | 기본값과 함께 등록 · 목록 탭에서 기본값을 **연달아 두 번** 바꿔도 둘째 값이 DB 에 남음(2.12) · 확인 탭이 채널마다 기본값으로 미리 채움 · 확인 탭에서 바꾼 값이 채널에 적히지 않음 · 카테고리를 고르지 않으면 넣기 버튼이 잠김 · 넣은 핸들이 ID 를 쥠 · 카테고리가 없으면 안내 |
@@ -914,10 +922,12 @@ YouTube 영상 URL [__________________]
   `pages/_channel_check.py`·`pages/_channel_enqueue.py`(8.4),
   `pages/_history_sync.py`(8.5), `pages/_digest_materials.py`(8.6)
 - `app.py` — 네비게이션(8.1)
+- `pages/history.py` — 저장 버튼 도움말 한 줄(8.7)
 
 **테스트**: 11 의 표 그대로. 신규 넷(`test_category_names`·
-`test_material_filter`·`test_categories`·`test_category_admin`)과
-옮긴 단계의 `test_run_steps`.
+`test_material_filter`·`test_categories`·`test_category_admin`).
+화면이 하나 늘므로 `tests/test_app.py` 의 독스트링 "여덟 페이지" 는
+"아홉 페이지" 가 된다.
 
 **문서**
 
@@ -938,7 +948,7 @@ YouTube 영상 URL [__________________]
 - `services/run_export.py`·`services/run_links.py`·
   `services/outline_messages.py`
 - `services/digest.py`·`services/digest_runner.py`·`pages/digest.py`
-- `pages/history.py`·`pages/dashboard.py`
+- `pages/dashboard.py`
 - `docker-compose.yml`·`Dockerfile`·`pyproject.toml`
 
 새 의존성은 없다.
