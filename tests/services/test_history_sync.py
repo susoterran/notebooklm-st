@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from notebooklm_st.core import models
+from notebooklm_st.core import models, sync_models
 from notebooklm_st.services import (
     history_sync,
     run_history,
@@ -58,9 +58,9 @@ def make_document(
     doc_id: str,
     markdown: str = SUMMARY_BODY,
     title: str = "정리한 제목",
-) -> models.ListedDocument:
+) -> sync_models.ListedDocument:
     """목록에서 읽어 온 문서를 만든다."""
-    return models.ListedDocument(
+    return sync_models.ListedDocument(
         id=doc_id,
         title=title,
         url=f"https://wiki.example.com/doc/{doc_id}",
@@ -174,11 +174,11 @@ def test_plan_keeps_the_input_order() -> None:
 
 def test_an_empty_plan_says_so() -> None:
     """건너뛴 것만 있어도 비어 있는 계획이다."""
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(),
         creates=(),
         skips=(
-            models.SyncSkip(
+            sync_models.SyncSkip(
                 document=make_document("x", markdown="본문\n"),
                 reason=history_sync.SKIP_NO_SOURCE_URL,
             ),
@@ -209,7 +209,7 @@ def test_plan_updates_a_run_without_metadata() -> None:
     result = history_sync.plan([run], [make_document("doc-1", METADATA_BODY)])
 
     assert result.updates == (
-        models.SyncUpdate(run=run, metadata=DOC_METADATA),
+        sync_models.SyncUpdate(run=run, metadata=DOC_METADATA),
     )
     assert result.deletes == ()
     assert result.creates == ()
@@ -295,12 +295,14 @@ def test_plan_does_not_update_a_run_being_deleted() -> None:
 
 def test_an_update_only_plan_is_not_empty() -> None:
     """갱신만 있어도 적용할 것이 있다."""
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(),
         creates=(),
         skips=(),
         updates=(
-            models.SyncUpdate(run=make_run(1, "doc-1"), metadata=DOC_METADATA),
+            sync_models.SyncUpdate(
+                run=make_run(1, "doc-1"), metadata=DOC_METADATA
+            ),
         ),
     )
 
@@ -341,9 +343,9 @@ def save_exported(
     return run_id
 
 
-def create_for(doc_id: str) -> models.SyncCreate:
+def create_for(doc_id: str) -> sync_models.SyncCreate:
     """문서 하나를 만들 계획 항목."""
-    return models.SyncCreate(
+    return sync_models.SyncCreate(
         document=make_document(doc_id),
         url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         video_id="dQw4w9WgXcQ",
@@ -354,7 +356,7 @@ def test_apply_deletes_and_creates_in_one_commit(connection) -> None:
     """삭제와 삽입이 함께 확정된다."""
     gone = save_exported(connection, "gone")
     kept = save_exported(connection, "kept")
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(make_run(gone, "gone"),),
         creates=(create_for("new-1"),),
         skips=(),
@@ -398,7 +400,7 @@ def test_apply_rolls_back_the_deletes_when_an_insert_fails(
 ) -> None:
     """삽입이 죽으면 삭제도 되돌린다. 반쪽짜리 동기화는 없다."""
     gone = save_exported(connection, "gone")
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(make_run(gone, "gone"),),
         creates=(create_for("new-1"),),
         skips=(),
@@ -418,7 +420,9 @@ def test_apply_rolls_back_the_deletes_when_an_insert_fails(
 def test_apply_skips_a_document_that_is_already_linked(connection) -> None:
     """다른 탭이 먼저 저장한 문서는 만들지 않고 세지도 않는다."""
     save_exported(connection, "doc-1")
-    plan = models.SyncPlan(deletes=(), creates=(create_for("doc-1"),), skips=())
+    plan = sync_models.SyncPlan(
+        deletes=(), creates=(create_for("doc-1"),), skips=()
+    )
 
     result = history_sync.apply(connection, plan)
 
@@ -430,7 +434,7 @@ def test_apply_does_not_count_a_run_that_is_already_gone(
     connection,
 ) -> None:
     """다른 탭이 먼저 지운 행은 개수에 들어가지 않는다."""
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(make_run(999, "gone"),), creates=(), skips=()
     )
 
@@ -483,7 +487,7 @@ def test_apply_keeps_a_new_run_that_reused_a_deleted_id(
 def test_apply_with_an_empty_plan_changes_nothing(connection) -> None:
     """빈 계획은 0·0 이다."""
     save_exported(connection, "doc-1")
-    plan = models.SyncPlan(deletes=(), creates=(), skips=())
+    plan = sync_models.SyncPlan(deletes=(), creates=(), skips=())
 
     result = history_sync.apply(connection, plan)
 
@@ -516,12 +520,12 @@ class FailingMetadataWrite:
 def test_apply_writes_updates_in_the_same_commit(connection) -> None:
     """갱신이 확정되고 건수가 결과에 실린다."""
     run_id = save_exported(connection, "doc-1")
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(),
         creates=(),
         skips=(),
         updates=(
-            models.SyncUpdate(
+            sync_models.SyncUpdate(
                 run=make_run(run_id, "doc-1"), metadata=DOC_METADATA
             ),
         ),
@@ -542,12 +546,12 @@ def test_apply_rolls_back_everything_when_an_update_fails(
     """갱신이 죽으면 삭제와 삽입도 되돌린다."""
     gone = save_exported(connection, "gone")
     kept = save_exported(connection, "kept")
-    plan = models.SyncPlan(
+    plan = sync_models.SyncPlan(
         deletes=(make_run(gone, "gone"),),
         creates=(create_for("new-1"),),
         skips=(),
         updates=(
-            models.SyncUpdate(
+            sync_models.SyncUpdate(
                 run=make_run(kept, "kept"), metadata=DOC_METADATA
             ),
         ),

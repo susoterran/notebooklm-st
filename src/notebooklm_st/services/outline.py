@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import httpx
 
-from notebooklm_st.core import models
+from notebooklm_st.core import sync_models
 from notebooklm_st.services import outline_messages, outline_parse
 
 OutlineConfig = outline_parse.OutlineConfig
@@ -220,7 +220,7 @@ def list_documents(
     config: OutlineConfig,
     timeout: float = FETCH_TIMEOUT,
     poster: PostLike = httpx.post,
-) -> list[models.ListedDocument]:
+) -> list[sync_models.ListedDocument]:
     """컬렉션의 문서를 전부 읽어 온다.
 
     ``offset`` 을 ``LIST_PAGE_SIZE`` 씩 올리며 이어 부르고, 한 페이지가
@@ -242,7 +242,7 @@ def list_documents(
         OutlineError: 연결이 안 되거나, 거부당했거나, 응답이 기대한
             모양이 아니거나, 페이지가 상한을 넘긴 경우.
     """
-    documents: list[models.ListedDocument] = []
+    documents: list[sync_models.ListedDocument] = []
     for page_index in range(LIST_PAGE_LIMIT):
         page = _list_page(config, page_index * LIST_PAGE_SIZE, timeout, poster)
         documents.extend(page)
@@ -259,7 +259,7 @@ def _list_page(
     offset: int,
     timeout: float,
     poster: PostLike,
-) -> list[models.ListedDocument]:
+) -> list[sync_models.ListedDocument]:
     """목록 한 페이지를 읽는다.
 
     Args:

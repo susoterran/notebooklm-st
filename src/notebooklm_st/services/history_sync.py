@@ -10,7 +10,7 @@ import dataclasses
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 
-from notebooklm_st.core import models, outline_import, youtube
+from notebooklm_st.core import models, outline_import, sync_models, youtube
 from notebooklm_st.services import run_history_sync
 
 SKIP_NO_SOURCE_URL = "영상 URL 없음"
@@ -22,8 +22,8 @@ SKIP_BAD_SOURCE_URL = "영상 URL 인식 불가"
 
 def plan(
     exported: Sequence[models.RunSummary],
-    documents: Sequence[models.ListedDocument],
-) -> models.SyncPlan:
+    documents: Sequence[sync_models.ListedDocument],
+) -> sync_models.SyncPlan:
     """두 목록을 문서 ID 로 맞춰 동기화 계획을 세운다.
 
     문서 목록에 없는 행은 지우고, 어떤 행도 가리키지 않는
@@ -43,32 +43,36 @@ def plan(
     known_ids = {run.outline_id for run in exported}
     listed = {document.id: document for document in documents}
     deletes = tuple(run for run in exported if run.outline_id not in listed)
-    creates: list[models.SyncCreate] = []
-    skips: list[models.SyncSkip] = []
+    creates: list[sync_models.SyncCreate] = []
+    skips: list[sync_models.SyncSkip] = []
     for document in documents:
         if document.id in known_ids:
             continue
         url = outline_import.find_source_url(document.markdown)
         if url is None:
             skips.append(
-                models.SyncSkip(document=document, reason=SKIP_NO_SOURCE_URL)
+                sync_models.SyncSkip(
+                    document=document, reason=SKIP_NO_SOURCE_URL
+                )
             )
             continue
         video_id = youtube.extract_video_id(url)
         if video_id is None:
             skips.append(
-                models.SyncSkip(document=document, reason=SKIP_BAD_SOURCE_URL)
+                sync_models.SyncSkip(
+                    document=document, reason=SKIP_BAD_SOURCE_URL
+                )
             )
             continue
         creates.append(
-            models.SyncCreate(
+            sync_models.SyncCreate(
                 document=document,
                 url=url,
                 video_id=video_id,
                 metadata=outline_import.find_metadata(document.markdown),
             )
         )
-    return models.SyncPlan(
+    return sync_models.SyncPlan(
         deletes=deletes,
         creates=tuple(creates),
         skips=tuple(skips),
@@ -78,8 +82,8 @@ def plan(
 
 def _updates(
     exported: Sequence[models.RunSummary],
-    listed: Mapping[str, models.ListedDocument],
-) -> Iterator[models.SyncUpdate]:
+    listed: Mapping[str, sync_models.ListedDocument],
+) -> Iterator[sync_models.SyncUpdate]:
     """문서 머리의 메타데이터가 로컬과 다른 기존 행을 입력 순서로 고른다.
 
     문서에서 두 값을 모두 못 읽으면 그 행은 건드리지 않는다.
@@ -95,7 +99,7 @@ def _updates(
             continue
         merged = _merge(run.metadata, found)
         if merged != run.metadata:
-            yield models.SyncUpdate(run=run, metadata=merged)
+            yield sync_models.SyncUpdate(run=run, metadata=merged)
 
 
 def _merge(
@@ -128,7 +132,7 @@ class SyncResult:
 
 
 def apply(
-    connection: sqlite3.Connection, sync_plan: models.SyncPlan
+    connection: sqlite3.Connection, sync_plan: sync_models.SyncPlan
 ) -> SyncResult:
     """계획을 DB 에 쓴다. 삭제·삽입·갱신을 커밋 하나로 묶는다.
 

@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from notebooklm_st.core import models
+from notebooklm_st.core import models, sync_models
 from notebooklm_st.services import (
     run_history,
     run_history_sync,
@@ -69,16 +69,16 @@ def make_create(
     doc_id: str = "doc-9",
     video_id: str = "dQw4w9WgXcQ",
     metadata: models.VideoMetadata | None = None,
-) -> models.SyncCreate:
+) -> sync_models.SyncCreate:
     """동기화가 만들 이력 한 건."""
-    document = models.ListedDocument(
+    document = sync_models.ListedDocument(
         id=doc_id,
         title="되살린 제목",
         url=f"https://wiki.example.com/doc/{doc_id}",
         created_at="2026-09-25T10:00:00",
         markdown="- 영상 URL: x\n",
     )
-    return models.SyncCreate(
+    return sync_models.SyncCreate(
         document=document,
         url=f"https://www.youtube.com/watch?v={video_id}",
         video_id=video_id,

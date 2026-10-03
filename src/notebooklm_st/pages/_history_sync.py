@@ -12,7 +12,7 @@ import sqlite3
 
 import streamlit as st
 
-from notebooklm_st.core import labels, models
+from notebooklm_st.core import labels, sync_models
 from notebooklm_st.services import history_sync, outline, run_history_sync
 
 _PLAN_KEY = "history_sync_plan"
@@ -70,7 +70,7 @@ def _check(
 
 
 def _render_plan(
-    connection: sqlite3.Connection, sync_plan: models.SyncPlan
+    connection: sqlite3.Connection, sync_plan: sync_models.SyncPlan
 ) -> None:
     """미리보기와 적용·취소 버튼을 그린다.
 
@@ -121,7 +121,9 @@ def _render_plan(
         st.rerun()
 
 
-def _apply(connection: sqlite3.Connection, sync_plan: models.SyncPlan) -> None:
+def _apply(
+    connection: sqlite3.Connection, sync_plan: sync_models.SyncPlan
+) -> None:
     """계획을 적용하고 결과 문구를 남긴 뒤 다시 그린다.
 
     실패하면 계획을 남긴다. 원인을 고친 뒤 같은 버튼을 다시 누르면

@@ -10,7 +10,7 @@ import datetime
 
 import httpx
 
-from notebooklm_st.core import models
+from notebooklm_st.core import sync_models
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -111,7 +111,7 @@ def parse_outline_document(response: httpx.Response) -> OutlineDocument:
 
 def parse_listed_page(
     config: OutlineConfig, response: httpx.Response
-) -> list[models.ListedDocument]:
+) -> list[sync_models.ListedDocument]:
     """``documents.list`` 응답 본문에서 문서들을 꺼낸다.
 
     한 항목이라도 기대한 키가 없거나 시각이 읽히지 않으면 페이지
@@ -130,7 +130,7 @@ def parse_listed_page(
     try:
         data = response.json()["data"]
         return [
-            models.ListedDocument(
+            sync_models.ListedDocument(
                 id=str(item["id"]),
                 title=str(item["title"]),
                 url=absolute(config.public_url, str(item["url"])),

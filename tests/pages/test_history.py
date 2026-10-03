@@ -4,7 +4,7 @@ import sqlite3
 
 from streamlit.testing import v1
 
-from notebooklm_st.core import models, youtube
+from notebooklm_st.core import models, sync_models, youtube
 from notebooklm_st.services import (
     history_sync,
     outline,
@@ -597,9 +597,11 @@ SYNC_META_BODY = (
 )
 
 
-def listed(doc_id: str, markdown: str = SYNC_BODY) -> models.ListedDocument:
+def listed(
+    doc_id: str, markdown: str = SYNC_BODY
+) -> sync_models.ListedDocument:
     """목록에서 읽어 온 문서 하나."""
-    return models.ListedDocument(
+    return sync_models.ListedDocument(
         id=doc_id,
         title=f"문서 {doc_id}",
         url=f"http://192.168.0.10:3000/doc/{doc_id}",

@@ -14,7 +14,7 @@ Outline 문서 목록과 비교해 세운 동기화 계획을 적용할 때 쓰�
 import sqlite3
 from collections.abc import Sequence
 
-from notebooklm_st.core import models
+from notebooklm_st.core import models, sync_models
 from notebooklm_st.services import run_history
 
 
@@ -40,7 +40,7 @@ def list_exported(connection: sqlite3.Connection) -> list[models.RunSummary]:
 
 
 def insert_exported(
-    connection: sqlite3.Connection, create: models.SyncCreate
+    connection: sqlite3.Connection, create: sync_models.SyncCreate
 ) -> int | None:
     """Outline 문서에서 되살린 저장된 행을 넣는다.
 
