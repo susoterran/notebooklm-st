@@ -15,6 +15,7 @@ from notebooklm_st.services import (
     run_history,
     run_links,
     run_registry,
+    run_steps,
     runner,
     runs,
     store,
@@ -76,9 +77,9 @@ def _stub_metadata_fetch(monkeypatch) -> None:
     이 기본값을 자기 안에서 다시 ``monkeypatch.setattr`` 로 덮어쓴다.
     """
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             models.VideoMetadata(channel=None, upload_date=None), None
         ),
     )
@@ -274,9 +275,9 @@ def test_login_redirect_is_reported_as_a_login_hint(db_path) -> None:
 def test_start_run_saves_the_fetched_metadata(db_path, monkeypatch) -> None:
     """조회한 메타데이터가 이력과 함께 저장된다."""
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
             None,
         ),
@@ -321,15 +322,15 @@ def test_start_run_survives_a_metadata_fetch_raising(
     """메타데이터 조회가 예외를 던져도 실행은 끝까지 간다.
 
     ``fetch`` 는 실패를 값으로 돌려주는 계약이지만, 그 계약이
-    깨져 예외가 새는 경우까지 ``_fetch_metadata`` 가 막아 주는지
-    이 테스트로 못박는다.
+    깨져 예외가 새는 경우까지 ``run_steps.fetch_metadata`` 가 막아
+    주는지 이 테스트로 못박는다.
     """
 
     def raise_error(url, **kwargs):
         """예외를 던지는 가짜 조회 함수."""
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(runner.video_metadata, "fetch", raise_error)
+    monkeypatch.setattr(run_steps.video_metadata, "fetch", raise_error)
     registry = run_registry.RunRegistry()
 
     async def pipeline(url, questions, on_progress, **kwargs):
@@ -366,9 +367,9 @@ def test_start_run_survives_a_metadata_fetch_raising(
 def test_start_run_survives_a_metadata_failure(db_path, monkeypatch) -> None:
     """메타데이터 조회가 실패해도 요약은 끝까지 간다."""
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             None, "영상 정보를 못 가져왔습니다."
         ),
     )
