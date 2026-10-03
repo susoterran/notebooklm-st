@@ -66,6 +66,29 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS categories (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS run_categories (
+    run_id      INTEGER NOT NULL REFERENCES runs(id)
+                ON DELETE CASCADE,
+    category_id INTEGER NOT NULL REFERENCES categories(id)
+                ON DELETE RESTRICT,
+    PRIMARY KEY (run_id, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_categories (
+    channel_pk  INTEGER NOT NULL REFERENCES channels(id)
+                ON DELETE CASCADE,
+    category_id INTEGER NOT NULL REFERENCES categories(id)
+                ON DELETE CASCADE,
+    PRIMARY KEY (channel_pk, category_id)
+);
 """
 
 # 이 프로젝트는 마이그레이션을 지원하지 않는다(의도된 결정). 예전
@@ -106,6 +129,9 @@ _EXPECTED_COLUMNS: dict[str, frozenset[str]] = {
         {"id", "channel_id", "title", "url", "baseline", "created_at"}
     ),
     "settings": frozenset({"key", "value"}),
+    "categories": frozenset({"id", "name", "created_at", "updated_at"}),
+    "run_categories": frozenset({"run_id", "category_id"}),
+    "channel_categories": frozenset({"channel_pk", "category_id"}),
 }
 
 

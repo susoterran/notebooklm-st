@@ -18,6 +18,19 @@ class Question:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class Category:
+    """사용자가 관리하는 주제 표시.
+
+    질의할 때 하나 이상 고르고, Outline 문서 머리에 적힌다.
+    """
+
+    id: int
+    name: str
+    created_at: str
+    updated_at: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Channel:
     """구독 중인 채널 하나."""
 

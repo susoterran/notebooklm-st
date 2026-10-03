@@ -4,7 +4,14 @@ import sqlite3
 
 import pytest
 
-from notebooklm_st.services import channels, settings, store
+from notebooklm_st.core import models
+from notebooklm_st.services import (
+    categories,
+    channels,
+    run_history,
+    settings,
+    store,
+)
 
 
 def test_default_db_path_honors_env_override(monkeypatch, tmp_path) -> None:
@@ -278,3 +285,102 @@ def test_connect_rejects_a_settings_table_without_the_value(tmp_path) -> None:
         store.connect(path)
     assert "settings 테이블" in str(excinfo.value)
     assert "['value']" in str(excinfo.value)
+
+
+def test_a_database_without_category_tables_still_opens(tmp_path) -> None:
+    """카테고리 테이블이 없는 기존 DB 도 지우지 않고 열린다."""
+    path = tmp_path / "old.db"
+    store.connect(path).close()
+    old = sqlite3.connect(path)
+    old.executescript(
+        "DROP TABLE run_categories; DROP TABLE channel_categories;"
+        " DROP TABLE categories;"
+    )
+    old.commit()
+    old.close()
+
+    connection = store.connect(path)
+    try:
+        assert categories.list_categories(connection) == []
+    finally:
+        connection.close()
+
+
+def _run_with_category(connection: sqlite3.Connection) -> tuple[int, int]:
+    """실행 하나와 카테고리 하나를 만들어 SQL 로 잇는다.
+
+    Returns:
+        (실행 ID, 카테고리 ID).
+    """
+    category = categories.add_category(connection, "경제")
+    run_id = run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            items=(),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO run_categories (run_id, category_id) VALUES (?, ?)",
+        (run_id, category.id),
+    )
+    connection.commit()
+    return run_id, category.id
+
+
+def _count(connection: sqlite3.Connection, table: str) -> int:
+    """테이블의 행 수. 테이블 이름은 테스트가 쓴 리터럴이다."""
+    row = connection.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+    return int(row["n"])
+
+
+def test_deleting_a_run_drops_its_category_links(tmp_path) -> None:
+    """실행을 지우면 카테고리 연결도 지워진다.
+
+    실행 ID 는 다시 쓰이므로, 연결이 남으면 같은 ID 를 받은 새 실행이
+    옛 카테고리를 물려받는다.
+    """
+    connection = store.connect(tmp_path / "test.db")
+    run_id, _ = _run_with_category(connection)
+
+    run_history.delete_run(connection, run_id)
+
+    assert _count(connection, "run_categories") == 0
+    connection.close()
+
+
+def test_a_category_on_a_run_cannot_be_deleted_by_sql(tmp_path) -> None:
+    """이력에 붙은 카테고리는 SQL 로도 지워지지 않는다(안전망)."""
+    connection = store.connect(tmp_path / "test.db")
+    _, category_id = _run_with_category(connection)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "DELETE FROM categories WHERE id = ?", (category_id,)
+        )
+    connection.close()
+
+
+def test_deleting_a_channel_drops_its_default_categories(tmp_path) -> None:
+    """채널을 지우면 기본 카테고리 연결도 지워진다."""
+    connection = store.connect(tmp_path / "test.db")
+    category = categories.add_category(connection, "경제")
+    channel = channels.add_channel(
+        connection,
+        "UC" + "a" * 22,
+        "채널",
+        "https://www.youtube.com/@channel",
+        "2026-09-01",
+    )
+    connection.execute(
+        "INSERT INTO channel_categories (channel_pk, category_id)"
+        " VALUES (?, ?)",
+        (channel.id, category.id),
+    )
+    connection.commit()
+
+    channels.delete_channel(connection, channel.id)
+
+    assert _count(connection, "channel_categories") == 0
+    connection.close()
