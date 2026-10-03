@@ -934,27 +934,28 @@ def test_filters_are_hidden_without_values(app_db, outline_env) -> None:
 def test_a_picked_row_points_into_the_filtered_table(
     app_db, outline_env
 ) -> None:
-    """고른 행 번호는 거른 표의 위치다."""
+    """고른 행 번호는 전체가 아닌 거른 표의 위치다.
+
+    거르면 1번 행이 전체 목록의 1번 행과 다른 글이 된다.
+    """
     from notebooklm_st.pages import _digest_materials
 
     three_materials(app_db)
     add_instruction(app_db)
     shown = material_filter.filter_runs(
-        run_history_sync.list_exported(app_db), ["인공지능"], []
+        run_history_sync.list_exported(app_db), ["경제"], []
     )
 
     app = v1.AppTest.from_function(script).run()
-    app.multiselect(key="digest_filter_categories").set_value(
-        ["인공지능"]
-    ).run()
+    app.multiselect(key="digest_filter_categories").set_value(["경제"]).run()
     app.session_state[_digest_materials.widget_key(shown)] = {
         "selection": {"rows": [1], "columns": [], "cells": []}
     }
     app.run()
 
     rendered = " ".join(element.value for element in app.markdown)
-    assert "- AI 경제" in rendered
-    assert "- AI 강의" not in rendered
+    assert "- 경제 강의" in rendered
+    assert "- AI 경제" not in rendered
 
 
 def test_a_filter_value_that_disappears_is_dropped(app_db, outline_env) -> None:
