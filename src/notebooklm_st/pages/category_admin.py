@@ -74,7 +74,7 @@ def _render_row(
         )
         st.caption(_usage_text(usage))
         if locked:
-            st.caption(_lock_reason(usage, queued))
+            st.caption(_lock_reason(usage))
         elif usage.channels:
             st.caption(
                 f"지우면 채널 {usage.channels}개의 기본 카테고리에서도"
@@ -109,8 +109,11 @@ def _usage_text(usage: categories.CategoryUsage) -> str:
     return " · ".join(parts) or "아직 쓰는 곳이 없습니다."
 
 
-def _lock_reason(usage: categories.CategoryUsage, queued: bool) -> str:
-    """잠근 이유. 이력이 있으면 그쪽을 먼저 적는다."""
+def _lock_reason(usage: categories.CategoryUsage) -> str:
+    """잠근 이유. 이력이 있으면 그쪽을 먼저 적는다.
+
+    잠긴 행에만 부른다. 이력이 없으면 대기·실행 중인 질의가 쥔 것이다.
+    """
     holder = (
         "이력에서 쓰는 카테고리라"
         if usage.runs

@@ -36,7 +36,8 @@ class SyncCreate:
     """본문에서 읽은 영상 URL."""
     video_id: str
     metadata: models.VideoMetadata | None = None
-    """문서 머리에서 읽은 채널·업로드 일자. 두 줄이 다 없으면 ``None``."""
+    """문서 머리에서 읽은 채널·업로드 일자. 두 줄이 다 없으면
+    ``None``."""
     categories: tuple[str, ...] = ()
     """문서 머리에서 읽은 카테고리 이름. 줄이 없으면 비어 있다."""
 
