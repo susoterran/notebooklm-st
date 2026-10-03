@@ -219,6 +219,9 @@ class FakeNotebookLM:
         """넣은 소스 이름을 기록한다."""
         self.source_titles.append(title)
 
+    async def configure(self, notebook_id, **kwargs):
+        """맞춤 설정을 받는 척한다."""
+
     async def ask(self, notebook_id, question):
         """고정된 답변을 돌려준다."""
         return types.SimpleNamespace(answer="제목: 주제\n\n정리된 글")

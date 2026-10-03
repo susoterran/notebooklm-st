@@ -27,6 +27,15 @@ DIGEST_SOURCE_LIMIT = 10
 막는다.
 """
 
+DIGEST_TRIGGER = "설정된 지시에 따라 정리 문서를 작성하세요."
+"""정리 질의의 본문.
+
+정리 지시는 질의가 아니라 노트북의 맞춤 대화 설정에 싣는다. 질의에는
+서버가 정한 길이 상한(숫자는 알려져 있지 않다)이 있어, 긴 정리 지시를
+실으면 ``status 3`` 으로 거부된다. 맞춤 설정은 실측에서 15,000자도
+그대로 저장되었다. 그래서 질의는 이 짧은 문장과 제목 요구만 남는다.
+"""
+
 
 class ReferenceLike(Protocol):
     """답변에 딸려 오는 인용 한 건.
@@ -56,6 +65,16 @@ class NotebookLike(Protocol):
 
 class ChatLike(Protocol):
     """대화 API."""
+
+    async def configure(
+        self,
+        notebook_id: str,
+        goal: notebooklm.ChatGoal | None = None,
+        response_length: notebooklm.ChatResponseLength | None = None,
+        custom_prompt: str | None = None,
+    ) -> None:
+        """노트북의 대화 설정을 통째로 쓴다. 빠진 값은 기본값이 된다."""
+        ...
 
     async def ask(self, notebook_id: str, question: str) -> AskResultLike:
         """질문을 던지고 응답을 받는다."""
@@ -236,11 +255,12 @@ async def run_digest_pipeline(
     ``run_pipeline`` 과 대칭이다 — 임시 노트북을 만들어 쓰고 반드시
     지운다. 다른 점은 소스가 여럿이고 질문이 하나라는 것뿐이다.
 
-    소스 이름 앞에는 넣은 순서대로 ``S1: `` 같은 번호가 붙고, 지시
-    앞에는 그 번호만 쓰라는 규칙이 붙는다(→ ``core.digest_sources``).
-    지시 뒤에는 제목 요구가 함께 실려 나가고(→ ``core.digest_title``)
-    돌아온 답변에서 그 줄을 떼어 주제로 돌려준다. 질의를 두 번 던지지
-    않는다.
+    소스 이름 앞에는 넣은 순서대로 ``S1: `` 같은 번호가 붙는다. 정리
+    지시는 그 번호만 쓰라는 규칙을 앞에 붙여(→ ``core.digest_sources``)
+    질의가 아니라 노트북의 맞춤 대화 설정에 싣는다. 질의는
+    ``DIGEST_TRIGGER`` 와 제목 요구뿐이다(→ ``core.digest_title``).
+    돌아온 답변에서 제목 줄을 떼어 주제로 돌려준다. 질의를 두 번
+    던지지 않는다.
 
     Args:
         sources: 노트북에 넣을 글들. 상한은 호출자가 지킨다
@@ -255,8 +275,8 @@ async def run_digest_pipeline(
         제목 줄을 주지 않았으면 주제가 ``None`` 이다.
 
     Raises:
-        exceptions.NotebookLMError: 노트북 생성·소스 등록·질의 중
-            어느 단계든 실패한 경우. 정리는 질문이 하나뿐이라 부분
+        exceptions.NotebookLMError: 노트북 생성·소스 등록·대화 설정·질의
+            중 어느 단계든 실패한 경우. 정리는 질문이 하나뿐이라 부분
             성공이 없다.
     """
     async with client_factory() as client:
@@ -279,8 +299,14 @@ async def run_digest_pipeline(
                     wait_timeout=SOURCE_WAIT_TIMEOUT,
                 )
             on_progress("정리 중")
-            prompt = digest_title.wrap(digest_sources.prepend(instruction))
-            result = await client.chat.ask(notebook.id, prompt)
+            await client.chat.configure(
+                notebook.id,
+                goal=notebooklm.ChatGoal.CUSTOM,
+                custom_prompt=digest_sources.prepend(instruction),
+            )
+            result = await client.chat.ask(
+                notebook.id, digest_title.wrap(DIGEST_TRIGGER)
+            )
         finally:
             # run_pipeline 과 같은 이유로 여기서 on_progress 를 부르지
             # 않는다. 콜백이 Streamlit 을 건드리는데, 사용자가 페이지를
