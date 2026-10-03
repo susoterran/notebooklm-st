@@ -137,8 +137,9 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
-| `pages/ask.py` | moderate | 질의 화면. URL 입력·질문 선택 후 대기열에 넣고 반환. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
-| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 확인한 신규에서 Shorts 를 빼고(피드 링크로 가린다) 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
+| `pages/ask.py` | moderate | 질의 화면. URL 입력·질문·카테고리 선택 후 대기열에 넣고 반환. 카테고리가 하나도 없으면 안내만 하고 넣지 못한다. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
+| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 등록·목록 탭에서 채널의 기본 카테고리를 정한다. 확인한 신규에서 Shorts 를 빼고(피드 링크로 가린다) 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 카테고리 선택은 그 채널의 기본값으로 미리 채운다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
+| `pages/category_admin.py` | moderate | 카테고리 CRUD. 이력이나 대기 중인 질의가 쓰는 카테고리는 이름 칸과 버튼을 잠그고 이유를 적는다 |
 | `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기·취소·재개는 버튼 콜백이 한다. 대기열이 멈추면 이유와 재개 버튼을 보인다 |
 | `pages/question_admin.py` | moderate | 질문 템플릿 CRUD. 검증 오류는 `st.error`, 성공 시 `st.rerun` |
 | `pages/history.py` | **complex** | 이력 조회·답변 수정·삭제·마크다운 내려받기. 인용 숨기기와 2단계 삭제 확인을 세션 키로 직접 관리 |
@@ -147,6 +148,7 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `components/run_progress.py` | simple | 실행 표의 머리글과 한 줄(queued/running/failed/done). 대기 줄은 차례 배지와 취소 버튼. 칸 글자는 순수 함수가 만든다. 완료 시 답변 수만, 상세는 이력 화면으로 |
 | `components/auto_save_toggle.py` | simple | 자동 저장 체크. 질의·채널 화면이 위젯 key 만 달리해 DB 설정 하나를 함께 쓴다 |
 | `components/queue_notice.py` | simple | 넣으면 언제 도는지 알리는 안내 셋과 넣은 뒤의 결과 문구. 질의·채널 화면이 함께 쓴다 |
+| `components/category_picker.py` | simple | 카테고리 선택. 값은 ID, 이름은 `format_func`. 질의·채널 화면이 함께 쓰고, 카테고리가 없을 때의 안내 문구도 여기 있다 |
 | `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다(브라우저 로그인 경로는 삭제됨 — `docs/how-to/2026-09-16-auth-reseed.md`) |
 | `components/schema_gate.py` | simple | 기동 직후 커넥션을 열어 보고 스키마 불일치면 안내 후 `st.stop()` |
 
@@ -158,11 +160,13 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `services/auth.py` | **complex** | 쿠키 확인 → 무인 복구 → 최후 수단으로 `sys.executable -m notebooklm login` 자식 프로세스. `AuthGate` 가 앱 수명 동안 한 번만 타게 통제 |
 | `services/run_history.py` | **complex** | `runs`·`answers` CRUD. 저장·목록·상세·답변 수정·삭제 |
 | `services/runner.py` | moderate | 대기열 워커. 넣은 순서대로 한 번에 하나씩 파이프라인을 돌린다. 모든 실패 경로에서 레지스트리를 실패로 마감하고, 다음 실행도 실패할 오류면 대기열을 멈춘다 |
+| `services/run_steps.py` | simple | 워커가 실행 하나에서 거치는 두 단계 — 영상 정보 받기, 결과와 고른 카테고리를 이력에 남기기 |
 | `services/runs.py` | simple | `RunHandle`·`SaveOutcome` 값 객체와 상태 묶음(`FINISHED`·`PENDING`) |
 | `services/run_store.py` | moderate | 스레드 안전 핸들 보관소. 넣기·조회·진행 기록·치우기 |
 | `services/run_registry.py` | moderate | 보관소에 대기열 규칙(워커 자리·차례·멈춤·재개·취소)과 가드 판정(`active_count`·`is_pending`)을 더한다 |
 | `services/store.py` | moderate | 커넥션과 전체 스키마 소유. 마이그레이션 없이 즉시 실패 |
 | `services/questions.py` | moderate | 질문 템플릿 CRUD. 제목 중복·빈 값을 `ValueError` 로 강제 |
+| `services/categories.py` | moderate | 카테고리 CRUD. 이름 규칙·중복과, 이력에서 쓰는 카테고리의 이름 변경·삭제를 `ValueError` 로 막는다. 동기화가 쓰는 `ensure` 는 커밋하지 않는다 |
 
 ### 코어 도메인 — 순수, I/O 없음
 
@@ -173,6 +177,9 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `core/answer_text.py` | moderate | 인용 번호와 후속 제안 블록 제거. 표시 직전에만 호출, 원문 불변 |
 | `core/markdown_export.py` | moderate | 이력 1건 → 마크다운 문서 + 파일명 |
 | `core/youtube.py` | simple | `youtu.be` · `watch?v=` · `/shorts/` 세 형태에서 11자 영상 id 추출 |
+| `core/category_names.py` | simple | 카테고리 이름 규칙(허용 글자·30자)과 이름 순서, 문서 머리 줄 나누기. 관리 화면과 동기화가 같은 규칙을 쓴다 |
+| `core/material_filter.py` | simple | 정리본 재료를 카테고리·채널로 거르는 순수 함수와 필터 선택지 |
+| `core/sync_models.py` | simple | 이력 동기화의 값 객체(문서 목록·계획·생성·갱신·카테고리 갱신) |
 
 ### 데이터 — SQLite 3테이블
 
