@@ -170,6 +170,50 @@ def test_delete_category_refuses_one_used_by_a_run(connection) -> None:
     assert names(connection) == ["경제"]
 
 
+def test_delete_category_rolls_back_when_the_foreign_key_refuses(
+    connection, monkeypatch
+) -> None:
+    """세기와 지우기 사이에 이력이 생겨도 커넥션을 열어 두지 않는다.
+
+    외래키(RESTRICT)가 거절하면 트랜잭션을 되돌리고 사용 중 오류로
+    바꿔 던진다. 쓰기 트랜잭션이 남으면 워커의 이력 저장이 잠긴다.
+    """
+    category = categories.add_category(connection, "경제")
+    use_on_run(connection, category.id)
+    monkeypatch.setattr(
+        categories,
+        "usage",
+        lambda *_: categories.CategoryUsage(runs=0, channels=0),
+    )
+
+    with pytest.raises(ValueError, match="이력에서 쓰는 카테고리"):
+        categories.delete_category(connection, category.id)
+    assert connection.in_transaction is False
+    assert names(connection) == ["경제"]
+
+
+@pytest.mark.parametrize("action", ["add", "rename"])
+def test_a_name_registered_meanwhile_rolls_back(
+    connection, monkeypatch, action
+) -> None:
+    """확인과 쓰기 사이에 같은 이름이 생겨도 커넥션을 열어 두지 않는다.
+
+    UNIQUE 가 거절하면 트랜잭션을 되돌리고 같은 이름 오류로 바꿔
+    던진다. 다른 탭이 그사이 등록한 경우를 확인 생략으로 흉내 낸다.
+    """
+    categories.add_category(connection, "경제")
+    other = categories.add_category(connection, "정치")
+    monkeypatch.setattr(categories, "_require_unique_name", lambda *_: None)
+
+    with pytest.raises(ValueError, match="'경제' 카테고리가 이미 있습니다"):
+        if action == "add":
+            categories.add_category(connection, "경제")
+        else:
+            categories.rename_category(connection, other.id, "경제")
+    assert connection.in_transaction is False
+    assert names(connection) == ["경제", "정치"]
+
+
 def test_delete_category_used_only_by_a_channel(connection) -> None:
     """채널 기본값으로만 쓰이면 지울 수 있고, 그 연결도 사라진다."""
     category = categories.add_category(connection, "경제")

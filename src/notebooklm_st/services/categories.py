@@ -9,9 +9,10 @@ Outline 문서 머리에 적힌 이름과 어긋나기 때문이다. 대기 중�
 쥔 카테고리는 레지스트리를 아는 화면이 따로 막는다.
 """
 
+import contextlib
 import dataclasses
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 from notebooklm_st.core import category_names, models
 from notebooklm_st.services import store
@@ -67,12 +68,13 @@ def add_category(connection: sqlite3.Connection, name: str) -> models.Category:
     cleaned = category_names.validate(name)
     _require_unique_name(connection, cleaned, None)
     now = store.now()
-    row = connection.execute(
-        "INSERT INTO categories (name, created_at, updated_at)"
-        " VALUES (?, ?, ?)"
-        " RETURNING id, name, created_at, updated_at",
-        (cleaned, now, now),
-    ).fetchone()
+    with _refused_as(connection, _duplicate(cleaned)):
+        row = connection.execute(
+            "INSERT INTO categories (name, created_at, updated_at)"
+            " VALUES (?, ?, ?)"
+            " RETURNING id, name, created_at, updated_at",
+            (cleaned, now, now),
+        ).fetchone()
     connection.commit()
     return _to_category(row)
 
@@ -96,10 +98,11 @@ def rename_category(
     if usage(connection, category_id).runs > 0:
         raise ValueError(_IN_USE)
     _require_unique_name(connection, cleaned, category_id)
-    cursor = connection.execute(
-        "UPDATE categories SET name = ?, updated_at = ? WHERE id = ?",
-        (cleaned, store.now(), category_id),
-    )
+    with _refused_as(connection, _duplicate(cleaned)):
+        cursor = connection.execute(
+            "UPDATE categories SET name = ?, updated_at = ? WHERE id = ?",
+            (cleaned, store.now(), category_id),
+        )
     connection.commit()
     if cursor.rowcount == 0:
         raise ValueError(f"카테고리 {category_id} 을 찾을 수 없습니다.")
@@ -119,7 +122,10 @@ def delete_category(connection: sqlite3.Connection, category_id: int) -> None:
     """
     if usage(connection, category_id).runs > 0:
         raise ValueError(_IN_USE)
-    connection.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+    with _refused_as(connection, _IN_USE):
+        connection.execute(
+            "DELETE FROM categories WHERE id = ?", (category_id,)
+        )
     connection.commit()
 
 
@@ -186,7 +192,35 @@ def _require_unique_name(
         (name, category_id),
     ).fetchone()
     if row is not None:
-        raise ValueError(f"'{name}' 카테고리가 이미 있습니다.")
+        raise ValueError(_duplicate(name))
+
+
+def _duplicate(name: str) -> str:
+    """같은 이름이 이미 있다는 오류 문구."""
+    return f"'{name}' 카테고리가 이미 있습니다."
+
+
+@contextlib.contextmanager
+def _refused_as(connection: sqlite3.Connection, message: str) -> Iterator[None]:
+    """제약 위반을 되돌리고 같은 뜻의 ``ValueError`` 로 바꾼다.
+
+    서비스의 확인과 쓰기 사이에 다른 탭이나 워커가 끼어들면
+    UNIQUE·RESTRICT 가 거절한다. 레거시 트랜잭션 모드는 그때 연
+    ``BEGIN`` 을 남기므로, 되돌리지 않으면 공유 커넥션이 쓰기 잠금을
+    쥔 채 남아 다른 커넥션의 저장이 막힌다.
+
+    Args:
+        connection: 쓰기를 실행하는 커넥션.
+        message: 바꿔 던질 오류 문구.
+
+    Raises:
+        ValueError: 블록 안에서 ``sqlite3.IntegrityError`` 가 난 경우.
+    """
+    try:
+        yield
+    except sqlite3.IntegrityError as error:
+        connection.rollback()
+        raise ValueError(message) from error
 
 
 def _to_category(row: sqlite3.Row) -> models.Category:
