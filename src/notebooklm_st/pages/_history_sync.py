@@ -13,7 +13,12 @@ import sqlite3
 import streamlit as st
 
 from notebooklm_st.core import labels, sync_models
-from notebooklm_st.services import history_sync, outline, run_history_sync
+from notebooklm_st.services import (
+    categories,
+    history_sync,
+    outline,
+    run_history_sync,
+)
 
 _PLAN_KEY = "history_sync_plan"
 _RESULT_KEY = "history_sync_result"
@@ -33,6 +38,8 @@ def render(connection: sqlite3.Connection) -> None:
             "Outline 컬렉션의 문서 목록과 저장된 이력을 맞춥니다."
             " Outline 에 없는 이력은 지우고, 이력에 없는 문서는 새로"
             " 만듭니다. 채널·업로드일은 문서 머리에서 읽어 채웁니다."
+            " 카테고리는 문서 머리에서 읽어 맞추고, 모르는 이름은 새로"
+            " 등록합니다."
         )
         config = outline.config_from_env()
         if config is None:
@@ -66,7 +73,8 @@ def _check(
         st.error(str(error))
         return
     exported = run_history_sync.list_exported(connection)
-    st.session_state[_PLAN_KEY] = history_sync.plan(exported, documents)
+    known = {item.name for item in categories.list_categories(connection)}
+    st.session_state[_PLAN_KEY] = history_sync.plan(exported, documents, known)
 
 
 def _render_plan(
@@ -75,15 +83,20 @@ def _render_plan(
     """미리보기와 적용·취소 버튼을 그린다.
 
     expander 는 중첩할 수 없으므로 세 목록은 마크다운으로 그린다.
-    채널·업로드일 갱신은 개수만 그린다. 처음 채울 때는 저장된 요약본
-    전부가 대상이라 목록이 길다.
+    채널·업로드일 갱신과 카테고리 갱신은 개수만 그린다. 처음 채울
+    때는 저장된 요약본 전부가 대상이라 목록이 길다. 새로 등록할
+    카테고리는 사람이 알아야 할 변화라 이름까지 그린다.
     """
     st.markdown(
         f"지울 이력 {len(sync_plan.deletes)}건"
         f" · 만들 문서 {len(sync_plan.creates)}건"
         f" · 채널·업로드일 갱신 {len(sync_plan.updates)}건"
+        f" · 카테고리 갱신 {len(sync_plan.category_updates)}건"
+        f" · 새 카테고리 {len(sync_plan.new_categories)}개"
         f" · 건너뛴 문서 {len(sync_plan.skips)}건"
     )
+    if sync_plan.new_categories:
+        st.markdown("**새 카테고리** " + ", ".join(sync_plan.new_categories))
     if sync_plan.deletes:
         st.markdown(
             "**지울 이력**\n"
@@ -141,5 +154,7 @@ def _apply(
     st.session_state[_RESULT_KEY] = (
         f"동기화 완료 · 지움 {result.deleted}건 · 만듦 {result.created}건"
         f" · 갱신 {result.updated}건"
+        f" · 카테고리 갱신 {result.recategorized}건"
+        f" · 새 카테고리 {result.categories_added}개"
     )
     st.rerun()
