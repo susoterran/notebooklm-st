@@ -44,11 +44,13 @@ def render(
     entries: tuple[models.FeedEntry, ...],
     table_key: str,
     questions_key: str,
+    categories_key: str,
     selected: list[models.FeedEntry],
     chosen: list[models.Question],
+    category_ids: list[int],
     auto_save: bool,
 ) -> None:
-    """질문 안내, 넣기 버튼, 넣은 뒤의 결과를 그린다.
+    """질문·카테고리 안내, 넣기 버튼, 넣은 뒤의 결과를 그린다.
 
     Args:
         registry: 실행 레지스트리.
@@ -56,18 +58,29 @@ def render(
         table_key: 표의 위젯 key. 콜백이 누른 순간의 선택을 읽는다.
         questions_key: 질문 선택의 위젯 key. 콜백이 누른 순간의
             질문을 읽는다.
+        categories_key: 카테고리 선택의 위젯 key. 질문과 같다.
         selected: 지금 표에서 고른 영상. 버튼 라벨과 잠금에 쓴다.
         chosen: 지금 고른 질문들. 버튼 잠금에 쓴다.
+        category_ids: 지금 고른 카테고리 ID. 버튼 잠금에 쓴다.
         auto_save: 화면에 보이는 자동 저장 값.
     """
     if not chosen:
         st.info("질문을 하나 이상 고르세요.")
+    if not category_ids:
+        st.info("카테고리를 하나 이상 고르세요.")
     st.button(
         f"선택한 영상 요약 ({len(selected)}건)",
         key="channels_enqueue",
-        disabled=not selected or not chosen,
+        disabled=not selected or not chosen or not category_ids,
         on_click=_enqueue_selected,
-        args=(registry, entries, table_key, questions_key, auto_save),
+        args=(
+            registry,
+            entries,
+            table_key,
+            questions_key,
+            categories_key,
+            auto_save,
+        ),
     )
     _render_result()
 
@@ -77,31 +90,34 @@ def _enqueue_selected(
     entries: tuple[models.FeedEntry, ...],
     table_key: str,
     questions_key: str,
+    categories_key: str,
     auto_save: bool,
 ) -> None:
     """고른 영상을 목록 순서로 대기열에 넣고 표의 선택을 비운다.
 
-    넣기 버튼의 ``on_click`` 콜백이다. 표 선택과 질문은 버튼을 그릴
-    때가 아니라 누른 순간의 세션 값을 읽는다. 결과 문구는 세션에
-    적어 다음 그림에서 한 번 보인다.
+    넣기 버튼의 ``on_click`` 콜백이다. 표 선택·질문·카테고리는 버튼을
+    그릴 때가 아니라 누른 순간의 세션 값을 읽는다. 결과 문구는
+    세션에 적어 다음 그림에서 한 번 보인다.
 
     Args:
         registry: 실행 레지스트리.
         entries: 표에 그린 신규 영상.
         table_key: 표의 위젯 key.
         questions_key: 질문 선택의 위젯 key.
+        categories_key: 카테고리 선택의 위젯 key.
         auto_save: 화면에 보이는 자동 저장 값. 넣은 실행마다 고정된다.
     """
     state = st.session_state.get(table_key) or {}
     rows = state.get("selection", {}).get("rows", [])
     chosen = st.session_state.get(questions_key, [])
+    category_ids = st.session_state.get(categories_key, [])
     targets = _channel_videos.selected_entries(entries, rows)
-    if not targets or not chosen:
+    if not targets or not chosen or not category_ids:
         return
     ahead = queue_notice.count_ahead(registry)
     paused = registry.paused_reason() is not None
     digesting = session.get_digest_registry().is_running()
-    added = _enqueue_each(registry, targets, chosen, auto_save)
+    added = _enqueue_each(registry, targets, chosen, category_ids, auto_save)
     st.session_state[_GENERATION_KEY] = generation() + 1
     if added == 0:
         st.session_state[_ENQUEUED_KEY] = _Enqueued(_ALL_PENDING, added=False)
@@ -120,6 +136,7 @@ def _enqueue_each(
     registry: run_registry.RunRegistry,
     targets: list[models.FeedEntry],
     chosen: list[models.Question],
+    category_ids: list[int],
     auto_save: bool,
 ) -> int:
     """대기·실행 중이 아닌 영상을 차례로 넣고 넣은 수를 돌려준다.
@@ -131,6 +148,7 @@ def _enqueue_each(
         registry: 실행 레지스트리.
         targets: 넣을 영상. 이 순서대로 대기열에 선다.
         chosen: 모든 영상에 쓸 질문들.
+        category_ids: 모든 영상에 붙일 카테고리 ID.
         auto_save: 넣은 실행에 고정할 자동 저장 값.
 
     Returns:
@@ -148,6 +166,7 @@ def _enqueue_each(
             store.default_db_path(),
             auto_save=auto_save,
             is_blocked=digests.is_running,
+            category_ids=category_ids,
         )
         added += 1
     return added

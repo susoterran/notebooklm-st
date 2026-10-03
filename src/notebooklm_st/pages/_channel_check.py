@@ -20,10 +20,15 @@ import sqlite3
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.components import auto_save_toggle, queue_notice
+from notebooklm_st.components import (
+    auto_save_toggle,
+    category_picker,
+    queue_notice,
+)
 from notebooklm_st.core import models, new_videos
 from notebooklm_st.pages import _channel_enqueue, _channel_videos
 from notebooklm_st.services import (
+    categories,
     channel_feed,
     channels,
     questions,
@@ -52,6 +57,22 @@ class _Checked:
     error: str | None
     shorts: int = 0
     """``entries`` 에서 뺀 신규 Shorts 의 건수."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Choices:
+    """넣기에 쓸 질문과 카테고리. 화면 전용 값이다."""
+
+    questions: list[models.Question]
+    category_ids: list[int]
+    ready: bool
+    """질문과 카테고리가 둘 다 등록되어 있다. 거짓이면 넣기 쪽을 그리지
+    않는다."""
+
+
+def categories_key(channel_pk: int) -> str:
+    """확인 탭의 카테고리 선택 key. 기준일처럼 채널마다 다르다."""
+    return f"channels_check_categories_{channel_pk}"
 
 
 def render(
@@ -145,8 +166,58 @@ def _check(
 def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
     """확인 결과를 표로 그리고 고른 영상을 넣을 수 있게 한다.
 
-    질문 선택은 결과보다 먼저 그린다. 결과가 오류나 빈 목록이어도
-    위젯이 그려져야 고른 질문이 남는다.
+    질문과 카테고리 선택은 결과보다 먼저 그린다. 결과가 오류나 빈
+    목록이어도 위젯이 그려져야 고른 값이 남는다.
+    """
+    choices = _render_choices(connection, found.channel_pk)
+    if found.error is not None:
+        st.error(f"{found.title}: {found.error}")
+        return
+    if not found.entries:
+        st.info("새 영상이 없습니다.")
+        _render_shorts_note(found.shorts)
+        return
+    registry = session.get_registry()
+    auto_save = False
+    if choices.ready:
+        auto_save = auto_save_toggle.render(
+            connection, _AUTO_SAVE_KEY, _AUTO_SAVE_LOCKED_KEY
+        )
+        queue_notice.render(registry)
+    st.subheader(found.title)
+    _render_shorts_note(found.shorts)
+    key = _channel_videos.widget_key(
+        found.entries, _channel_enqueue.generation()
+    )
+    selected = _channel_videos.render(found.entries, registry.list_all(), key)
+    if choices.ready:
+        _channel_enqueue.render(
+            registry,
+            found.entries,
+            key,
+            _QUESTIONS_KEY,
+            categories_key(found.channel_pk),
+            selected,
+            choices.questions,
+            choices.category_ids,
+            auto_save,
+        )
+
+
+def _render_choices(
+    connection: sqlite3.Connection, channel_pk: int
+) -> _Choices:
+    """질문 선택과 카테고리 선택을 그린다.
+
+    둘 중 하나라도 등록된 것이 없으면 그 자리에 안내를 보인다.
+
+    Args:
+        connection: 열린 커넥션.
+        channel_pk: 확인한 채널. 카테고리 선택의 key 와 기본값을
+            정한다.
+
+    Returns:
+        고른 질문과 카테고리 ID, 넣기 쪽을 그릴 수 있는지.
     """
     question_list = questions.list_questions(connection)
     chosen: list[models.Question] = []
@@ -160,36 +231,33 @@ def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
             key=_QUESTIONS_KEY,
             help="고른 질문을 이번에 넣는 영상 모두에 씁니다.",
         )
-    if found.error is not None:
-        st.error(f"{found.title}: {found.error}")
-        return
-    if not found.entries:
-        st.info("새 영상이 없습니다.")
-        _render_shorts_note(found.shorts)
-        return
-    registry = session.get_registry()
-    auto_save = False
-    if question_list:
-        auto_save = auto_save_toggle.render(
-            connection, _AUTO_SAVE_KEY, _AUTO_SAVE_LOCKED_KEY
+    category_list = categories.list_categories(connection)
+    category_ids: list[int] = []
+    if not category_list:
+        st.info(category_picker.NO_CATEGORIES)
+    else:
+        category_ids = _render_categories(connection, channel_pk, category_list)
+    return _Choices(chosen, category_ids, bool(question_list and category_list))
+
+
+def _render_categories(
+    connection: sqlite3.Connection,
+    channel_pk: int,
+    category_list: list[models.Category],
+) -> list[int]:
+    """그 채널의 카테고리 선택을 그리고 고른 ID 를 돌려준다.
+
+    키가 세션에 없을 때만 채널의 기본 카테고리로 채운다. 바꾼 값은
+    채널에 적지 않는다 — 기본값은 등록된 채널 탭에서 고친다.
+    """
+    key = categories_key(channel_pk)
+    if key not in st.session_state:
+        st.session_state[key] = list(
+            channels.default_category_ids(connection, channel_pk)
         )
-        queue_notice.render(registry)
-    st.subheader(found.title)
-    _render_shorts_note(found.shorts)
-    key = _channel_videos.widget_key(
-        found.entries, _channel_enqueue.generation()
+    return category_picker.render(
+        "카테고리", category_list, key, category_picker.QUERY_HELP
     )
-    selected = _channel_videos.render(found.entries, registry.list_all(), key)
-    if question_list:
-        _channel_enqueue.render(
-            registry,
-            found.entries,
-            key,
-            _QUESTIONS_KEY,
-            selected,
-            chosen,
-            auto_save,
-        )
 
 
 def _render_shorts_note(count: int) -> None:

@@ -168,7 +168,10 @@ def put_pending(connection, video_id) -> None:
 
 
 def checked(app_db, monkeypatch, *entries, choose=True):
-    """채널과 질문을 하나씩 두고 확인을 눌러 신규를 띄운다.
+    """채널·질문·카테고리를 하나씩 두고 확인을 눌러 신규를 띄운다.
+
+    카테고리는 채널의 기본값으로 둔다. 확인 탭이 그 값으로 미리
+    채우므로 넣기 버튼이 카테고리 때문에 잠기지 않는다.
 
     Args:
         app_db: 앱이 쓰는 임시 DB.
@@ -179,7 +182,9 @@ def checked(app_db, monkeypatch, *entries, choose=True):
     Returns:
         확인을 마친 AppTest.
     """
-    registered(app_db)
+    category = categories.add_category(app_db, "경제")
+    channel = registered(app_db)
+    channels.set_default_categories(app_db, channel.id, [category.id])
     questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
     check_feed(monkeypatch, feed_with(*entries))
     app = v1.AppTest.from_function(script)
@@ -994,3 +999,122 @@ def test_default_categories_survive_quick_changes(app_db) -> None:
 
     assert not app.exception
     assert channels.default_category_ids(app_db, channel.id) == ()
+
+
+def check_key(channel_pk: int) -> str:
+    """확인 탭의 카테고리 선택 key."""
+    return f"channels_check_categories_{channel_pk}"
+
+
+def record_categories(monkeypatch) -> list[tuple[int, ...]]:
+    """``runner.enqueue`` 를 막고 넘어온 카테고리 ID 를 기록한다."""
+    from notebooklm_st.pages import _channel_enqueue
+
+    received: list[tuple[int, ...]] = []
+
+    def fake_enqueue(registry, url, question_list, db_path, **kwargs):
+        """대기로만 넣고 카테고리 ID 를 기록한다."""
+        received.append(tuple(kwargs["category_ids"]))
+        return registry.enqueue(
+            url, youtube.extract_video_id(url) or "", tuple(question_list)
+        )
+
+    monkeypatch.setattr(_channel_enqueue.runner, "enqueue", fake_enqueue)
+    return received
+
+
+def test_the_check_tab_starts_from_the_channel_defaults(
+    app_db, monkeypatch
+) -> None:
+    """확인 탭의 카테고리는 그 채널의 기본값으로 시작한다."""
+    app = checked(app_db, monkeypatch, make_entry())
+    channel = channels.list_channels(app_db)[0]
+
+    picker = app.multiselect(key=check_key(channel.id))
+    assert picker.label == "카테고리"
+    assert picker.value == list(
+        channels.default_category_ids(app_db, channel.id)
+    )
+
+
+def test_a_changed_check_choice_is_not_saved_to_the_channel(
+    app_db, monkeypatch
+) -> None:
+    """확인 탭에서 바꾼 카테고리는 채널 기본값에 적지 않는다."""
+    app = checked(app_db, monkeypatch, make_entry())
+    channel = channels.list_channels(app_db)[0]
+    before = channels.default_category_ids(app_db, channel.id)
+
+    app.multiselect(key=check_key(channel.id)).set_value([]).run()
+
+    assert not app.exception
+    assert channels.default_category_ids(app_db, channel.id) == before
+
+
+def test_each_channel_starts_from_its_own_defaults(app_db, monkeypatch) -> None:
+    """채널을 바꾸면 그 채널의 기본값으로 시작한다."""
+    economy = categories.add_category(app_db, "경제")
+    politics = categories.add_category(app_db, "정치")
+    first = registered(app_db, title="가 채널")
+    second = registered(app_db, title="나 채널", channel_id=OTHER_CHANNEL_ID)
+    channels.set_default_categories(app_db, first.id, [economy.id])
+    channels.set_default_categories(app_db, second.id, [politics.id])
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    check_feed(monkeypatch, feed_with(make_entry()))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+    assert app.multiselect(key=check_key(first.id)).value == [economy.id]
+
+    app.selectbox[0].set_value(channels.list_channels(app_db)[1]).run()
+    button_by(app, "새 영상 확인").click().run()
+
+    assert not app.exception
+    assert app.multiselect(key=check_key(second.id)).value == [politics.id]
+
+
+def test_enqueue_waits_for_a_category(app_db, monkeypatch) -> None:
+    """질문과 행을 골랐어도 카테고리가 없으면 버튼이 잠긴다."""
+    entries = (make_entry(),)
+    app = checked(app_db, monkeypatch, *entries)
+    channel = channels.list_channels(app_db)[0]
+    app.multiselect(key=check_key(channel.id)).set_value([]).run()
+    select_videos(app, entries, [0])
+    app.run()
+
+    assert "카테고리를 하나 이상 고르세요." in [item.value for item in app.info]
+    button = app.button(key="channels_enqueue")
+    assert button.label == "선택한 영상 요약 (1건)"
+    assert button.disabled is True
+
+
+def test_enqueue_hands_the_chosen_categories(app_db, monkeypatch) -> None:
+    """고른 카테고리 ID 가 넣는 영상마다 러너로 넘어간다."""
+    received = record_categories(monkeypatch)
+    app = checked(app_db, monkeypatch, *BOTH)
+    [category] = categories.list_categories(app_db)
+
+    click_enqueue(app, BOTH, [0, 1])
+
+    assert not app.exception
+    assert received == [(category.id,), (category.id,)]
+
+
+def test_without_categories_the_check_tab_says_so(app_db, monkeypatch) -> None:
+    """카테고리가 없으면 안내하고, 넣기 버튼 없이 표만 보인다."""
+    registered(app_db)
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    check_feed(monkeypatch, feed_with(make_entry()))
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    button_by(app, "새 영상 확인").click().run()
+
+    assert not app.exception
+    assert (
+        "카테고리 관리 화면에서 카테고리를 먼저 등록하세요. 카테고리를"
+        " 고르지 않으면 질의할 수 없습니다."
+    ) in [item.value for item in app.info]
+    assert len(app.dataframe) == 1
+    assert all(item.key != "channels_enqueue" for item in app.button)
