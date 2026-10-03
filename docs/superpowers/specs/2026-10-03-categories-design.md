@@ -1,7 +1,7 @@
 # 카테고리 설계 — 문서에 주제를 달고 정리본 재료를 거르기
 
 - **작성일**: 2026-10-03
-- **상태**: 설계 검토 중
+- **상태**: 구현 완료 (2026-10-03)
 - **대상**: 신규 `core/category_names.py`·`core/material_filter.py`·
   `core/sync_models.py`·`services/categories.py`·
   `services/run_steps.py`·`components/category_picker.py`·
