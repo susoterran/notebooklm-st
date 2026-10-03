@@ -30,7 +30,7 @@ YouTube 영상 URL과 미리 등록해 둔 질문을 조합해 **NotebookLM(Gemi
 ```
 app.py  →  pages/ · components/  →  session.py · services/  →  core/
                                           ↓
-                                    SQLite (3 tables) · NotebookLM API
+                                    SQLite (9 tables) · NotebookLM API
 ```
 
 | 레이어 | 파일 수 | 설명 |
@@ -39,7 +39,7 @@ app.py  →  pages/ · components/  →  session.py · services/  →  core/
 | **UI 레이어** | 11 | 질의·실행 현황·이력·질문 관리·정리 화면과 답변 카드·인증 게이트·진행 표시 컴포넌트 |
 | **서비스 레이어** | 8 | NotebookLM HTTP API 호출, SQLite 저장소, `notebooklm login` 자식 프로세스까지 **외부 I/O 를 전담하는 유일한 레이어** |
 | **코어 도메인** | 6 | 프로젝트 내부 의존성 없이 순수 함수와 frozen dataclass 만 — URL 파싱, 답변 텍스트 정제, 마크다운 내보내기, 오류 매핑 |
-| **데이터 레이어** | 3 | `store.py` 가 생성하는 SQLite 테이블 스키마 (`questions` · `runs` · `answers`) |
+| **데이터 레이어** | 9 | `store.py` 가 생성하는 SQLite 테이블 스키마 (`questions` · `runs` · `answers` · `run_metadata` · `channels` · `settings` · `categories` · `run_categories` · `channel_categories`) |
 | **테스트 레이어** | 27 | `core`·`services`·`pages` 구조를 그대로 미러링한 pytest 스위트 + smoke check |
 | **빌드·실행 설정** | 4 | `pyproject.toml`, `.streamlit/config.toml`, `run.ps1`, `run.bat` |
 | **개발 도구·거버넌스** | 14 | 브랜치·커밋 규칙 문서, 명령·시크릿 가드 hook, MCP 및 지식 그래프 도구 설정 |
@@ -102,9 +102,9 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | 1 | **제품 기획서 읽기** — 목적·범위·사용 시나리오·예외 처리 | `docs/requests/2026-08-28-youtube-qa.md` |
 | 2 | **앱을 띄우는 방법** — 코드보다 먼저 굴려 본다 | `pyproject.toml`, `.streamlit/config.toml`, `run.ps1`, `run.bat` |
 | 3 | **진입점과 스키마 게이트** — 파일 순서가 곧 부팅 절차 | `app.py`, `components/schema_gate.py` |
-| 4 | **다섯 개 화면 둘러보기** — '시작' 과 '관찰' 이 갈라진 것이 첫 단서 | `pages/*.py` |
+| 4 | **아홉 개 화면 둘러보기** — '시작' 과 '관찰' 이 갈라진 것이 첫 단서 | `pages/*.py` |
 | 5 | **코어 순수 도메인 계층** — 위를 절대 import 하지 않는 안쪽 | `core/*.py` |
-| 6 | **SQLite 저장소와 세 테이블** | `services/store.py` + `questions`·`runs`·`answers` |
+| 6 | **SQLite 저장소와 아홉 테이블** | `services/store.py` + `questions`·`runs`·`answers`·`run_metadata`·`channels`·`settings`·`categories`·`run_categories`·`channel_categories` |
 | 7 | **질문 템플릿과 이력 CRUD** | `services/questions.py`, `services/run_history.py` |
 | 8 | **NotebookLM 파이프라인의 핵심 트릭** | `services/nlm.py` |
 | 9 | **백그라운드 실행과 공유 레지스트리** — 가장 어려운 제약 | `services/runner.py`, `services/runs.py`, `services/run_store.py`, `services/run_registry.py`, `session.py` |
@@ -130,7 +130,7 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
-| `src/notebooklm_st/app.py` | simple | 스키마 게이트 → 화면 5개 `st.navigation` 등록 → 인증 게이트 → 선택된 페이지 실행. 모듈 최상단에서 `main()` 호출 |
+| `src/notebooklm_st/app.py` | simple | 스키마 게이트 → 화면 9개(카테고리 관리 포함) `st.navigation` 등록 → 인증 게이트 → 선택된 페이지 실행. 모듈 최상단에서 `main()` 호출 |
 | `src/notebooklm_st/session.py` | simple | 앱 전역 싱글턴 3개(SQLite 커넥션, 실행 레지스트리, 인증 게이트) |
 
 ### UI 레이어
@@ -181,13 +181,19 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `core/material_filter.py` | simple | 정리본 재료를 카테고리·채널로 거르는 순수 함수와 필터 선택지 |
 | `core/sync_models.py` | simple | 이력 동기화의 값 객체(문서 목록·계획·생성·갱신·카테고리 갱신) |
 
-### 데이터 — SQLite 3테이블
+### 데이터 — SQLite 9테이블
 
 | 테이블 | 내용 |
 |---|---|
 | `questions` | 재사용할 질문 템플릿 (제목 중복 불가) |
 | `runs` | 한 번의 영상 질의 실행 — 원본 URL · video_id · 영상 제목 · 실행 시각 |
 | `answers` | 실행별 질문·답변·인용(JSON TEXT)·오류. `runs(id)` 를 `ON DELETE CASCADE` 로 참조 |
+| `run_metadata` | 실행별 채널·업로드일. `runs(id)` 를 `ON DELETE CASCADE` 로 참조 |
+| `channels` | 등록한 YouTube 채널과 기준일 |
+| `settings` | 키·값 설정(자동 저장 여부 등) |
+| `categories` | 카테고리 이름 (중복 불가) |
+| `run_categories` | 실행과 카테고리의 연결. 실행이 지워지면 함께 지워지고, 이력이 쓰는 카테고리는 `ON DELETE RESTRICT` 로 지우지 못한다 |
+| `channel_categories` | 채널의 기본 카테고리. 채널이나 카테고리가 지워지면 함께 지워진다 |
 
 ---
 

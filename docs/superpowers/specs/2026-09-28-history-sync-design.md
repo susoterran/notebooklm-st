@@ -4,8 +4,8 @@
 - **상태**: 구현 완료 (2026-09-28)
 - **대상**: 신규 `services/history_sync.py`·`services/run_history_sync.py`·
   `services/outline_parse.py`·`services/outline_messages.py`·
-  `core/outline_import.py`·`pages/_history_sync.py`, 수정
-  `services/outline.py`·`services/run_history.py`·`core/sync_models.py`·
+  `core/outline_import.py`·`core/sync_models.py`·`pages/_history_sync.py`,
+  수정 `services/outline.py`·`services/run_history.py`·
   `core/markdown_export.py`·`pages/history.py`·`README.md`.
   스키마(`services/store.py`), 러너(`services/runner.py`),
   정리본(`services/digest*.py`·`core/digest*.py`), 채널
@@ -170,7 +170,7 @@ pages/_history_sync.py           버튼·미리보기·적용 (Streamlit 만 안
    └─► services/history_sync.apply(conn, plan)          새 카테고리 등록 + 삭제 + 삽입
              │                                          + 메타데이터 갱신 + 카테고리 교체,
              │                                          커밋 하나
-             ├─► categories.ensure                      새 카테고리 이름
+             ├─► categories.ensure                      계획이 가리키는 이름 중 없는 것
              ├─► run_history_sync.delete_runs           (id, outline_id) 쌍
              ├─► run_history_sync.insert_exported
              ├─► run_history_sync.write_metadata        (id, outline_id) 쌍
@@ -264,7 +264,9 @@ plan(list_exported(conn), documents, list_categories(conn) 의 이름) → 세�
   않으므로 지워지지 않는다. 메타데이터 갱신과 카테고리 교체도 같은
   쌍으로 맞추고, 쌍이 맞지 않거나 값이 이미 같으면 쓰지 않는다. 다른
   탭이 같은 카테고리 이름을 먼저 등록했으면 결과의 `categories_added`
-  가 계획의 `new_categories` 수보다 작다. 오류가 아니다. 만들 문서의
+  가 계획의 `new_categories` 수보다 작다. 미리보기 때 있던 이름을 다른
+  탭이 지웠으면 적용이 그 이름을 다시 등록해 잇고, 그만큼 크다. 둘 다
+  오류가 아니다. 만들 문서의
   `outline_id` 가 이미 있으면 그 항목만 건너뛴다. 결과 문구에는 실제
   개수를 적는다.
 
@@ -559,8 +561,9 @@ def apply(
   넣고, 생성·카테고리 갱신 대상의 이름 중 `known_categories` 에 없는
   것을 이름 순으로 `new_categories` 에 모은다
   (`2026-10-03-categories-design.md` 7.6).
-- `apply` 는 `categories.ensure` 로 `new_categories` 를 등록하고,
-  `delete_runs` 에 `[(run.id, run.outline_id or "") for run in
+- `apply` 는 생성·카테고리 갱신 대상이 가리키는 이름을 모두
+  `categories.ensure` 에 넘겨 없는 것을 등록하고(`new_categories` 만
+  넘기면 미리보기 뒤 다른 탭이 지운 이름을 잇지 못한다), `delete_runs` 에 `[(run.id, run.outline_id or "") for run in
   sync_plan.deletes]` 를 넘긴 뒤 각 `insert_exported`·`write_metadata`·
   `replace_categories` 를 돌리고 커밋한다. 새 카테고리 등록 → 삭제 →
   삽입 → 메타데이터 갱신 → 카테고리 교체 순이며 커밋은 하나다. 어떤
@@ -573,7 +576,8 @@ def apply(
   **실제로** 바꾼 행 수(`recategorized`, `replace_categories` 가 `True` 인
   수), **실제로** 등록한 카테고리 수(`categories_added`, `ensure` 가
   돌려준 수)다. 계획의 개수와 다를 수 있다 — 미리보기와 적용 사이에
-  다른 탭이 먼저 지우거나 저장하거나 같은 카테고리를 등록했을 수 있다.
+  다른 탭이 먼저 지우거나 저장하거나 같은 카테고리를 등록하거나
+  지웠을 수 있다.
 - `SyncResult` 는 화면이 문구 하나 만드는 데만 쓰므로 `core/models.py`
   가 아니라 이 모듈에 둔다.
 
@@ -723,9 +727,10 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 
 ## 12. 건드리는 파일
 
-**신규 — 소스 6, 테스트 3**
+**신규 — 소스 7, 테스트 3**
 
 - `src/notebooklm_st/core/outline_import.py`
+- `src/notebooklm_st/core/sync_models.py` — 동기화 값 객체(6장)
 - `src/notebooklm_st/services/history_sync.py`
 - `src/notebooklm_st/services/run_history_sync.py` (7.2)
 - `src/notebooklm_st/services/outline_parse.py` (7.1 의 분리)
@@ -735,9 +740,8 @@ URL"` 상수를 두고 양쪽이 쓴다. 한쪽만 바뀌는 사고를 막는다
 - `tests/services/test_run_history_sync.py`
 - `tests/services/test_history_sync.py`
 
-**수정 9**
+**수정 8**
 
-- `src/notebooklm_st/core/sync_models.py` — 동기화 값 객체(6장)
 - `src/notebooklm_st/core/markdown_export.py` — `SOURCE_URL_LABEL`·
   `CHANNEL_LABEL`·`UPLOAD_DATE_LABEL` 상수
 - `src/notebooklm_st/services/outline.py` — `_post`·`list_documents`·
