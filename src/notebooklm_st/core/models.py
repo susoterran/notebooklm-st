@@ -129,8 +129,8 @@ class RunSummary:
     """이력 목록에 한 줄로 보여 줄 실행 요약.
 
     ``exported_at`` 이 채워져 있으면 이 실행은 Outline 으로 넘어갔고
-    로컬에는 링크와 영상 메타데이터만 남아 있다. 링크 넷은 항상 함께
-    채워지거나 함께 비어 있다.
+    로컬에는 링크와 영상 메타데이터, 카테고리만 남아 있다. 링크 넷은
+    항상 함께 채워지거나 함께 비어 있다.
     """
 
     id: int
@@ -146,6 +146,8 @@ class RunSummary:
     metadata: VideoMetadata | None = None
     """``run_metadata`` 행. 행이 없으면 ``None`` — 두 값이 빈 행과
     구분된다."""
+    categories: tuple[str, ...] = ()
+    """붙은 카테고리 이름. 이름 순이다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

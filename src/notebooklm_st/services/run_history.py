@@ -6,8 +6,9 @@
 """
 
 import sqlite3
+from collections.abc import Sequence
 
-from notebooklm_st.core import models
+from notebooklm_st.core import category_names, models
 from notebooklm_st.services import store
 
 
@@ -35,6 +36,10 @@ SUMMARY_SELECT = (
     "SELECT r.id, r.url, r.video_id, r.title, r.created_at,"
     " r.outline_id, r.outline_url, r.outline_title, r.exported_at,"
     " m.run_id AS metadata_run_id, m.channel, m.upload_date,"
+    " (SELECT group_concat(c.name, ',')"
+    " FROM run_categories AS rc"
+    " JOIN categories AS c ON c.id = rc.category_id"
+    " WHERE rc.run_id = r.id) AS category_names,"
     " COUNT(a.id) AS answer_count"
     " FROM runs AS r"
     " LEFT JOIN answers AS a ON a.run_id = r.id"
@@ -44,7 +49,10 @@ SUMMARY_SELECT = (
 함께 쓰는 SELECT 머리.
 
 ``run_metadata`` 는 실행 하나에 많아야 한 행이라 조인이 답변 행을
-불리지 않는다."""
+불리지 않는다. 카테고리는 서브쿼리라 마찬가지다. 이름에는 쉼표가
+없으므로(``core.category_names``) 쉼표로 이어도 다시 나눌 수 있다.
+순서는 SQL 이 아니라 ``row_to_summary`` 가 정한다 — 운영 이미지의
+SQLite 는 집계 함수 안의 정렬을 모른다."""
 
 
 def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
@@ -53,6 +61,7 @@ def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
     ``run_history_sync`` 도 이 함수를 그대로 가져다 쓴다. SQL 을
     두 모듈에 중복해 두지 않으려는 것이다.
     """
+    names = row["category_names"]
     metadata = None
     if row["metadata_run_id"] is not None:
         metadata = models.VideoMetadata(
@@ -70,6 +79,7 @@ def row_to_summary(row: sqlite3.Row) -> models.RunSummary:
         outline_title=row["outline_title"],
         exported_at=row["exported_at"],
         metadata=metadata,
+        categories=category_names.ordered(names.split(",")) if names else (),
     )
 
 
@@ -77,6 +87,7 @@ def save_run(
     connection: sqlite3.Connection,
     result: models.RunResult,
     metadata: models.VideoMetadata | None = None,
+    category_ids: Sequence[int] = (),
 ) -> int:
     """실행 결과를 이력으로 저장한다.
 
@@ -90,6 +101,9 @@ def save_run(
         metadata: 영상에서 뽑아 온 메타데이터. 없으면 행을 만들지
             않는다 — 빈 행과 없는 행이 같은 뜻이 되면 나중에
             구분하지 못한다.
+        category_ids: 넣을 때 고른 카테고리 ID. 그사이 지워진 ID 는
+            조용히 빠진다 — 이력 저장이 외래키 오류로 실패하는 것보다
+            낫다. 같은 ID 가 두 번 와도 한 번만 잇는다.
 
     Returns:
         저장된 실행의 ID.
@@ -124,6 +138,11 @@ def save_run(
             " VALUES (?, ?, ?)",
             (run_id, metadata.channel, metadata.upload_date),
         )
+    connection.executemany(
+        "INSERT OR IGNORE INTO run_categories (run_id, category_id)"
+        " SELECT ?, id FROM categories WHERE id = ?",
+        [(run_id, category_id) for category_id in category_ids],
+    )
     connection.commit()
     return run_id
 

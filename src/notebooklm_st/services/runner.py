@@ -36,6 +36,7 @@ def enqueue(
     auto_save: bool,
     is_blocked: Callable[[], bool],
     pipeline: PipelineCallable = nlm.run_pipeline,
+    category_ids: Sequence[int] = (),
 ) -> runs.RunHandle:
     """질의를 대기열 끝에 넣고, 도는 워커가 없으면 띄운다.
 
@@ -55,6 +56,9 @@ def enqueue(
             동안 워커가 시작을 미룬다. 화면은 정리본 레지스트리의
             ``is_running`` 을 넘긴다.
         pipeline: 실행할 파이프라인. 테스트가 가짜를 넣게 뚫어 둔다.
+        category_ids: 고른 카테고리 ID. 핸들에 고정되고, 끝나면
+            이력에 붙는다. 화면은 늘 넘긴다. 기본값은 테스트의 기존
+            호출을 지킨다.
 
     Returns:
         넣은 실행의 핸들.
@@ -64,6 +68,7 @@ def enqueue(
         youtube.extract_video_id(url) or "",
         tuple(questions),
         auto_save,
+        tuple(category_ids),
     )
     if registry.acquire_worker():
         _start_worker(registry, db_path, is_blocked, pipeline)
@@ -217,7 +222,7 @@ def _work(
         raise
 
     history_id = run_steps.save_history(
-        registry, run_id, result, metadata, db_path
+        registry, run_id, result, metadata, handle.category_ids, db_path
     )
     if history_id is None:
         return

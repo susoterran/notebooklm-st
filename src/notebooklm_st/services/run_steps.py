@@ -7,6 +7,7 @@
 
 import logging
 import pathlib
+from collections.abc import Sequence
 
 from notebooklm_st.core import models
 from notebooklm_st.services import (
@@ -24,6 +25,7 @@ def save_history(
     run_id: str,
     result: models.RunResult,
     metadata: models.VideoMetadata | None,
+    category_ids: Sequence[int],
     db_path: pathlib.Path,
 ) -> int | None:
     """결과를 이력에 남기고 이력 ID 를 돌려준다.
@@ -34,7 +36,9 @@ def save_history(
     try:
         connection = store.connect(db_path)
         try:
-            return run_history.save_run(connection, result, metadata)
+            return run_history.save_run(
+                connection, result, metadata, category_ids
+            )
         finally:
             connection.close()
     except Exception as error:

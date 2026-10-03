@@ -66,3 +66,9 @@ class RunHandle:
     error_message: str | None
     error_level: MessageLevel | None
     finished_at: str | None
+    category_ids: tuple[int, ...] = ()
+    """넣는 순간 고른 카테고리 ID. 이름은 이력과 문서에 쓸 때 읽는다.
+
+    ID 로 쥐어, 대기 중에 이름이 바뀌어도 새 이름이 적힌다. 기본값이
+    있어 맨 끝에 둔다.
+    """

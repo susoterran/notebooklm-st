@@ -10,6 +10,7 @@ from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import models
 from notebooklm_st.services import (
+    categories,
     outline,
     run_export,
     run_history,
@@ -698,3 +699,37 @@ def test_a_hidden_run_is_still_auto_saved(db_path, monkeypatch) -> None:
     assert registry.get(started.run_id) is None
     assert len(calls) == 1
     assert saved_runs(db_path)[0].outline_url == DOC_URL
+
+
+def test_finished_run_keeps_the_chosen_categories(db_path) -> None:
+    """넣을 때 고른 카테고리가 핸들을 거쳐 이력에 붙는다."""
+    connection = store.connect(db_path)
+    try:
+        ids = [categories.add_category(connection, "경제").id]
+    finally:
+        connection.close()
+    registry = run_registry.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """답변 없이 끝나는 가짜."""
+        return models.RunResult(url=url, video_id="dQw4w9WgXcQ", items=())
+
+    started = runner.enqueue(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        False,
+        never_blocked,
+        fake_pipeline,
+        category_ids=ids,
+    )
+    wait_for(registry, started.run_id)
+
+    assert started.category_ids == tuple(ids)
+    connection = store.connect(db_path)
+    try:
+        [summary] = run_history.list_runs(connection)
+    finally:
+        connection.close()
+    assert summary.categories == ("경제",)
