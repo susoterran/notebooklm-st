@@ -30,7 +30,7 @@ YouTube 영상 URL과 미리 등록해 둔 질문을 조합해 **NotebookLM(Gemi
 ```
 app.py  →  pages/ · components/  →  session.py · services/  →  core/
                                           ↓
-                                    SQLite (3 tables) · NotebookLM API
+                                    SQLite (9 tables) · NotebookLM API
 ```
 
 | 레이어 | 파일 수 | 설명 |
@@ -39,7 +39,7 @@ app.py  →  pages/ · components/  →  session.py · services/  →  core/
 | **UI 레이어** | 11 | 질의·실행 현황·이력·질문 관리·정리 화면과 답변 카드·인증 게이트·진행 표시 컴포넌트 |
 | **서비스 레이어** | 8 | NotebookLM HTTP API 호출, SQLite 저장소, `notebooklm login` 자식 프로세스까지 **외부 I/O 를 전담하는 유일한 레이어** |
 | **코어 도메인** | 6 | 프로젝트 내부 의존성 없이 순수 함수와 frozen dataclass 만 — URL 파싱, 답변 텍스트 정제, 마크다운 내보내기, 오류 매핑 |
-| **데이터 레이어** | 3 | `store.py` 가 생성하는 SQLite 테이블 스키마 (`questions` · `runs` · `answers`) |
+| **데이터 레이어** | 9 | `store.py` 가 생성하는 SQLite 테이블 스키마 (`questions` · `runs` · `answers` · `run_metadata` · `channels` · `settings` · `categories` · `run_categories` · `channel_categories`) |
 | **테스트 레이어** | 27 | `core`·`services`·`pages` 구조를 그대로 미러링한 pytest 스위트 + smoke check |
 | **빌드·실행 설정** | 4 | `pyproject.toml`, `.streamlit/config.toml`, `run.ps1`, `run.bat` |
 | **개발 도구·거버넌스** | 14 | 브랜치·커밋 규칙 문서, 명령·시크릿 가드 hook, MCP 및 지식 그래프 도구 설정 |
@@ -102,9 +102,9 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | 1 | **제품 기획서 읽기** — 목적·범위·사용 시나리오·예외 처리 | `docs/requests/2026-08-28-youtube-qa.md` |
 | 2 | **앱을 띄우는 방법** — 코드보다 먼저 굴려 본다 | `pyproject.toml`, `.streamlit/config.toml`, `run.ps1`, `run.bat` |
 | 3 | **진입점과 스키마 게이트** — 파일 순서가 곧 부팅 절차 | `app.py`, `components/schema_gate.py` |
-| 4 | **다섯 개 화면 둘러보기** — '시작' 과 '관찰' 이 갈라진 것이 첫 단서 | `pages/*.py` |
+| 4 | **아홉 개 화면 둘러보기** — '시작' 과 '관찰' 이 갈라진 것이 첫 단서 | `pages/*.py` |
 | 5 | **코어 순수 도메인 계층** — 위를 절대 import 하지 않는 안쪽 | `core/*.py` |
-| 6 | **SQLite 저장소와 세 테이블** | `services/store.py` + `questions`·`runs`·`answers` |
+| 6 | **SQLite 저장소와 아홉 테이블** | `services/store.py` + `questions`·`runs`·`answers`·`run_metadata`·`channels`·`settings`·`categories`·`run_categories`·`channel_categories` |
 | 7 | **질문 템플릿과 이력 CRUD** | `services/questions.py`, `services/run_history.py` |
 | 8 | **NotebookLM 파이프라인의 핵심 트릭** | `services/nlm.py` |
 | 9 | **백그라운드 실행과 공유 레지스트리** — 가장 어려운 제약 | `services/runner.py`, `services/runs.py`, `services/run_store.py`, `services/run_registry.py`, `session.py` |
@@ -130,15 +130,16 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
-| `src/notebooklm_st/app.py` | simple | 스키마 게이트 → 화면 5개 `st.navigation` 등록 → 인증 게이트 → 선택된 페이지 실행. 모듈 최상단에서 `main()` 호출 |
+| `src/notebooklm_st/app.py` | simple | 스키마 게이트 → 화면 9개(카테고리 관리 포함) `st.navigation` 등록 → 인증 게이트 → 선택된 페이지 실행. 모듈 최상단에서 `main()` 호출 |
 | `src/notebooklm_st/session.py` | simple | 앱 전역 싱글턴 3개(SQLite 커넥션, 실행 레지스트리, 인증 게이트) |
 
 ### UI 레이어
 
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
-| `pages/ask.py` | moderate | 질의 화면. URL 입력·질문 선택 후 대기열에 넣고 반환. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
-| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 확인한 신규를 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
+| `pages/ask.py` | moderate | 질의 화면. URL 입력·질문·카테고리 선택 후 대기열에 넣고 반환. 카테고리가 하나도 없으면 안내만 하고 넣지 못한다. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
+| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 등록·목록 탭에서 채널의 기본 카테고리를 정한다. 확인한 신규에서 Shorts 를 빼고(피드 링크로 가린다) 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 카테고리 선택은 그 채널의 기본값으로 미리 채운다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
+| `pages/category_admin.py` | moderate | 카테고리 CRUD. 이력이나 대기 중인 질의가 쓰는 카테고리는 이름 칸과 버튼을 잠그고 이유를 적는다 |
 | `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기·취소·재개는 버튼 콜백이 한다. 대기열이 멈추면 이유와 재개 버튼을 보인다 |
 | `pages/question_admin.py` | moderate | 질문 템플릿 CRUD. 검증 오류는 `st.error`, 성공 시 `st.rerun` |
 | `pages/history.py` | **complex** | 이력 조회·답변 수정·삭제·마크다운 내려받기. 인용 숨기기와 2단계 삭제 확인을 세션 키로 직접 관리 |
@@ -147,6 +148,7 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `components/run_progress.py` | simple | 실행 표의 머리글과 한 줄(queued/running/failed/done). 대기 줄은 차례 배지와 취소 버튼. 칸 글자는 순수 함수가 만든다. 완료 시 답변 수만, 상세는 이력 화면으로 |
 | `components/auto_save_toggle.py` | simple | 자동 저장 체크. 질의·채널 화면이 위젯 key 만 달리해 DB 설정 하나를 함께 쓴다 |
 | `components/queue_notice.py` | simple | 넣으면 언제 도는지 알리는 안내 셋과 넣은 뒤의 결과 문구. 질의·채널 화면이 함께 쓴다 |
+| `components/category_picker.py` | simple | 카테고리 선택. 값은 ID, 이름은 `format_func`. 질의·채널 화면이 함께 쓰고, 카테고리가 없을 때의 안내 문구도 여기 있다 |
 | `components/auth_gate.py` | simple | 자동 복구 실패 동안에만 재인증 안내 상자를 남긴다(브라우저 로그인 경로는 삭제됨 — `docs/how-to/2026-09-16-auth-reseed.md`) |
 | `components/schema_gate.py` | simple | 기동 직후 커넥션을 열어 보고 스키마 불일치면 안내 후 `st.stop()` |
 
@@ -158,11 +160,13 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `services/auth.py` | **complex** | 쿠키 확인 → 무인 복구 → 최후 수단으로 `sys.executable -m notebooklm login` 자식 프로세스. `AuthGate` 가 앱 수명 동안 한 번만 타게 통제 |
 | `services/run_history.py` | **complex** | `runs`·`answers` CRUD. 저장·목록·상세·답변 수정·삭제 |
 | `services/runner.py` | moderate | 대기열 워커. 넣은 순서대로 한 번에 하나씩 파이프라인을 돌린다. 모든 실패 경로에서 레지스트리를 실패로 마감하고, 다음 실행도 실패할 오류면 대기열을 멈춘다 |
+| `services/run_steps.py` | simple | 워커가 실행 하나에서 거치는 두 단계 — 영상 정보 받기, 결과와 고른 카테고리를 이력에 남기기 |
 | `services/runs.py` | simple | `RunHandle`·`SaveOutcome` 값 객체와 상태 묶음(`FINISHED`·`PENDING`) |
 | `services/run_store.py` | moderate | 스레드 안전 핸들 보관소. 넣기·조회·진행 기록·치우기 |
 | `services/run_registry.py` | moderate | 보관소에 대기열 규칙(워커 자리·차례·멈춤·재개·취소)과 가드 판정(`active_count`·`is_pending`)을 더한다 |
 | `services/store.py` | moderate | 커넥션과 전체 스키마 소유. 마이그레이션 없이 즉시 실패 |
 | `services/questions.py` | moderate | 질문 템플릿 CRUD. 제목 중복·빈 값을 `ValueError` 로 강제 |
+| `services/categories.py` | moderate | 카테고리 CRUD. 이름 규칙·중복과, 이력에서 쓰는 카테고리의 이름 변경·삭제를 `ValueError` 로 막는다. 동기화가 쓰는 `ensure` 는 커밋하지 않는다 |
 
 ### 코어 도메인 — 순수, I/O 없음
 
@@ -173,14 +177,23 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | `core/answer_text.py` | moderate | 인용 번호와 후속 제안 블록 제거. 표시 직전에만 호출, 원문 불변 |
 | `core/markdown_export.py` | moderate | 이력 1건 → 마크다운 문서 + 파일명 |
 | `core/youtube.py` | simple | `youtu.be` · `watch?v=` · `/shorts/` 세 형태에서 11자 영상 id 추출 |
+| `core/category_names.py` | simple | 카테고리 이름 규칙(허용 글자·30자)과 이름 순서, 문서 머리 줄 나누기. 관리 화면과 동기화가 같은 규칙을 쓴다 |
+| `core/material_filter.py` | simple | 정리본 재료를 카테고리·채널로 거르는 순수 함수와 필터 선택지 |
+| `core/sync_models.py` | simple | 이력 동기화의 값 객체(문서 목록·계획·생성·갱신·카테고리 갱신) |
 
-### 데이터 — SQLite 3테이블
+### 데이터 — SQLite 9테이블
 
 | 테이블 | 내용 |
 |---|---|
 | `questions` | 재사용할 질문 템플릿 (제목 중복 불가) |
 | `runs` | 한 번의 영상 질의 실행 — 원본 URL · video_id · 영상 제목 · 실행 시각 |
 | `answers` | 실행별 질문·답변·인용(JSON TEXT)·오류. `runs(id)` 를 `ON DELETE CASCADE` 로 참조 |
+| `run_metadata` | 실행별 채널·업로드일. `runs(id)` 를 `ON DELETE CASCADE` 로 참조 |
+| `channels` | 등록한 YouTube 채널과 기준일 |
+| `settings` | 키·값 설정(자동 저장 여부 등) |
+| `categories` | 카테고리 이름 (중복 불가) |
+| `run_categories` | 실행과 카테고리의 연결. 실행이 지워지면 함께 지워지고, 이력이 쓰는 카테고리는 `ON DELETE RESTRICT` 로 지우지 못한다 |
+| `channel_categories` | 채널의 기본 카테고리. 채널이나 카테고리가 지워지면 함께 지워진다 |
 
 ---
 

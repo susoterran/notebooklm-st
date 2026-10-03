@@ -8,10 +8,15 @@
 채널 목록(`yt-dlp --flat-playlist`)을 쓰지 않는 이유가 있다. 거기엔
 업로드 시각이 오지 않아(``timestamp`` 가 ``None``) "기준일 이후" 를
 판정할 수 없다. 피드는 그 값을 주고 비용이 HTTP 한 번이다.
+
+Shorts 여부도 피드에서 읽는다. 피드는 Shorts 의 링크를
+``/shorts/<ID>`` 로, 나머지를 ``/watch?v=<ID>`` 로 준다. 실측에서
+``/shorts/<ID>`` 로 직접 물은 YouTube 의 답과 45건 모두 맞았다.
 """
 
 import dataclasses
 import datetime
+import urllib.parse
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
 
@@ -164,4 +169,32 @@ def _to_entry(element: ElementTree.Element) -> models.FeedEntry | None:
     if moment.tzinfo is None:
         # naive 와 aware 를 섞어 비교하면 TypeError 가 난다.
         return None
-    return models.FeedEntry(video_id=video_id, title=title, published=moment)
+    return models.FeedEntry(
+        video_id=video_id,
+        title=title,
+        published=moment,
+        is_short=_is_short(element),
+    )
+
+
+def _is_short(element: ElementTree.Element) -> bool:
+    """항목이 Shorts 인지 링크 모양으로 가린다.
+
+    **모르면 Shorts 가 아니라고 본다.** 링크가 없거나 낯선 모양이면
+    YouTube 가 표기를 바꾼 것일 수 있다. 그때 영상이 목록에서 몰래
+    사라지지 않고, 가르기 전처럼 모두 보이는 쪽으로 물러선다.
+
+    Args:
+        element: ``atom:entry`` 요소.
+
+    Returns:
+        링크 경로가 ``/shorts/`` 로 시작하면 참.
+    """
+    link = element.find("atom:link[@rel='alternate']", _NAMESPACES)
+    if link is None:
+        return False
+    try:
+        path = urllib.parse.urlsplit(link.get("href", "")).path
+    except ValueError:
+        return False
+    return path.startswith("/shorts/")

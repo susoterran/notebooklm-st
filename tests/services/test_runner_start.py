@@ -10,11 +10,13 @@ from notebooklm._auth import extraction as _auth_extraction
 
 from notebooklm_st.core import models
 from notebooklm_st.services import (
+    categories,
     outline,
     run_export,
     run_history,
     run_links,
     run_registry,
+    run_steps,
     runner,
     runs,
     store,
@@ -76,9 +78,9 @@ def _stub_metadata_fetch(monkeypatch) -> None:
     이 기본값을 자기 안에서 다시 ``monkeypatch.setattr`` 로 덮어쓴다.
     """
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             models.VideoMetadata(channel=None, upload_date=None), None
         ),
     )
@@ -274,9 +276,9 @@ def test_login_redirect_is_reported_as_a_login_hint(db_path) -> None:
 def test_start_run_saves_the_fetched_metadata(db_path, monkeypatch) -> None:
     """조회한 메타데이터가 이력과 함께 저장된다."""
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             models.VideoMetadata(channel="안될공학", upload_date="2026-09-15"),
             None,
         ),
@@ -321,15 +323,15 @@ def test_start_run_survives_a_metadata_fetch_raising(
     """메타데이터 조회가 예외를 던져도 실행은 끝까지 간다.
 
     ``fetch`` 는 실패를 값으로 돌려주는 계약이지만, 그 계약이
-    깨져 예외가 새는 경우까지 ``_fetch_metadata`` 가 막아 주는지
-    이 테스트로 못박는다.
+    깨져 예외가 새는 경우까지 ``run_steps.fetch_metadata`` 가 막아
+    주는지 이 테스트로 못박는다.
     """
 
     def raise_error(url, **kwargs):
         """예외를 던지는 가짜 조회 함수."""
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(runner.video_metadata, "fetch", raise_error)
+    monkeypatch.setattr(run_steps.video_metadata, "fetch", raise_error)
     registry = run_registry.RunRegistry()
 
     async def pipeline(url, questions, on_progress, **kwargs):
@@ -366,9 +368,9 @@ def test_start_run_survives_a_metadata_fetch_raising(
 def test_start_run_survives_a_metadata_failure(db_path, monkeypatch) -> None:
     """메타데이터 조회가 실패해도 요약은 끝까지 간다."""
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             None, "영상 정보를 못 가져왔습니다."
         ),
     )
@@ -697,3 +699,67 @@ def test_a_hidden_run_is_still_auto_saved(db_path, monkeypatch) -> None:
     assert registry.get(started.run_id) is None
     assert len(calls) == 1
     assert saved_runs(db_path)[0].outline_url == DOC_URL
+
+
+def test_finished_run_keeps_the_chosen_categories(db_path) -> None:
+    """넣을 때 고른 카테고리가 핸들을 거쳐 이력에 붙는다."""
+    connection = store.connect(db_path)
+    try:
+        ids = [categories.add_category(connection, "경제").id]
+    finally:
+        connection.close()
+    registry = run_registry.RunRegistry()
+
+    async def fake_pipeline(url, questions, on_progress, **kwargs):
+        """답변 없이 끝나는 가짜."""
+        return models.RunResult(url=url, video_id="dQw4w9WgXcQ", items=())
+
+    started = runner.enqueue(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        False,
+        never_blocked,
+        fake_pipeline,
+        category_ids=ids,
+    )
+    wait_for(registry, started.run_id)
+
+    assert started.category_ids == tuple(ids)
+    connection = store.connect(db_path)
+    try:
+        [summary] = run_history.list_runs(connection)
+    finally:
+        connection.close()
+    assert summary.categories == ("경제",)
+
+
+def test_auto_save_writes_the_category_line(db_path, monkeypatch) -> None:
+    """자동 저장한 문서 머리에 고른 카테고리가 이름 순으로 적힌다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+    connection = store.connect(db_path)
+    try:
+        ids = [
+            categories.add_category(connection, name).id
+            for name in ("인공지능", "경제")
+        ]
+    finally:
+        connection.close()
+    registry = run_registry.RunRegistry()
+
+    started = runner.enqueue(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        True,
+        never_blocked,
+        answering(),
+        category_ids=ids,
+    )
+    wait_for(registry, started.run_id)
+
+    [(_, markdown)] = calls
+    assert "- 카테고리: 경제, 인공지능" in markdown.splitlines()

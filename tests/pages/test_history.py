@@ -4,8 +4,9 @@ import sqlite3
 
 from streamlit.testing import v1
 
-from notebooklm_st.core import models, youtube
+from notebooklm_st.core import models, sync_models, youtube
 from notebooklm_st.services import (
+    categories,
     history_sync,
     outline,
     run_export,
@@ -597,9 +598,11 @@ SYNC_META_BODY = (
 )
 
 
-def listed(doc_id: str, markdown: str = SYNC_BODY) -> models.ListedDocument:
+def listed(
+    doc_id: str, markdown: str = SYNC_BODY
+) -> sync_models.ListedDocument:
     """목록에서 읽어 온 문서 하나."""
-    return models.ListedDocument(
+    return sync_models.ListedDocument(
         id=doc_id,
         title=f"문서 {doc_id}",
         url=f"http://192.168.0.10:3000/doc/{doc_id}",
@@ -679,7 +682,7 @@ def test_sync_check_previews_the_counts_and_lists(app_db, monkeypatch) -> None:
     text = rendered_markdown(app)
     assert (
         "지울 이력 1건 · 만들 문서 1건 · 채널·업로드일 갱신 0건"
-        " · 건너뛴 문서 1건"
+        " · 카테고리 갱신 0건 · 새 카테고리 0개 · 건너뛴 문서 1건"
     ) in text
     assert "정리한 제목" in text
     assert "문서 new-1" in text
@@ -916,3 +919,79 @@ def test_sync_preview_survives_a_rerun(app_db, monkeypatch) -> None:
 
     assert not app.exception
     assert "history_sync_apply" in [e.key for e in app.button]
+
+
+SYNC_CATEGORY_BODY = (
+    "- 제목: 되살릴 문서\n"
+    "- 카테고리: 인공지능, 경제\n"
+    "- 영상 URL: https://www.youtube.com/watch?v=aaaaaaaaaaa\n"
+    "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
+)
+
+
+def test_sync_explains_how_categories_are_matched(app_db, monkeypatch) -> None:
+    """설명 문구가 카테고리를 어떻게 맞추는지 알린다."""
+    set_outline_env(monkeypatch)
+
+    app = v1.AppTest.from_function(script).run()
+
+    captions = " ".join(element.value for element in app.caption)
+    assert "모르는 이름은 새로 등록합니다" in captions
+
+
+def test_sync_previews_category_changes_and_new_names(
+    app_db, monkeypatch
+) -> None:
+    """카테고리 갱신 건수와 새 이름이 보이고 적용 버튼이 나온다."""
+    set_outline_env(monkeypatch)
+    categories.add_category(app_db, "경제")
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+    monkeypatch.setattr(
+        outline,
+        "list_documents",
+        fake_list([listed("doc-1", SYNC_CATEGORY_BODY)]),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+
+    assert not app.exception
+    text = rendered_markdown(app)
+    assert "카테고리 갱신 1건 · 새 카테고리 1개" in text
+    assert "**새 카테고리** 인공지능" in [
+        element.value for element in app.markdown
+    ]
+    assert "history_sync_apply" in [e.key for e in app.button]
+
+
+def test_sync_apply_links_the_categories_and_reports(
+    app_db, monkeypatch
+) -> None:
+    """적용하면 새 이름을 등록해 이력에 잇고 결과에 건수가 나온다."""
+    set_outline_env(monkeypatch)
+    categories.add_category(app_db, "경제")
+    run_id = run_history.save_run(app_db, make_result())
+    export(app_db, run_id)
+    monkeypatch.setattr(
+        outline,
+        "list_documents",
+        fake_list([listed("doc-1", SYNC_CATEGORY_BODY)]),
+    )
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    app.button(key="history_sync_check").click().run()
+    app.button(key="history_sync_apply").click().run()
+
+    assert not app.exception
+    assert "카테고리 갱신 1건 · 새 카테고리 1개" in app.success[0].value
+    assert [item.name for item in categories.list_categories(app_db)] == [
+        "경제",
+        "인공지능",
+    ]
+    assert run_history_sync.list_exported(app_db)[0].categories == (
+        "경제",
+        "인공지능",
+    )

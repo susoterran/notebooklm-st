@@ -9,7 +9,7 @@ import pytest
 from notebooklm import exceptions
 
 from notebooklm_st.core import errors, models
-from notebooklm_st.services import run_registry, runner, store
+from notebooklm_st.services import run_registry, run_steps, runner, store
 
 QUESTIONS = (
     models.Question(
@@ -38,9 +38,9 @@ def db_path(tmp_path) -> Iterator[pathlib.Path]:
 def _stub_metadata_fetch(monkeypatch) -> None:
     """``video_metadata.fetch`` 의 실호출(yt-dlp)을 막는다."""
     monkeypatch.setattr(
-        runner.video_metadata,
+        run_steps.video_metadata,
         "fetch",
-        lambda url, **kwargs: runner.video_metadata.MetadataResult(
+        lambda url, **kwargs: run_steps.video_metadata.MetadataResult(
             models.VideoMetadata(channel=None, upload_date=None), None
         ),
     )

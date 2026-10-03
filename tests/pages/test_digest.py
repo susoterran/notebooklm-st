@@ -6,8 +6,9 @@ import sqlite3
 import pytest
 from streamlit.testing import v1
 
-from notebooklm_st.core import models, youtube
+from notebooklm_st.core import material_filter, models, youtube
 from notebooklm_st.services import (
+    categories,
     nlm,
     outline,
     questions,
@@ -62,9 +63,24 @@ def save_exported(
     document_title: str = "밸류에이션 강의",
     document_id: str = "doc-1",
     metadata: models.VideoMetadata | None = None,
+    names: tuple[str, ...] = (),
 ) -> int:
-    """Outline 에 저장까지 끝난 실행 하나를 만든다."""
-    run_id = run_history.save_run(connection, make_result(), metadata)
+    """Outline 에 저장까지 끝난 실행 하나를 만든다.
+
+    ``names`` 의 카테고리는 없으면 등록해 잇는다.
+    """
+    known = {
+        item.name: item.id for item in categories.list_categories(connection)
+    }
+    ids = [
+        known[name]
+        if name in known
+        else categories.add_category(connection, name).id
+        for name in names
+    ]
+    run_id = run_history.save_run(
+        connection, make_result(), metadata, category_ids=ids
+    )
     run_links.mark_exported(
         connection,
         run_id,
@@ -237,6 +253,7 @@ def test_table_columns_come_in_order(app_db, outline_env) -> None:
 
     assert list(app.dataframe[0].value.columns) == [
         "title",
+        "categories",
         "channel",
         "upload_date",
         "created_at",
@@ -650,8 +667,44 @@ def test_saving_creates_an_outline_document(
 
     assert not app.exception
     assert received["title"] == "[정리] 2026-09-23"
-    assert "## 출처" in str(received["markdown"])
+    assert "- 출처:" in str(received["markdown"])
     assert len(app.success) == 1
+
+
+def test_saved_body_carries_the_union_of_the_categories(
+    app_db, outline_env, monkeypatch
+) -> None:
+    """저장하는 본문 머리에 재료들의 카테고리를 이름 순으로 적는다."""
+    from notebooklm_st.pages import digest as digest_page
+
+    draft = make_draft()
+    first = dataclasses.replace(draft.sources[0], categories=("경제",))
+    second = dataclasses.replace(first, id=2, categories=("인공지능", "경제"))
+    finished_registry(dataclasses.replace(draft, sources=(first, second)))
+    received: dict[str, object] = {}
+
+    def fake_create(config, title, markdown, **kwargs):
+        """넘어온 본문을 기록한다."""
+        received["markdown"] = markdown
+        return outline.SavedDocument(
+            id="doc-9",
+            title=title,
+            url=f"{BASE_URL}/doc/doc-9",
+        )
+
+    monkeypatch.setattr(digest_page.outline, "create_document", fake_create)
+
+    app = v1.AppTest.from_function(script).run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    lines = str(received["markdown"]).splitlines()
+    assert lines[:4] == [
+        "- 종류: 정리본",
+        "- 작성일자: 2026-09-23",
+        "- 카테고리: 경제, 인공지능",
+        "- 출처:",
+    ]
 
 
 def test_saving_empties_the_slot(app_db, outline_env, monkeypatch) -> None:
@@ -771,3 +824,155 @@ def test_discarded_draft_gets_a_fresh_title(app_db, outline_env) -> None:
 
     assert not app.exception
     assert app.text_input[0].value == "[정리] 2026-09-24"
+
+
+def channel_of(name: str) -> models.VideoMetadata:
+    """채널만 있는 메타데이터."""
+    return models.VideoMetadata(channel=name, upload_date=None)
+
+
+def three_materials(connection: sqlite3.Connection) -> None:
+    """카테고리·채널이 다른 재료 셋을 저장한다. 표에는 역순으로 선다."""
+    save_exported(
+        connection,
+        "경제 강의",
+        "doc-1",
+        channel_of("슈카월드"),
+        ("경제",),
+    )
+    save_exported(
+        connection,
+        "AI 경제",
+        "doc-2",
+        channel_of("안될공학"),
+        ("경제", "인공지능"),
+    )
+    save_exported(connection, "AI 강의", "doc-3", None, ("인공지능",))
+
+
+def test_table_shows_the_categories(app_db, outline_env) -> None:
+    """카테고리 칸에 이름이 쉼표로 이어지고, 없으면 빈칸이다."""
+    save_exported(app_db, document_id="doc-1")
+    save_exported(app_db, document_id="doc-2", names=("인공지능", "경제"))
+
+    app = v1.AppTest.from_function(script).run()
+
+    column = app.dataframe[0].value["categories"]
+    assert column.iloc[0] == "경제, 인공지능"
+    assert column.isna().tolist() == [False, True]
+
+
+def test_a_category_filter_narrows_the_table(app_db, outline_env) -> None:
+    """카테고리를 고르면 그 카테고리가 하나라도 붙은 재료만 남는다."""
+    three_materials(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect(key="digest_filter_categories").set_value(
+        ["인공지능"]
+    ).run()
+
+    assert not app.exception
+    assert table_titles(app) == ["AI 강의", "AI 경제"]
+
+
+def test_both_filters_must_match(app_db, outline_env) -> None:
+    """카테고리와 채널을 함께 고르면 둘 다 맞아야 남는다."""
+    three_materials(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect(key="digest_filter_categories").set_value(["경제"]).run()
+    app.multiselect(key="digest_filter_channels").set_value(["슈카월드"]).run()
+
+    assert table_titles(app) == ["경제 강의"]
+
+
+def test_no_match_shows_a_notice(app_db, outline_env) -> None:
+    """남는 재료가 없으면 표 대신 안내를 보인다."""
+    three_materials(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect(key="digest_filter_categories").set_value(
+        ["인공지능"]
+    ).run()
+    app.multiselect(key="digest_filter_channels").set_value(["슈카월드"]).run()
+
+    assert not app.exception
+    assert "고른 조건에 맞는 요약본이 없습니다." in [
+        element.value for element in app.info
+    ]
+    assert len(app.dataframe) == 0
+
+
+def test_filters_offer_only_values_in_the_materials(
+    app_db, outline_env
+) -> None:
+    """필터의 선택지는 재료에 실제로 나오는 값뿐이다."""
+    categories.add_category(app_db, "쓰지 않는 카테고리")
+    three_materials(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert app.multiselect(key="digest_filter_categories").options == [
+        "경제",
+        "인공지능",
+    ]
+    assert app.multiselect(key="digest_filter_channels").options == [
+        "슈카월드",
+        "안될공학",
+    ]
+
+
+def test_filters_are_hidden_without_values(app_db, outline_env) -> None:
+    """재료에 카테고리도 채널도 없으면 필터를 그리지 않는다."""
+    save_exported(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert len(app.multiselect) == 0
+
+
+def test_a_picked_row_points_into_the_filtered_table(
+    app_db, outline_env
+) -> None:
+    """고른 행 번호는 전체가 아닌 거른 표의 위치다.
+
+    거르면 1번 행이 전체 목록의 1번 행과 다른 글이 된다.
+    """
+    from notebooklm_st.pages import _digest_materials
+
+    three_materials(app_db)
+    add_instruction(app_db)
+    shown = material_filter.filter_runs(
+        run_history_sync.list_exported(app_db), ["경제"], []
+    )
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect(key="digest_filter_categories").set_value(["경제"]).run()
+    app.session_state[_digest_materials.widget_key(shown)] = {
+        "selection": {"rows": [1], "columns": [], "cells": []}
+    }
+    app.run()
+
+    rendered = " ".join(element.value for element in app.markdown)
+    assert "- 경제 강의" in rendered
+    assert "- AI 경제" not in rendered
+
+
+def test_a_filter_value_that_disappears_is_dropped(app_db, outline_env) -> None:
+    """고른 필터 값이 재료에서 사라지면 깨지지 않고 그 값이 풀린다.
+
+    다른 탭이 이력을 지우거나 동기화를 적용하면 선택지가 줄어든다.
+    """
+    three_materials(app_db)
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect(key="digest_filter_channels").set_value(["안될공학"]).run()
+    assert table_titles(app) == ["AI 경제"]
+    gone = run_history_sync.list_exported(app_db)[1]
+    assert gone.outline_title == "AI 경제"
+
+    run_history.delete_run(app_db, gone.id)
+    app.run()
+
+    assert not app.exception
+    assert app.multiselect(key="digest_filter_channels").value == []
+    assert table_titles(app) == ["AI 강의", "경제 강의"]

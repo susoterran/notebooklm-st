@@ -31,6 +31,7 @@ class RunStore:
         video_id: str,
         questions: tuple[models.Question, ...],
         auto_save: bool = False,
+        category_ids: tuple[int, ...] = (),
     ) -> runs.RunHandle:
         """새 실행을 대기열 끝에 넣는다.
 
@@ -40,6 +41,7 @@ class RunStore:
             questions: 물어볼 질문들.
             auto_save: 답변을 받자마자 Outline 에 올릴지. 러너는 늘
                 값을 넘긴다. 기본값은 테스트가 핸들을 만들 때 쓴다.
+            category_ids: 고른 카테고리 ID. 기본값은 위와 같다.
 
         Returns:
             넣은 핸들. 보관소가 쥔 것과 같은 객체가 아니라 호출자가
@@ -60,6 +62,7 @@ class RunStore:
             error_message=None,
             error_level=None,
             finished_at=None,
+            category_ids=category_ids,
         )
         with self._lock:
             self._handles[handle.run_id] = handle

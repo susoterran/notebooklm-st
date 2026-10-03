@@ -6,6 +6,7 @@ SQLite 만 알고 네트워크도 Streamlit 도 모른다.
 
 import datetime
 import sqlite3
+from collections.abc import Sequence
 
 from notebooklm_st.core import models
 from notebooklm_st.services import store
@@ -40,6 +41,7 @@ def add_channel(
     title: str,
     url: str,
     baseline: str,
+    category_ids: Sequence[int] = (),
 ) -> models.Channel:
     """채널을 등록한다.
 
@@ -50,6 +52,7 @@ def add_channel(
         title: 화면에 보여 줄 채널명.
         url: 사람이 누를 채널 주소.
         baseline: ``YYYY-MM-DD`` 형식의 기준일.
+        category_ids: 기본 카테고리 ID. 없는 ID 는 조용히 빠진다.
 
     Returns:
         저장된 채널.
@@ -82,8 +85,58 @@ def add_channel(
             store.now(),
         ),
     ).fetchone()
+    channel = _to_channel(row)
+    _insert_defaults(connection, channel.id, category_ids)
     connection.commit()
-    return _to_channel(row)
+    return channel
+
+
+def default_category_ids(
+    connection: sqlite3.Connection, channel_pk: int
+) -> tuple[int, ...]:
+    """채널의 기본 카테고리 ID 를 돌려준다.
+
+    Args:
+        connection: 열린 커넥션.
+        channel_pk: 채널의 행 ID.
+
+    Returns:
+        카테고리 ID. ID 순이다. 없으면 비어 있다.
+    """
+    rows = connection.execute(
+        "SELECT category_id FROM channel_categories WHERE channel_pk = ?"
+        " ORDER BY category_id",
+        (channel_pk,),
+    ).fetchall()
+    return tuple(int(row["category_id"]) for row in rows)
+
+
+def set_default_categories(
+    connection: sqlite3.Connection,
+    channel_pk: int,
+    category_ids: Sequence[int],
+) -> None:
+    """채널의 기본 카테고리를 통째로 바꾼다.
+
+    Args:
+        connection: 열린 커넥션.
+        channel_pk: 바꿀 채널의 행 ID.
+        category_ids: 새 기본 카테고리 ID. 비우면 기본값이 없어진다.
+            없는 ID 는 조용히 빠진다.
+
+    Raises:
+        ValueError: 그 채널이 없는 경우.
+    """
+    found = connection.execute(
+        "SELECT 1 FROM channels WHERE id = ?", (channel_pk,)
+    ).fetchone()
+    if found is None:
+        raise ValueError(f"채널 {channel_pk} 을 찾을 수 없습니다.")
+    connection.execute(
+        "DELETE FROM channel_categories WHERE channel_pk = ?", (channel_pk,)
+    )
+    _insert_defaults(connection, channel_pk, category_ids)
+    connection.commit()
 
 
 def update_baseline(
@@ -148,6 +201,23 @@ def delete_channel(connection: sqlite3.Connection, channel_pk: int) -> None:
     """
     connection.execute("DELETE FROM channels WHERE id = ?", (channel_pk,))
     connection.commit()
+
+
+def _insert_defaults(
+    connection: sqlite3.Connection,
+    channel_pk: int,
+    category_ids: Sequence[int],
+) -> None:
+    """기본 카테고리 연결을 넣는다. 커밋은 부르는 쪽이 한다.
+
+    ``categories`` 에서 골라 넣으므로 없는 ID 는 빠진다. 같은 ID 가
+    두 번 와도 한 번만 넣는다.
+    """
+    connection.executemany(
+        "INSERT OR IGNORE INTO channel_categories (channel_pk, category_id)"
+        " SELECT ?, id FROM categories WHERE id = ?",
+        [(channel_pk, category_id) for category_id in category_ids],
+    )
 
 
 def _exists(connection: sqlite3.Connection, channel_id: str) -> bool:

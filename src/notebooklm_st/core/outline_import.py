@@ -13,7 +13,7 @@ import datetime
 import re
 from collections.abc import Iterator
 
-from notebooklm_st.core import markdown_export, models
+from notebooklm_st.core import category_names, markdown_export, models
 
 _RULE = re.compile(r"^\s*---\s*$")
 """머리 블록을 끝내는 구분선."""
@@ -65,6 +65,7 @@ def _labeled_line(label: str) -> re.Pattern[str]:
 
 _CHANNEL_LINE = _labeled_line(markdown_export.CHANNEL_LABEL)
 _UPLOAD_DATE_LINE = _labeled_line(markdown_export.UPLOAD_DATE_LABEL)
+_CATEGORY_LINE = _labeled_line(markdown_export.CATEGORY_LABEL)
 
 
 def find_source_url(markdown: str) -> str | None:
@@ -112,6 +113,28 @@ def find_metadata(markdown: str) -> models.VideoMetadata | None:
     if channel is None and upload_date is None:
         return None
     return models.VideoMetadata(channel=channel, upload_date=upload_date)
+
+
+def find_categories(markdown: str) -> tuple[str, ...] | None:
+    """문서 머리 블록에서 카테고리 이름들을 찾는다.
+
+    머리 블록의 범위, 글머리표 변형, 역슬래시 걷기, 라벨마다 첫 줄만
+    보는 것은 채널 줄과 같다(``find_metadata``). 값은
+    ``category_names.split`` 으로 나눈다 — 규칙에 맞지 않는 이름은
+    버린다.
+
+    Args:
+        markdown: Outline 이 돌려준 문서 본문.
+
+    Returns:
+        읽은 이름들. 이름 순이다. 줄이 없거나 읽을 이름이 하나도
+        없으면 ``None`` — 읽지 못한 것이다. 동기화는 그 행을 손대지
+        않는다.
+    """
+    value = _first_value(markdown, _CATEGORY_LINE)
+    if value is None:
+        return None
+    return category_names.split(value) or None
 
 
 def _head_lines(markdown: str) -> Iterator[str]:

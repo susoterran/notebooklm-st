@@ -2,7 +2,7 @@
 
 import pytest
 
-from notebooklm_st.services import channels, store
+from notebooklm_st.services import categories, channels, store
 
 
 @pytest.fixture
@@ -13,7 +13,9 @@ def connection(tmp_path):
     conn.close()
 
 
-def add(connection, channel_id="UC" + "a" * 22, title="어떤 채널"):
+def add(
+    connection, channel_id="UC" + "a" * 22, title="어떤 채널", category_ids=()
+):
     """테스트용 채널 하나를 등록한다."""
     return channels.add_channel(
         connection,
@@ -21,6 +23,7 @@ def add(connection, channel_id="UC" + "a" * 22, title="어떤 채널"):
         title,
         f"https://www.youtube.com/channel/{channel_id}",
         "2026-09-23",
+        category_ids=category_ids,
     )
 
 
@@ -149,3 +152,61 @@ def test_update_title_rejects_an_unknown_channel(connection) -> None:
     """없는 채널의 이름은 고칠 수 없다."""
     with pytest.raises(ValueError):
         channels.update_title(connection, 999, "새 이름")
+
+
+def category_ids(connection, *names: str) -> list[int]:
+    """카테고리를 등록하고 ID 를 넘긴 순서대로 돌려준다."""
+    return [categories.add_category(connection, name).id for name in names]
+
+
+def test_a_channel_has_no_default_categories_at_first(connection) -> None:
+    """기본 카테고리 없이 등록하면 비어 있다."""
+    channel = add(connection)
+
+    assert channels.default_category_ids(connection, channel.id) == ()
+
+
+def test_add_channel_saves_the_default_categories(connection) -> None:
+    """등록할 때 준 기본 카테고리를 ID 순으로 돌려준다."""
+    ids = category_ids(connection, "경제", "정치")
+
+    channel = add(connection, category_ids=list(reversed(ids)))
+
+    assert channels.default_category_ids(connection, channel.id) == tuple(ids)
+
+
+def test_add_channel_skips_an_unknown_category(connection) -> None:
+    """없는 카테고리 ID 는 조용히 뺀다."""
+    [known] = category_ids(connection, "경제")
+
+    channel = add(connection, category_ids=[known, 999])
+
+    assert channels.default_category_ids(connection, channel.id) == (known,)
+
+
+def test_set_default_categories_replaces_them(connection) -> None:
+    """기본 카테고리를 통째로 바꾼다."""
+    first, second = category_ids(connection, "경제", "정치")
+    channel = add(connection, category_ids=[first])
+
+    channels.set_default_categories(connection, channel.id, [second])
+
+    assert channels.default_category_ids(connection, channel.id) == (second,)
+
+
+def test_set_default_categories_can_clear_them(connection) -> None:
+    """빈 목록을 주면 기본 카테고리가 없어진다."""
+    [first] = category_ids(connection, "경제")
+    channel = add(connection, category_ids=[first])
+
+    channels.set_default_categories(connection, channel.id, [])
+
+    assert channels.default_category_ids(connection, channel.id) == ()
+
+
+def test_set_default_categories_rejects_an_unknown_channel(
+    connection,
+) -> None:
+    """없는 채널이면 거부한다."""
+    with pytest.raises(ValueError, match="찾을 수 없습니다"):
+        channels.set_default_categories(connection, 99, [])

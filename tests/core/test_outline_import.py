@@ -19,8 +19,10 @@ SUMMARY = (
 
 DIGEST = (
     "- 종류: 정리본\n"
-    "- 만든 날: 2026-09-23\n"
-    "- 정리 지시: 공통점을 뽑아라\n"
+    "- 작성일자: 2026-09-23\n"
+    "- 출처:\n"
+    "    1. [밸류에이션 강의](https://www.youtube.com/watch?v=dQw4w9WgXcQ)\n"
+    "    2. [채널 소개](https://www.youtube.com/watch?v=9bZkp7q19f0)\n"
     "\n"
     "---\n"
     "\n"
@@ -58,7 +60,7 @@ def test_searches_the_whole_text_without_a_rule() -> None:
 
 
 def test_a_digest_body_is_not_a_summary() -> None:
-    """정리본 본문은 만든 날·정리 지시만 있고 영상 URL 이 없다."""
+    """정리본 본문은 종류·작성일자만 있고 영상 URL 이 없다."""
     assert outline_import.find_source_url(DIGEST) is None
 
 
@@ -191,7 +193,7 @@ def test_metadata_keeps_the_one_line_it_found() -> None:
 
 
 def test_a_digest_body_has_no_metadata() -> None:
-    """정리본 본문은 만든 날·정리 지시만 있다."""
+    """정리본 본문은 종류·작성일자만 있다."""
     assert outline_import.find_metadata(DIGEST) is None
 
 
@@ -315,3 +317,92 @@ def test_reads_back_what_the_export_wrote() -> None:
     text = markdown_export.to_markdown(summary, [], "강의", metadata)
 
     assert outline_import.find_metadata(text) == metadata
+
+
+CATEGORIZED = (
+    "- 제목: 밸류에이션 강의\n"
+    "- 카테고리: 인공지능, 경제\n"
+    "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+    "\n---\n\n세 가지다.\n"
+)
+
+
+def test_finds_the_categories_in_name_order() -> None:
+    """카테고리 줄을 이름들로 나눠 이름 순으로 돌려준다."""
+    assert outline_import.find_categories(CATEGORIZED) == ("경제", "인공지능")
+
+
+def test_categories_are_none_without_the_line() -> None:
+    """줄이 없으면 읽지 못한 것이다."""
+    assert outline_import.find_categories(SUMMARY) is None
+
+
+@pytest.mark.parametrize("bullet", ["*", "+"])
+def test_categories_accept_other_bullets(bullet: str) -> None:
+    """Outline 이 글머리표를 바꿔 돌려줘도 읽는다."""
+    markdown = f"{bullet} 카테고리: 경제\n"
+
+    assert outline_import.find_categories(markdown) == ("경제",)
+
+
+def test_unescapes_punctuation_in_the_categories() -> None:
+    """Outline 이 넣은 역슬래시 이스케이프를 걷는다."""
+    markdown = "- 카테고리: R\\&D, A\\/B 테스트\n"
+
+    assert outline_import.find_categories(markdown) == ("A/B 테스트", "R&D")
+
+
+def test_ignores_categories_after_the_rule() -> None:
+    """첫 구분선 뒤의 줄은 본문이다."""
+    markdown = "- 제목: 강의\n\n---\n\n- 카테고리: 경제\n"
+
+    assert outline_import.find_categories(markdown) is None
+
+
+def test_categories_drop_only_the_names_outside_the_rule() -> None:
+    """규칙에 맞지 않는 이름만 버린다."""
+    markdown = "- 카테고리: 경제, *강조*\n"
+
+    assert outline_import.find_categories(markdown) == ("경제",)
+
+
+@pytest.mark.parametrize("value", ["", "*강조*, _밑줄_", " , "])
+def test_categories_without_a_readable_name_are_none(value: str) -> None:
+    """읽을 이름이 하나도 없으면 읽지 못한 것이다."""
+    markdown = f"- 카테고리: {value}\n"
+
+    assert outline_import.find_categories(markdown) is None
+
+
+def test_takes_the_first_category_line() -> None:
+    """같은 라벨이 둘이면 첫 줄만 본다."""
+    markdown = "- 카테고리: 경제\n- 카테고리: 정치\n"
+
+    assert outline_import.find_categories(markdown) == ("경제",)
+
+
+def test_a_category_label_inside_another_value_is_not_read() -> None:
+    """다른 라벨의 값 안에 나온 글자는 카테고리 줄이 아니다."""
+    markdown = "- 제목: 카테고리: 경제\n"
+
+    assert outline_import.find_categories(markdown) is None
+
+
+def test_reads_back_the_categories_the_export_wrote() -> None:
+    """저장이 쓴 카테고리 줄을 같은 이름으로 되읽는다.
+
+    쓰는 쪽과 읽는 쪽이 라벨과 구분자를 함께 쓴다. 한쪽만 바뀌면
+    모든 문서의 카테고리가 조용히 사라진다.
+    """
+    summary = models.RunSummary(
+        id=1,
+        url="https://youtu.be/dQw4w9WgXcQ",
+        video_id="dQw4w9WgXcQ",
+        title="강의",
+        created_at="2026-09-20T10:00:00",
+        answer_count=0,
+        categories=("A/B 테스트", "R&D", "경제"),
+    )
+    markdown = markdown_export.to_markdown(summary, [], "강의", None)
+
+    assert outline_import.find_categories(markdown) == summary.categories

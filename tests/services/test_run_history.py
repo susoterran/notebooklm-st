@@ -6,7 +6,7 @@ from collections.abc import Iterator
 import pytest
 
 from notebooklm_st.core import models
-from notebooklm_st.services import run_history, run_links, store
+from notebooklm_st.services import categories, run_history, run_links, store
 
 
 @pytest.fixture
@@ -383,3 +383,83 @@ def test_load_run_carries_the_document_link(connection) -> None:
     assert summary is not None
     assert summary.exported_at is not None
     assert summary.answer_count == 0
+
+
+def add_categories(connection: sqlite3.Connection, *names: str) -> list[int]:
+    """카테고리를 등록하고 ID 를 넘긴 순서대로 돌려준다."""
+    return [categories.add_category(connection, name).id for name in names]
+
+
+def test_save_run_links_the_categories(connection) -> None:
+    """고른 카테고리를 이력에 잇고, 요약은 이름 순으로 싣는다."""
+    ids = add_categories(connection, "인공지능", "경제")
+
+    run_id = run_history.save_run(connection, make_result(), category_ids=ids)
+
+    summary = run_history.load_run(connection, run_id)
+    assert summary is not None
+    assert summary.categories == ("경제", "인공지능")
+
+
+def test_save_run_skips_a_category_deleted_meanwhile(connection) -> None:
+    """그사이 지워진 카테고리 ID 는 빼고 남긴다."""
+    kept, gone = add_categories(connection, "경제", "정치")
+    categories.delete_category(connection, gone)
+
+    run_id = run_history.save_run(
+        connection, make_result(), category_ids=[kept, gone]
+    )
+
+    summary = run_history.load_run(connection, run_id)
+    assert summary is not None
+    assert summary.categories == ("경제",)
+
+
+def test_save_run_ignores_a_repeated_category_id(connection) -> None:
+    """같은 ID 가 두 번 와도 한 번만 잇는다."""
+    [category_id] = add_categories(connection, "경제")
+
+    run_id = run_history.save_run(
+        connection, make_result(), category_ids=[category_id, category_id]
+    )
+
+    summary = run_history.load_run(connection, run_id)
+    assert summary is not None
+    assert summary.categories == ("경제",)
+
+
+def test_list_runs_carries_the_categories(connection) -> None:
+    """목록의 요약도 카테고리를 싣는다. 없으면 비어 있다."""
+    ids = add_categories(connection, "경제")
+    run_history.save_run(connection, make_result(), category_ids=ids)
+    run_history.save_run(connection, make_result())
+
+    newer, older = run_history.list_runs(connection)
+
+    assert newer.categories == ()
+    assert older.categories == ("경제",)
+
+
+def test_categories_do_not_inflate_the_answer_count(connection) -> None:
+    """카테고리가 여럿이어도 답변 수가 불지 않는다."""
+    ids = add_categories(connection, "경제", "정치", "AI")
+
+    run_id = run_history.save_run(connection, make_result(), category_ids=ids)
+
+    summary = run_history.load_run(connection, run_id)
+    assert summary is not None
+    assert summary.answer_count == 2
+
+
+def test_a_reused_run_id_inherits_no_categories(connection) -> None:
+    """지운 실행의 ID 를 다시 받은 실행은 카테고리를 물려받지 않는다."""
+    ids = add_categories(connection, "경제")
+    first = run_history.save_run(connection, make_result(), category_ids=ids)
+    run_history.delete_run(connection, first)
+
+    second = run_history.save_run(connection, make_result())
+
+    assert second == first
+    summary = run_history.load_run(connection, second)
+    assert summary is not None
+    assert summary.categories == ()

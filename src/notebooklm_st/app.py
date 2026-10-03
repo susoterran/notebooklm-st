@@ -21,6 +21,7 @@ from notebooklm_st.components import auth_gate, schema_gate
 from notebooklm_st.pages import (
     ask,
     auth,
+    category_admin,
     channels,
     dashboard,
     digest,
@@ -50,6 +51,11 @@ def main() -> None:
                 question_admin.render,
                 title="질문 관리",
                 url_path="questions",
+            ),
+            st.Page(
+                category_admin.render,
+                title="카테고리 관리",
+                url_path="categories",
             ),
             st.Page(history.render, title="이력", url_path="history"),
             st.Page(digest.render, title="정리본", url_path="digest"),

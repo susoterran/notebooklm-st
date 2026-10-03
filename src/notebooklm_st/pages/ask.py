@@ -3,19 +3,30 @@
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.components import auto_save_toggle, queue_notice
+from notebooklm_st.components import (
+    auto_save_toggle,
+    category_picker,
+    queue_notice,
+)
 from notebooklm_st.core import youtube
-from notebooklm_st.services import questions, run_registry, runner, store
+from notebooklm_st.services import (
+    categories,
+    questions,
+    run_registry,
+    runner,
+    store,
+)
 
 _URL_KEY = "ask_url"
 _SELECTED_KEY = "ask_selected"
+_CATEGORIES_KEY = "ask_categories"
 _AUTO_SAVE_KEY = "ask_auto_save"
 _AUTO_SAVE_LOCKED_KEY = "ask_auto_save_locked"
 _ENQUEUED_KEY = "ask_enqueued"
 
 
 def render() -> None:
-    """URL 입력, 질문 선택, 자동 저장 여부, 대기열에 넣기를 그린다.
+    """URL 입력, 질문·카테고리 선택, 자동 저장 여부, 넣기를 그린다.
 
     실행은 백그라운드 워커가 넣은 순서대로 맡는다. 이 화면은 넣기만
     하고 즉시 반환하므로, 앞 실행을 기다리지 않고 다음 영상을 넣을 수
@@ -45,6 +56,16 @@ def render() -> None:
         format_func=lambda question: question.title,
         key=_SELECTED_KEY,
     )
+    category_list = categories.list_categories(connection)
+    if not category_list:
+        st.info(category_picker.NO_CATEGORIES)
+        return
+    chosen = category_picker.render(
+        "카테고리",
+        category_list,
+        _CATEGORIES_KEY,
+        category_picker.QUERY_HELP,
+    )
     auto_save = auto_save_toggle.render(
         connection, _AUTO_SAVE_KEY, _AUTO_SAVE_LOCKED_KEY
     )
@@ -55,7 +76,7 @@ def render() -> None:
     st.button(
         "실행",
         key="ask_run",
-        disabled=duplicate or not (url_ok and selected),
+        disabled=duplicate or not (url_ok and selected and chosen),
         on_click=_enqueue,
         args=(registry, auto_save),
     )
@@ -87,10 +108,11 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
     """입력한 영상을 대기열에 넣고 URL 칸을 비운다.
 
     실행 버튼의 ``on_click`` 콜백이다. 콜백은 재실행 전에 돌므로 URL
-    위젯의 키를 바꿔도 예외가 없다. URL·질문은 버튼을 그릴 때가 아니라
-    누른 순간의 세션 값을 읽는다. 질문 선택은 남겨 다음 영상을 바로
-    붙여 넣게 한다. 결과 문구는 세션에 적어 다음 그림에서 한 번
-    보인다.
+    위젯의 키를 바꿔도 예외가 없다. URL·질문·카테고리는 버튼을 그릴
+    때가 아니라 누른 순간의 세션 값을 읽는다. 카테고리는 그사이 다른
+    탭이 지운 것을 빼고, 남은 것이 없으면 넣지 않는다. 질문과
+    카테고리 선택은 남겨 다음 영상을 바로 붙여 넣게 한다. 결과 문구는
+    세션에 적어 다음 그림에서 한 번 보인다.
 
     Args:
         registry: 실행 레지스트리.
@@ -98,8 +120,16 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
     """
     url = st.session_state.get(_URL_KEY, "")
     selected = st.session_state.get(_SELECTED_KEY, [])
+    chosen = category_picker.keep_registered(
+        session.get_connection(), st.session_state.get(_CATEGORIES_KEY, [])
+    )
     video_id = youtube.extract_video_id(url)
-    if video_id is None or not selected or registry.is_pending(video_id):
+    if (
+        video_id is None
+        or not selected
+        or not chosen
+        or registry.is_pending(video_id)
+    ):
         return
     ahead = queue_notice.count_ahead(registry)
     paused = registry.paused_reason() is not None
@@ -112,6 +142,7 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
         store.default_db_path(),
         auto_save=auto_save,
         is_blocked=digests.is_running,
+        category_ids=chosen,
     )
     st.session_state[_URL_KEY] = ""
     st.session_state[_ENQUEUED_KEY] = queue_notice.enqueued_text(

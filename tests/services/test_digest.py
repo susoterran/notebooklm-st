@@ -1,11 +1,12 @@
 """정리본 조립 테스트 — Outline 도 NotebookLM 도 가짜를 쓴다."""
 
+import types
 from typing import Any
 
 import pytest
 
-from notebooklm_st.core import models
-from notebooklm_st.services import digest, outline
+from notebooklm_st.core import digest_markdown, models
+from notebooklm_st.services import digest, nlm, outline
 
 INSTRUCTION = "공통 주장과 엇갈리는 지점을 정리해 줘"
 
@@ -182,3 +183,80 @@ def test_build_carries_the_topic_into_the_draft(
     )
 
     assert draft.topic == "밸류에이션 세 강의"
+
+
+class FakeNotebookLM:
+    """넣은 소스 이름만 기록하는 가짜 NotebookLM 클라이언트.
+
+    정리 파이프라인이 부르는 생성·소스 추가·질의·삭제만 흉내 낸다.
+    ``test_nlm_digest`` 의 가짜들처럼 타입을 달지 않는다. 달면 mypy 가
+    쓰지 않는 메서드까지 ``ClientLike`` 를 다 갖췄는지 따진다.
+    """
+
+    def __init__(self):
+        """하위 API 를 모두 자기 자신으로 둔다."""
+        self.source_titles = []
+        self.notebooks = self
+        self.sources = self
+        self.chat = self
+
+    async def __aenter__(self):
+        """자기 자신을 컨텍스트 값으로 돌려준다."""
+        return self
+
+    async def __aexit__(self, *args):
+        """예외를 삼키지 않는다."""
+        return False
+
+    async def create(self, title):
+        """가짜 노트북을 돌려준다."""
+        return types.SimpleNamespace(id="nb-1", title=title)
+
+    async def delete(self, notebook_id):
+        """지우는 척한다."""
+
+    async def add_text(self, notebook_id, title, content, **kwargs):
+        """넣은 소스 이름을 기록한다."""
+        self.source_titles.append(title)
+
+    async def configure(self, notebook_id, **kwargs):
+        """맞춤 설정을 받는 척한다."""
+
+    async def ask(self, notebook_id, question):
+        """고정된 답변을 돌려준다."""
+        return types.SimpleNamespace(answer="제목: 주제\n\n정리된 글")
+
+
+def test_s_numbers_point_to_the_saved_source_numbers(
+    fake_outline, monkeypatch
+) -> None:
+    """노트북의 Sn 소스와 저장 문서의 출처 n. 이 같은 재료다.
+
+    재료 ID 를 섞어 두어, 번호가 ID 가 아니라 고른 순서를 따르는지도
+    본다. 문서 읽기 순서가 바뀌면 이 테스트가 깨진다.
+    """
+    client = FakeNotebookLM()
+    real_pipeline = nlm.run_digest_pipeline
+
+    async def run(
+        sources: Any, instruction: Any, on_progress: Any, **kwargs: Any
+    ) -> tuple[str | None, str]:
+        """진짜 파이프라인을 가짜 클라이언트로 돌린다."""
+        return await real_pipeline(
+            sources, instruction, on_progress, client_factory=lambda: client
+        )
+
+    monkeypatch.setattr(digest.nlm, "run_digest_pipeline", run)
+    run_ids = [5, 3, 1, 4, 2]
+    runs = [make_run(run_id, f"요약 {run_id}") for run_id in run_ids]
+
+    draft = digest.build(make_config(), runs, INSTRUCTION, lambda _: None)
+    lines = digest_markdown.to_markdown(draft).splitlines()
+
+    sources = [line for line in lines if line.startswith("    ")]
+    assert len(client.source_titles) == len(sources) == len(run_ids)
+    for number, run_id in enumerate(run_ids, start=1):
+        assert client.source_titles[number - 1] == (
+            f"S{number}: 문서 doc-{run_id}"
+        )
+        assert sources[number - 1].startswith(f"    {number}. [요약 {run_id}](")

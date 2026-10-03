@@ -2,10 +2,11 @@
 
 import asyncio
 
+import notebooklm
 import pytest
 from notebooklm import exceptions
 
-from notebooklm_st.core import digest_title, models
+from notebooklm_st.core import digest_sources, digest_title, models
 from notebooklm_st.services import nlm
 
 
@@ -87,12 +88,21 @@ class FakeSources:
 
 
 class FakeChat:
-    """가짜 대화 API."""
+    """가짜 대화 API. 지정하면 맞춤 설정 시 오류를 던진다."""
 
-    def __init__(self, calls, answer="정리된 글"):
-        """호출 기록 리스트와 돌려줄 답변을 받아 둔다."""
+    def __init__(self, calls, answer="정리된 글", configure_error=None):
+        """호출 기록 리스트와 돌려줄 답변, 던질 오류를 받아 둔다."""
         self._calls = calls
         self._answer = answer
+        self._configure_error = configure_error
+
+    async def configure(
+        self, notebook_id, goal=None, response_length=None, custom_prompt=None
+    ):
+        """맞춤 설정 호출을 기록한다."""
+        self._calls.append(("configure", notebook_id, goal, custom_prompt))
+        if self._configure_error is not None:
+            raise self._configure_error
 
     async def ask(self, notebook_id, question):
         """질문 호출을 기록하고 설정된 답변을 돌려준다."""
@@ -149,14 +159,21 @@ def digest(sources, client, instruction=INSTRUCTION, progress=None):
     )
 
 
-def test_pipeline_creates_adds_asks_and_deletes():
-    """생성·텍스트 추가·질의·삭제를 순서대로 부른다."""
+def test_pipeline_creates_adds_configures_asks_and_deletes():
+    """생성·텍스트 추가·맞춤 설정·질의·삭제를 순서대로 부른다."""
     calls = []
 
     digest(make_sources("요약 A", "요약 B"), FakeClient(calls))
 
     names = [call[0] for call in calls]
-    assert names == ["create", "add_text", "add_text", "ask", "delete"]
+    assert names == [
+        "create",
+        "add_text",
+        "add_text",
+        "configure",
+        "ask",
+        "delete",
+    ]
 
 
 def test_notebook_title_is_temporary():
@@ -172,38 +189,90 @@ def test_notebook_title_is_temporary():
 
 
 def test_each_source_is_added_with_its_title_and_text():
-    """재료의 제목과 본문이 그대로 소스가 된다."""
+    """S 번호가 붙은 재료 제목과 본문 그대로가 소스가 된다."""
     calls = []
 
     digest(make_sources("요약 A"), FakeClient(calls))
 
     _, notebook_id, title, content, wait, timeout = calls[1]
     assert notebook_id == "nb-1"
-    assert title == "요약 A"
+    assert title == "S1: 요약 A"
     assert content == "요약 A 의 본문"
     assert wait is True
     assert timeout == nlm.SOURCE_WAIT_TIMEOUT
 
 
-def test_the_instruction_is_asked_once():
-    """질문은 정리 지시 하나뿐이다."""
+def test_the_question_is_asked_once():
+    """질문은 한 번뿐이다."""
     calls = []
 
     digest(make_sources("요약 A", "요약 B"), FakeClient(calls))
 
     asks = [call for call in calls if call[0] == "ask"]
     assert len(asks) == 1
-    assert INSTRUCTION in asks[0][2]
 
 
-def test_the_prompt_asks_for_a_title():
-    """제목 요구가 지시와 함께 한 번에 나간다."""
+def test_the_instruction_goes_into_the_custom_chat_setting():
+    """S 번호 규칙을 앞에 붙인 정리 지시가 맞춤 대화 설정이 된다."""
     calls = []
 
     digest(make_sources("요약 A"), FakeClient(calls))
 
-    asks = [call for call in calls if call[0] == "ask"]
-    assert digest_title.DIRECTIVE in asks[0][2]
+    configures = [call for call in calls if call[0] == "configure"]
+    assert len(configures) == 1
+    _, notebook_id, goal, custom_prompt = configures[0]
+    assert notebook_id == "nb-1"
+    assert goal == notebooklm.ChatGoal.CUSTOM
+    assert custom_prompt == digest_sources.prepend(INSTRUCTION)
+
+
+def test_the_question_is_the_fixed_trigger_with_the_title_request():
+    """질의는 정해진 시작 문구와 제목 요구뿐이다."""
+    calls = []
+
+    digest(make_sources("요약 A"), FakeClient(calls))
+
+    question = next(call for call in calls if call[0] == "ask")[2]
+    assert question == digest_title.wrap(nlm.DIGEST_TRIGGER)
+
+
+def test_the_question_does_not_grow_with_the_instruction():
+    """정리 지시가 길어도 질의에는 실리지 않는다.
+
+    질의에는 서버가 정한 길이 상한이 있어 긴 지시를 실으면 거부된다.
+    """
+    calls = []
+    long_instruction = "고유표지 " * 3000
+
+    digest(make_sources("요약 A"), FakeClient(calls), long_instruction)
+
+    question = next(call for call in calls if call[0] == "ask")[2]
+    assert "고유표지" not in question
+    assert len(question) < 200
+
+
+def test_the_notebook_is_deleted_when_configuring_fails():
+    """맞춤 설정이 실패해도 노트북을 지운다."""
+    calls = []
+    error = exceptions.RPCError("설정 실패")
+    client = FakeClient(calls, chat=FakeChat(calls, configure_error=error))
+
+    with pytest.raises(exceptions.RPCError):
+        digest(make_sources("요약 A"), client)
+
+    names = [call[0] for call in calls]
+    assert "ask" not in names
+    assert names[-1] == "delete"
+
+
+def test_sources_are_numbered_in_the_order_they_are_added():
+    """소스 이름의 S 번호가 넣는 순서대로 1 부터 붙는다."""
+    calls = []
+
+    digest(make_sources("요약 A", "요약 B", "요약 C"), FakeClient(calls))
+
+    titles = [call[2] for call in calls if call[0] == "add_text"]
+    assert titles == ["S1: 요약 A", "S2: 요약 B", "S3: 요약 C"]
 
 
 def test_the_topic_comes_from_the_title_line():

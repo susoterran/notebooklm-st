@@ -38,6 +38,19 @@ CHANNEL_LABEL = "채널"
 UPLOAD_DATE_LABEL = "업로드 일자"
 """메타데이터 리스트에서 업로드 일자 줄의 라벨. 읽는 쪽은 채널과 같다."""
 
+CATEGORY_SEPARATOR = ","
+"""카테고리 줄에서 이름을 가르는 글자.
+
+``category_names`` 가 이 글자를 이름에 쓰지 못하게 막고, 같은 글자로
+줄을 다시 나눈다.
+"""
+
+CATEGORY_LABEL = "카테고리"
+"""메타데이터 리스트에서 카테고리 줄의 라벨.
+
+``outline_import.find_categories`` 가 같은 줄을 거꾸로 읽는다.
+"""
+
 
 def to_markdown(
     summary: models.RunSummary,
@@ -102,16 +115,46 @@ def _metadata_block(
         lines.append(f"- {CHANNEL_LABEL}: {one_line(metadata.channel)}")
     if metadata is not None and metadata.upload_date:
         lines.append(f"- {UPLOAD_DATE_LABEL}: {metadata.upload_date}")
-    lines.append(f"- {SOURCE_URL_LABEL}: {_source_url(summary)}")
+    categories = category_line(summary.categories)
+    if categories is not None:
+        lines.append(categories)
+    lines.append(f"- {SOURCE_URL_LABEL}: {source_url(summary)}")
     return "\n".join(lines)
 
 
-def _source_url(summary: models.RunSummary) -> str:
+def category_line(names: Sequence[str]) -> str | None:
+    """카테고리 이름들을 메타데이터 리스트의 한 줄로 만든다.
+
+    정리본도 같은 줄을 쓴다(→ ``digest_markdown``). 이름은 규칙을
+    통과한 값이라 다시 다듬지 않는다(→ ``category_names``).
+
+    Args:
+        names: 적을 이름. 부르는 쪽이 이름 순으로 넘긴다.
+
+    Returns:
+        ``- 카테고리: 경제, 인공지능`` 꼴의 줄. 이름이 없으면
+        ``None`` — 값이 없는 줄은 줄째 뺀다.
+    """
+    if not names:
+        return None
+    joined = f"{CATEGORY_SEPARATOR} ".join(names)
+    return f"- {CATEGORY_LABEL}: {joined}"
+
+
+def source_url(summary: models.RunSummary) -> str:
     """메타데이터에 적을 영상 URL 을 고른다.
 
     저장된 원문에는 재생목록·추적 파라미터가 붙어 있을 수 있다.
     검증된 영상 ID 가 있으면 정규 URL 을 다시 짓고, ID 가 없는 옛
     이력만 원문을 쓴다.
+
+    정리본의 출처 링크도 같은 주소를 써야 하므로 공개한다.
+
+    Args:
+        summary: 영상 URL 을 고를 실행 요약.
+
+    Returns:
+        정규 URL, 또는 한 줄로 접은 원문.
     """
     if summary.video_id:
         return youtube.watch_url(summary.video_id)

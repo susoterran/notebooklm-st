@@ -94,6 +94,22 @@ def test_enqueue_leaves_auto_save_off_by_default() -> None:
     assert handle.auto_save is False
 
 
+def test_enqueue_keeps_the_category_ids() -> None:
+    """넣는 순간 고른 카테고리 ID 를 핸들이 쥔다."""
+    store = run_store.RunStore()
+
+    handle = store.enqueue("u", "v", QUESTIONS, category_ids=(3, 1))
+
+    assert handle.category_ids == (3, 1)
+
+
+def test_enqueue_has_no_categories_by_default() -> None:
+    """카테고리를 넘기지 않으면 비어 있다."""
+    store = run_store.RunStore()
+
+    assert store.enqueue("u", "v", QUESTIONS).category_ids == ()
+
+
 def test_get_returns_none_for_unknown_id() -> None:
     """없는 ID 를 조회하면 None 을 돌려준다."""
     store = run_store.RunStore()

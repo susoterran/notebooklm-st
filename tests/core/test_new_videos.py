@@ -10,13 +10,17 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 
 
 def entry(
-    video_id: str, published: str, title: str = "영상"
+    video_id: str,
+    published: str,
+    title: str = "영상",
+    is_short: bool = False,
 ) -> models.FeedEntry:
     """피드 항목 하나를 만든다. ``published`` 는 ISO 문자열이다."""
     return models.FeedEntry(
         video_id=video_id,
         title=title,
         published=datetime.datetime.fromisoformat(published),
+        is_short=is_short,
     )
 
 
@@ -91,3 +95,31 @@ def test_rejects_a_baseline_that_is_not_a_date() -> None:
     """기준일 형식이 아니면 예외다."""
     with pytest.raises(ValueError):
         new_videos.select([], "2026/09/23", set(), KST)
+
+
+MIXED = (
+    entry("ccccccccccc", "2026-09-26T01:00:00+00:00"),
+    entry("sssssssss01", "2026-09-25T12:00:00+00:00", is_short=True),
+    entry("bbbbbbbbbbb", "2026-09-25T01:00:00+00:00"),
+    entry("sssssssss02", "2026-09-24T12:00:00+00:00", is_short=True),
+    entry("aaaaaaaaaaa", "2026-09-24T01:00:00+00:00"),
+)
+"""Shorts 둘과 일반 영상 셋이 섞인 신규. 업로드가 늦은 것부터다."""
+
+
+def test_drop_shorts_keeps_only_regular_videos_in_order() -> None:
+    """Shorts 를 빼고 남은 영상은 받은 순서를 지킨다."""
+    kept, _ = new_videos.drop_shorts(MIXED)
+
+    assert [item.video_id for item in kept] == [
+        "ccccccccccc",
+        "bbbbbbbbbbb",
+        "aaaaaaaaaaa",
+    ]
+
+
+def test_drop_shorts_counts_what_it_dropped() -> None:
+    """뺀 Shorts 의 건수를 함께 돌려준다."""
+    _, dropped = new_videos.drop_shorts(MIXED)
+
+    assert dropped == 2
