@@ -7,6 +7,7 @@ import pytest
 
 from notebooklm_st.core import models, sync_models
 from notebooklm_st.services import (
+    categories,
     run_history,
     run_history_sync,
     run_links,
@@ -69,6 +70,7 @@ def make_create(
     doc_id: str = "doc-9",
     video_id: str = "dQw4w9WgXcQ",
     metadata: models.VideoMetadata | None = None,
+    names: tuple[str, ...] = (),
 ) -> sync_models.SyncCreate:
     """동기화가 만들 이력 한 건."""
     document = sync_models.ListedDocument(
@@ -83,6 +85,7 @@ def make_create(
         url=f"https://www.youtube.com/watch?v={video_id}",
         video_id=video_id,
         metadata=metadata,
+        categories=names,
     )
 
 
@@ -352,3 +355,119 @@ def test_write_metadata_does_not_commit(connection) -> None:
     connection.rollback()
 
     assert run_history.load_metadata(connection, run_id) is None
+
+
+def register(connection: sqlite3.Connection, *names: str) -> list[int]:
+    """카테고리를 등록하고 ID 를 넘긴 순서대로 돌려준다."""
+    return [categories.add_category(connection, name).id for name in names]
+
+
+def exported_with(connection: sqlite3.Connection, *names: str) -> int:
+    """그 카테고리를 단 채 ``doc-1`` 에 저장된 실행 하나를 만든다."""
+    run_id = run_history.save_run(
+        connection, make_result(), category_ids=register(connection, *names)
+    )
+    export(connection, run_id)
+    return run_id
+
+
+def test_list_exported_carries_the_categories(connection) -> None:
+    """저장된 실행 목록도 카테고리를 싣는다."""
+    exported_with(connection, "경제")
+
+    assert run_history_sync.list_exported(connection)[0].categories == ("경제",)
+
+
+def test_insert_exported_links_the_categories_by_name(connection) -> None:
+    """되살린 행에 문서의 카테고리를 이름으로 잇는다."""
+    register(connection, "인공지능", "경제")
+
+    run_history_sync.insert_exported(
+        connection, make_create(names=("경제", "인공지능"))
+    )
+    connection.commit()
+
+    assert run_history_sync.list_exported(connection)[0].categories == (
+        "경제",
+        "인공지능",
+    )
+
+
+def test_insert_exported_skips_an_unregistered_name(connection) -> None:
+    """등록되지 않은 이름은 잇지 않는다. 등록은 적용이 먼저 한다."""
+    register(connection, "경제")
+
+    run_history_sync.insert_exported(
+        connection, make_create(names=("경제", "정치"))
+    )
+    connection.commit()
+
+    assert run_history_sync.list_exported(connection)[0].categories == ("경제",)
+
+
+def test_insert_exported_keeps_the_categories_of_an_existing_document(
+    connection,
+) -> None:
+    """이미 있는 문서면 카테고리도 쓰지 않는다."""
+    register(connection, "경제", "정치")
+    run_history_sync.insert_exported(connection, make_create(names=("경제",)))
+
+    result = run_history_sync.insert_exported(
+        connection, make_create(names=("정치",))
+    )
+    connection.commit()
+
+    assert result is None
+    assert run_history_sync.list_exported(connection)[0].categories == ("경제",)
+
+
+def test_replace_categories_changes_them(connection) -> None:
+    """이름 집합이 다르면 바꾸고 참을 돌려준다."""
+    run_id = exported_with(connection, "경제")
+    register(connection, "정치")
+
+    changed = run_history_sync.replace_categories(
+        connection, run_id, "doc-1", ("정치",)
+    )
+    connection.commit()
+
+    assert changed is True
+    assert run_history_sync.list_exported(connection)[0].categories == ("정치",)
+
+
+def test_replace_categories_with_the_same_names_is_false(connection) -> None:
+    """이름 집합이 같으면 쓰지 않고 거짓을 돌려준다."""
+    run_id = exported_with(connection, "경제", "정치")
+
+    changed = run_history_sync.replace_categories(
+        connection, run_id, "doc-1", ("정치", "경제")
+    )
+
+    assert changed is False
+
+
+def test_replace_categories_needs_the_document_id_to_match(
+    connection,
+) -> None:
+    """문서 ID 가 다르면 쓰지 않는다. 다시 쓰인 ID 를 지킨다."""
+    run_id = exported_with(connection, "경제")
+    register(connection, "정치")
+
+    changed = run_history_sync.replace_categories(
+        connection, run_id, "other-doc", ("정치",)
+    )
+    connection.commit()
+
+    assert changed is False
+    assert run_history_sync.list_exported(connection)[0].categories == ("경제",)
+
+
+def test_replace_categories_does_not_commit(connection) -> None:
+    """트랜잭션은 호출자가 소유한다."""
+    run_id = exported_with(connection, "경제")
+    register(connection, "정치")
+
+    run_history_sync.replace_categories(connection, run_id, "doc-1", ("정치",))
+    connection.rollback()
+
+    assert run_history_sync.list_exported(connection)[0].categories == ("경제",)

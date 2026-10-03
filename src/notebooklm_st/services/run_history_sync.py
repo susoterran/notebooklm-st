@@ -50,7 +50,8 @@ def insert_exported(
 
     ``answers`` 행은 만들지 않는다. 저장된 실행은 원래 본문이 없다.
     문서 머리에서 읽은 메타데이터가 있으면 ``run_metadata`` 행을 함께
-    만든다.
+    만들고, 카테고리는 이름으로 잇는다. 이름은 ``history_sync.apply``
+    가 먼저 등록해 둔다.
 
     Args:
         connection: 열린 커넥션.
@@ -87,6 +88,7 @@ def insert_exported(
             " VALUES (?, ?, ?)",
             (run_id, create.metadata.channel, create.metadata.upload_date),
         )
+    _link_by_name(connection, run_id, create.categories)
     return run_id
 
 
@@ -162,3 +164,58 @@ def write_metadata(
         (metadata.channel, metadata.upload_date, run_id, outline_id),
     )
     return cursor.rowcount > 0
+
+
+def replace_categories(
+    connection: sqlite3.Connection,
+    run_id: int,
+    outline_id: str,
+    names: Sequence[str],
+) -> bool:
+    """저장된 행 하나의 카테고리를 이름들로 바꾼다.
+
+    **커밋하지 않는다.** 트랜잭션은 ``history_sync.apply`` 가 소유한다.
+    실행 ID 와 문서 ID 가 둘 다 맞는 행에만 쓴다 — ``write_metadata``
+    와 같은 이유로, 다시 쓰인 ID 의 미저장 실행을 건드리지 않는다.
+
+    Args:
+        connection: 열린 커넥션.
+        run_id: 바꿀 실행의 ID.
+        outline_id: 그 실행이 가리켜야 할 문서 ID.
+        names: 새 카테고리 이름. 등록되지 않은 이름은 빠진다.
+
+    Returns:
+        바꿨으면 ``True``. 맞는 행이 없거나 이름 집합이 이미 같으면
+        ``False``.
+    """
+    found = connection.execute(
+        "SELECT 1 FROM runs WHERE id = ? AND outline_id = ?",
+        (run_id, outline_id),
+    ).fetchone()
+    if found is None:
+        return False
+    rows = connection.execute(
+        "SELECT c.name FROM run_categories AS rc"
+        " JOIN categories AS c ON c.id = rc.category_id"
+        " WHERE rc.run_id = ?",
+        (run_id,),
+    ).fetchall()
+    if {row["name"] for row in rows} == set(names):
+        return False
+    connection.execute("DELETE FROM run_categories WHERE run_id = ?", (run_id,))
+    _link_by_name(connection, run_id, names)
+    return True
+
+
+def _link_by_name(
+    connection: sqlite3.Connection, run_id: int, names: Sequence[str]
+) -> None:
+    """실행 하나에 카테고리를 이름으로 잇는다. 커밋하지 않는다.
+
+    ``categories`` 에서 골라 넣으므로 등록되지 않은 이름은 빠진다.
+    """
+    connection.executemany(
+        "INSERT OR IGNORE INTO run_categories (run_id, category_id)"
+        " SELECT ?, id FROM categories WHERE name = ?",
+        [(run_id, name) for name in names],
+    )

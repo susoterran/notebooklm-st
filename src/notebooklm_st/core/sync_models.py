@@ -37,6 +37,8 @@ class SyncCreate:
     video_id: str
     metadata: models.VideoMetadata | None = None
     """문서 머리에서 읽은 채널·업로드 일자. 두 줄이 다 없으면 ``None``."""
+    categories: tuple[str, ...] = ()
+    """문서 머리에서 읽은 카테고리 이름. 줄이 없으면 비어 있다."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -57,6 +59,15 @@ class SyncUpdate:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class SyncCategoryUpdate:
+    """동기화가 카테고리를 바꿀 기존 행 한 건."""
+
+    run: models.RunSummary
+    categories: tuple[str, ...]
+    """문서 머리에서 읽은 이름. 이 집합으로 바꾼다."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class SyncPlan:
     """미리보기와 적용이 함께 쓰는 동기화 계획.
 
@@ -68,8 +79,20 @@ class SyncPlan:
     creates: tuple[SyncCreate, ...]
     skips: tuple[SyncSkip, ...]
     updates: tuple[SyncUpdate, ...] = ()
+    category_updates: tuple[SyncCategoryUpdate, ...] = ()
+    new_categories: tuple[str, ...] = ()
+    """로컬에 없어 새로 등록할 이름. 이름 순이다."""
 
     @property
     def is_empty(self) -> bool:
-        """지울 것도 만들 것도 갱신할 것도 없다."""
-        return not self.deletes and not self.creates and not self.updates
+        """지울 것도 만들 것도 갱신할 것도 없다.
+
+        ``new_categories`` 는 보지 않는다. 새 이름은 생성 대상이나
+        카테고리 갱신 대상에서만 나온다.
+        """
+        return not (
+            self.deletes
+            or self.creates
+            or self.updates
+            or self.category_updates
+        )

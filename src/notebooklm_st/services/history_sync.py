@@ -7,11 +7,18 @@
 """
 
 import dataclasses
+import itertools
 import sqlite3
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 
-from notebooklm_st.core import models, outline_import, sync_models, youtube
-from notebooklm_st.services import run_history_sync
+from notebooklm_st.core import (
+    category_names,
+    models,
+    outline_import,
+    sync_models,
+    youtube,
+)
+from notebooklm_st.services import categories, run_history_sync
 
 SKIP_NO_SOURCE_URL = "영상 URL 없음"
 """정리본이나 손으로 쓴 문서. 이력 문서가 아니다."""
@@ -23,19 +30,23 @@ SKIP_BAD_SOURCE_URL = "영상 URL 인식 불가"
 def plan(
     exported: Sequence[models.RunSummary],
     documents: Sequence[sync_models.ListedDocument],
+    known_categories: Collection[str] = frozenset(),
 ) -> sync_models.SyncPlan:
     """두 목록을 문서 ID 로 맞춰 동기화 계획을 세운다.
 
     문서 목록에 없는 행은 지우고, 어떤 행도 가리키지 않는
     문서는 본문에 영상 URL 이 있을 때만 만든다. 둘 다 있는 행은
     문서 머리의 채널·업로드 일자가 로컬과 다를 때만 메타데이터를
-    갱신한다. 같은 문서를 가리키는 행이 둘이어도, 같은 영상의 문서가
-    둘이어도 정리하지 않는다 — 동기화는 중복을 만들지 않을 뿐이다.
+    갱신하고, 카테고리 이름 집합이 다를 때만 카테고리를 바꾼다. 같은
+    문서를 가리키는 행이 둘이어도, 같은 영상의 문서가 둘이어도
+    정리하지 않는다 — 동기화는 중복을 만들지 않을 뿐이다.
 
     Args:
         exported: ``exported_at`` 이 있는 행들. 미저장
             실행은 여기 들어오지 않으므로 삭제될 수 없다.
         documents: 컬렉션의 문서 전부.
+        known_categories: 로컬에 등록된 카테고리 이름. 문서에 나온
+            이름 중 여기 없는 것이 새로 등록할 이름이 된다.
 
     Returns:
         입력 순서를 지킨 계획.
@@ -70,13 +81,21 @@ def plan(
                 url=url,
                 video_id=video_id,
                 metadata=outline_import.find_metadata(document.markdown),
+                categories=(
+                    outline_import.find_categories(document.markdown) or ()
+                ),
             )
         )
+    category_updates = tuple(_category_updates(exported, listed))
     return sync_models.SyncPlan(
         deletes=deletes,
         creates=tuple(creates),
         skips=tuple(skips),
         updates=tuple(_updates(exported, listed)),
+        category_updates=category_updates,
+        new_categories=_new_categories(
+            creates, category_updates, known_categories
+        ),
     )
 
 
@@ -100,6 +119,40 @@ def _updates(
         merged = _merge(run.metadata, found)
         if merged != run.metadata:
             yield sync_models.SyncUpdate(run=run, metadata=merged)
+
+
+def _category_updates(
+    exported: Sequence[models.RunSummary],
+    listed: Mapping[str, sync_models.ListedDocument],
+) -> Iterator[sync_models.SyncCategoryUpdate]:
+    """문서의 카테고리 이름 집합이 로컬과 다른 행을 입력 순서로 고른다.
+
+    문서에서 카테고리를 못 읽으면 그 행은 건드리지 않는다. 메타데이터와
+    같은 이유다 — 직렬화가 바뀌어 파싱이 실패할 때 멀쩡한 로컬 값이
+    한꺼번에 비지 않게 한다.
+    """
+    for run in exported:
+        document = listed.get(run.outline_id or "")
+        if document is None:
+            continue
+        found = outline_import.find_categories(document.markdown)
+        if found is None:
+            continue
+        if set(found) != set(run.categories):
+            yield sync_models.SyncCategoryUpdate(run=run, categories=found)
+
+
+def _new_categories(
+    creates: Sequence[sync_models.SyncCreate],
+    category_updates: Sequence[sync_models.SyncCategoryUpdate],
+    known: Collection[str],
+) -> tuple[str, ...]:
+    """생성·카테고리 갱신 대상의 이름 중 로컬에 없는 것을 모은다."""
+    names = itertools.chain(
+        (name for create in creates for name in create.categories),
+        (name for change in category_updates for name in change.categories),
+    )
+    return category_names.ordered(name for name in names if name not in known)
 
 
 def _merge(
@@ -129,12 +182,20 @@ class SyncResult:
     created: int
     updated: int = 0
     """메타데이터를 새로 넣거나 값을 바꾼 행 수."""
+    recategorized: int = 0
+    """카테고리를 바꾼 행 수."""
+    categories_added: int = 0
+    """새로 등록한 카테고리 수. 다른 탭이 먼저 등록했으면 계획보다
+    작다."""
 
 
 def apply(
     connection: sqlite3.Connection, sync_plan: sync_models.SyncPlan
 ) -> SyncResult:
-    """계획을 DB 에 쓴다. 삭제·삽입·갱신을 커밋 하나로 묶는다.
+    """계획을 DB 에 쓴다. 등록·삭제·삽입·갱신을 커밋 하나로 묶는다.
+
+    새 카테고리를 먼저 등록한다. 삽입과 카테고리 교체가 이름으로
+    잇기 때문이다.
 
     어느 것이든 실패하면 전부 되돌리고 다시 던진다. 커넥션은 앱
     전체가 함께 쓰므로 반쪽만 걸린 채 나가면 다른 곳의 commit 이
@@ -149,13 +210,16 @@ def apply(
         sync_plan: ``plan`` 이 세운 계획.
 
     Returns:
-        실제로 지운·만든·갱신한 개수.
+        실제로 지운·만든·갱신·등록한 개수.
 
     Raises:
-        sqlite3.Error: 삭제·삽입·갱신이 실패한 경우. 되돌린 뒤
+        sqlite3.Error: 등록·삭제·삽입·갱신이 실패한 경우. 되돌린 뒤
             던진다.
     """
     try:
+        categories_added = categories.ensure(
+            connection, sync_plan.new_categories
+        )
         deleted = run_history_sync.delete_runs(
             connection,
             [(run.id, run.outline_id or "") for run in sync_plan.deletes],
@@ -174,8 +238,23 @@ def apply(
                 update.metadata,
             ):
                 updated += 1
+        recategorized = 0
+        for change in sync_plan.category_updates:
+            if run_history_sync.replace_categories(
+                connection,
+                change.run.id,
+                change.run.outline_id or "",
+                change.categories,
+            ):
+                recategorized += 1
         connection.commit()
     except BaseException:
         connection.rollback()
         raise
-    return SyncResult(deleted=deleted, created=created, updated=updated)
+    return SyncResult(
+        deleted=deleted,
+        created=created,
+        updated=updated,
+        recategorized=recategorized,
+        categories_added=categories_added,
+    )

@@ -7,6 +7,7 @@ import pytest
 
 from notebooklm_st.core import models, sync_models
 from notebooklm_st.services import (
+    categories,
     history_sync,
     run_history,
     run_history_sync,
@@ -32,11 +33,22 @@ DOC_METADATA = models.VideoMetadata(
     channel="어떤 채널", upload_date="2026-09-20"
 )
 
+CATEGORY_BODY = (
+    "- 제목: 밸류에이션 강의\n"
+    "- 카테고리: 인공지능, 경제\n"
+    "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+    "\n---\n\n## 핵심 주장\n\n세 가지다.\n"
+)
+
+DOC_CATEGORIES = ("경제", "인공지능")
+"""``CATEGORY_BODY`` 에서 읽히는 이름. 이름 순이다."""
+
 
 def make_run(
     run_id: int,
     outline_id: str,
     metadata: models.VideoMetadata | None = None,
+    names: tuple[str, ...] = (),
 ) -> models.RunSummary:
     """저장된 실행 요약을 만든다."""
     return models.RunSummary(
@@ -51,6 +63,7 @@ def make_run(
         outline_title="정리한 제목",
         exported_at="2026-09-22T15:00:00",
         metadata=metadata,
+        categories=names,
     )
 
 
@@ -681,3 +694,229 @@ def test_a_channel_with_doubled_spaces_settles_after_one_apply(
         "투자 연구소"
     ]
     assert second.updates == ()
+
+
+def test_plan_carries_the_categories_of_a_new_document() -> None:
+    """만들 문서의 카테고리를 생성 대상에 싣는다."""
+    result = history_sync.plan([], [make_document("doc-9", CATEGORY_BODY)])
+
+    assert result.creates[0].categories == DOC_CATEGORIES
+
+
+def test_plan_creates_without_categories_when_the_head_has_none() -> None:
+    """카테고리 줄이 없으면 카테고리 없이 만든다."""
+    result = history_sync.plan([], [make_document("doc-9")])
+
+    assert result.creates[0].categories == ()
+
+
+def test_plan_updates_categories_that_differ() -> None:
+    """문서의 이름 집합이 로컬과 다르면 카테고리 갱신 대상이다."""
+    run = make_run(1, "doc-1", names=("경제",))
+
+    result = history_sync.plan(
+        [run], [make_document("doc-1", CATEGORY_BODY)], {"경제", "인공지능"}
+    )
+
+    assert result.category_updates == (
+        sync_models.SyncCategoryUpdate(run=run, categories=DOC_CATEGORIES),
+    )
+
+
+def test_plan_leaves_equal_categories_alone() -> None:
+    """이름 집합이 같으면 손대지 않는다."""
+    run = make_run(1, "doc-1", names=DOC_CATEGORIES)
+
+    result = history_sync.plan(
+        [run], [make_document("doc-1", CATEGORY_BODY)], set(DOC_CATEGORIES)
+    )
+
+    assert result.category_updates == ()
+
+
+def test_plan_never_clears_local_categories() -> None:
+    """문서에서 카테고리를 못 읽으면 로컬 값을 그대로 둔다."""
+    run = make_run(1, "doc-1", names=("경제",))
+
+    result = history_sync.plan([run], [make_document("doc-1")], {"경제"})
+
+    assert result.category_updates == ()
+
+
+def test_plan_lists_the_names_it_does_not_know() -> None:
+    """생성·갱신 대상의 이름 중 로컬에 없는 것을 이름 순으로 모은다."""
+    other = CATEGORY_BODY.replace("인공지능, 경제", "정치")
+
+    result = history_sync.plan(
+        [make_run(1, "doc-1")],
+        [make_document("doc-1", CATEGORY_BODY), make_document("new-1", other)],
+        {"경제"},
+    )
+
+    assert result.new_categories == ("인공지능", "정치")
+
+
+def test_a_category_update_only_plan_is_not_empty() -> None:
+    """카테고리 갱신만 있어도 적용할 것이 있다."""
+    plan = sync_models.SyncPlan(
+        deletes=(),
+        creates=(),
+        skips=(),
+        category_updates=(
+            sync_models.SyncCategoryUpdate(
+                run=make_run(1, "doc-1"), categories=("경제",)
+            ),
+        ),
+    )
+
+    assert not plan.is_empty
+
+
+def known_names(connection: sqlite3.Connection) -> set[str]:
+    """등록된 카테고리 이름들."""
+    return {item.name for item in categories.list_categories(connection)}
+
+
+def test_apply_registers_and_links_categories_in_one_commit(
+    connection,
+) -> None:
+    """새 이름을 등록하고, 되살린 행과 기존 행에 잇는다."""
+    save_exported(connection, "doc-1")
+    documents = [
+        make_document("doc-1", CATEGORY_BODY),
+        make_document("new-1", CATEGORY_BODY),
+    ]
+    plan = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        documents,
+        known_names(connection),
+    )
+
+    result = history_sync.apply(connection, plan)
+
+    assert not connection.in_transaction
+    assert result == history_sync.SyncResult(
+        deleted=0, created=1, recategorized=1, categories_added=2
+    )
+    assert known_names(connection) == set(DOC_CATEGORIES)
+    runs = run_history_sync.list_exported(connection)
+    assert [run.categories for run in runs] == [DOC_CATEGORIES] * 2
+
+
+class FailingCategoryWrite:
+    """카테고리 연결을 지우는 문장에서만 터지는 커넥션 대역.
+
+    나머지 호출은 진짜 커넥션이 그대로 처리한다. 등록·삽입은 됐는데
+    카테고리 교체가 죽는 상황을 재현한다.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """감쌀 진짜 커넥션을 받는다."""
+        self._connection = connection
+
+    def execute(self, sql, *args):
+        """카테고리 연결을 지우는 문장만 실패시킨다."""
+        if "DELETE FROM run_categories" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self._connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        """나머지 속성은 진짜 커넥션에 맡긴다."""
+        return getattr(self._connection, name)
+
+
+def test_apply_rolls_back_when_a_category_replace_fails(connection) -> None:
+    """카테고리 교체가 죽으면 새 카테고리와 삽입도 되돌린다."""
+    save_exported(connection, "doc-1")
+    plan = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        [make_document("doc-1", CATEGORY_BODY), make_document("new-1")],
+        known_names(connection),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        # 일부 호출만 가로채는 대역이라 nominal 타입이 아니다.
+        failing = FailingCategoryWrite(connection)
+        history_sync.apply(failing, plan)  # type: ignore[arg-type]
+
+    assert known_names(connection) == set()
+    runs = run_history_sync.list_exported(connection)
+    assert [run.outline_id for run in runs] == ["doc-1"]
+
+
+def test_apply_does_not_replace_categories_of_a_reused_id(connection) -> None:
+    """낡은 계획의 교체는 ID 를 다시 받은 미저장 실행에 쓰지 않는다."""
+    gone = save_exported(connection, "doc-1")
+    stale = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        [make_document("doc-1", CATEGORY_BODY)],
+        known_names(connection),
+    )
+    assert [change.run.id for change in stale.category_updates] == [gone]
+    run_history.delete_run(connection, gone)
+    reused = run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            title="새 실행",
+            items=(),
+        ),
+    )
+    assert reused == gone
+
+    result = history_sync.apply(connection, stale)
+
+    assert result.recategorized == 0
+    summary = run_history.load_run(connection, reused)
+    assert summary is not None
+    assert summary.categories == ()
+
+
+def test_a_second_plan_after_apply_has_no_category_work(connection) -> None:
+    """적용한 뒤 다시 계획하면 카테고리 갱신도 새 카테고리도 없다."""
+    save_exported(connection, "doc-1")
+    documents = [
+        make_document("doc-1", CATEGORY_BODY),
+        make_document("new-1", CATEGORY_BODY),
+    ]
+    history_sync.apply(
+        connection,
+        history_sync.plan(
+            run_history_sync.list_exported(connection),
+            documents,
+            known_names(connection),
+        ),
+    )
+
+    again = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        documents,
+        known_names(connection),
+    )
+
+    assert again.category_updates == ()
+    assert again.new_categories == ()
+    assert again.is_empty
+
+
+def test_apply_counts_only_the_categories_it_added(connection) -> None:
+    """적용 전에 다른 탭이 같은 이름을 등록해도 실패하지 않는다.
+
+    결과의 새 카테고리 수는 이 적용이 실제로 등록한 수다.
+    """
+    save_exported(connection, "doc-1")
+    plan = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        [make_document("doc-1", CATEGORY_BODY)],
+        known_names(connection),
+    )
+    assert plan.new_categories == DOC_CATEGORIES
+    categories.add_category(connection, "경제")
+
+    result = history_sync.apply(connection, plan)
+
+    assert result.categories_added == 1
+    assert run_history_sync.list_exported(connection)[0].categories == (
+        DOC_CATEGORIES
+    )
