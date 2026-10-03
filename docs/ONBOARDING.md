@@ -138,7 +138,7 @@ Streamlit 은 **상호작용마다 스크립트를 처음부터 다시 실행한
 | 파일 | 복잡도 | 역할 |
 |---|---|---|
 | `pages/ask.py` | moderate | 질의 화면. URL 입력·질문 선택 후 대기열에 넣고 반환. 실행 중이어도 넣고, 같은 영상이 대기·실행 중이면 막는다. 넣기는 버튼 콜백이 한다 |
-| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 확인한 신규를 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
+| `pages/channels.py`·`_channel_check.py`·`_channel_videos.py`·`_channel_enqueue.py` | moderate | 채널 화면. 등록·목록 탭과 "새 영상 확인" 탭. 확인한 신규에서 Shorts 를 빼고(피드 링크로 가린다) 표로 보이고, 행을 골라 버튼 하나로 질의 대기열에 넣는다. 대기·실행 중인 영상은 뺀다. 넣기는 버튼 콜백이 한다 |
 | `pages/dashboard.py` | simple | 실행 현황. 레지스트리를 1초 fragment 로 폴링해 한 줄 표로 그린다. 지우기·취소·재개는 버튼 콜백이 한다. 대기열이 멈추면 이유와 재개 버튼을 보인다 |
 | `pages/question_admin.py` | moderate | 질문 템플릿 CRUD. 검증 오류는 `st.error`, 성공 시 `st.rerun` |
 | `pages/history.py` | **complex** | 이력 조회·답변 수정·삭제·마크다운 내려받기. 인용 숨기기와 2단계 삭제 확인을 세션 키로 직접 관리 |
