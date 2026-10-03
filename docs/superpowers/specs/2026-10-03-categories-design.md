@@ -4,7 +4,8 @@
 - **상태**: 설계 검토 중
 - **대상**: 신규 `core/category_names.py`·`core/material_filter.py`·
   `core/sync_models.py`·`services/categories.py`·
-  `services/run_steps.py`·`pages/category_admin.py`.
+  `services/run_steps.py`·`components/category_picker.py`·
+  `pages/category_admin.py`.
   수정 `services/store.py`·`core/models.py`·`core/markdown_export.py`·
   `core/digest_markdown.py`·`core/outline_import.py`·
   `services/run_history.py`·`services/run_history_sync.py`·
@@ -367,8 +368,10 @@ CREATE TABLE IF NOT EXISTS channel_categories (
 
 ### 5.4 `services/runs.py`·`services/run_store.py`
 
-- `RunHandle` 에 `category_ids: tuple[int, ...]` 를 `questions` 다음에
-  더한다. 넣는 순간 고정한다(2.10).
+- `RunHandle` 에 `category_ids: tuple[int, ...] = ()` 를 **맨 끝에**
+  더한다. 넣는 순간 고정한다(2.10). 핸들을 직접 만드는 테스트가 여럿이라
+  기본값이 있어야 하고, 기본값이 있는 필드는 dataclass 에서 맨 끝에
+  와야 한다.
 - `RunStore.enqueue` 에 `category_ids: tuple[int, ...] = ()` 를 더한다.
   기본값은 `auto_save` 와 같이 테스트가 핸들을 만들 때 쓴다.
 
@@ -409,13 +412,18 @@ def split(value: str) -> tuple[str, ...]
 ### 6.2 `core/markdown_export.py` — 머리 줄
 
 ```python
+CATEGORY_SEPARATOR = ","
 CATEGORY_LABEL = "카테고리"
 
 def category_line(names: Sequence[str]) -> str | None
 ```
 
+- `CATEGORY_SEPARATOR` 는 줄 안에서 이름을 가르는 글자다.
+  `category_names` 가 이 글자로 줄을 나누고, 이름에 쓰지 못하게 막는다.
+  `category_names` 가 이 모듈을 import 하므로 상수는 이쪽에 둔다.
 - `category_line` 은 이름이 없으면 `None`, 있으면
-  `f"- {CATEGORY_LABEL}: {', '.join(names)}"` 다. 순서는 받은 그대로다
+  `f"- {CATEGORY_LABEL}: {CATEGORY_SEPARATOR} ".join(...)` 꼴, 곧
+  `- 카테고리: 경제, 인공지능` 이다. 순서는 받은 그대로다
   — 부르는 쪽이 이미 이름 순으로 들고 있다.
 - `_metadata_block` 은 업로드 일자 줄 다음, 영상 URL 줄 앞에
   `category_line(summary.categories)` 를 넣는다. `None` 이면 넣지 않는다.
@@ -500,7 +508,8 @@ def ensure(connection, names: Sequence[str]) -> int
   `ValueError` 로 막는다. 문구는 "이력에서 쓰는 카테고리는 이름을
   바꾸거나 지울 수 없습니다." 다. 대기 중인 실행의 판정은 레지스트리를
   아는 화면이 한다(8.1).
-- 없는 ID 면 `ValueError`(질문과 같다).
+- 이름 변경은 없는 ID 면 `ValueError`, 삭제는 조용히 넘어간다(질문과
+  같다).
 - `list_categories` 는 `ORDER BY name` 이다. SQLite 의 기본 비교는
   바이트 순이고 UTF-8 에서 코드 포인트 순과 같으므로 6.1 의 정렬과
   같다.
@@ -702,12 +711,19 @@ YouTube 영상 URL [__________________]
 [실행]
 ```
 
-- 질문이 없을 때의 안내 다음에 카테고리를 읽는다. 하나도 없으면
-  "카테고리 관리 화면에서 카테고리를 먼저 등록하세요. 카테고리를 고르지
-  않으면 질의할 수 없습니다." 를 `st.info` 로 보이고 돌아간다.
-- `st.multiselect("카테고리", options=[ID…], format_func=이름, key=
-  "ask_categories", help=…)`. 도움말은 "Outline 문서 머리에 적히고 정리본
-  재료를 거르는 데 씁니다. 하나 이상 고르세요." 다.
+- 카테고리 선택은 질의 화면과 채널 화면 세 곳이 함께 쓰므로
+  `components/category_picker.py` 로 뗀다. `render(label, category_list,
+  key, help_text, on_change=None) -> list[int]` 가 값은 ID, 이름은
+  `format_func` 인 `st.multiselect` 를 그린다. 안내 문구 상수
+  `NO_CATEGORIES` 와 도움말 상수 `QUERY_HELP` 도 여기 둔다.
+- 질문 선택은 지금처럼 먼저 그린다. 그다음 카테고리를 읽고, 하나도
+  없으면 `NO_CATEGORIES` — "카테고리 관리 화면에서 카테고리를 먼저
+  등록하세요. 카테고리를 고르지 않으면 질의할 수 없습니다." — 를
+  `st.info` 로 보이고 돌아간다. 자동 저장 체크와 실행 버튼은 그리지
+  않는다.
+- 카테고리 선택은 `category_picker.render("카테고리", …, key=
+  "ask_categories", QUERY_HELP)` 다. 도움말은 "Outline 문서 머리에
+  적히고 정리본 재료를 거르는 데 씁니다. 하나 이상 고르세요." 다.
 - 실행 버튼은 URL·질문·카테고리가 모두 있어야 열린다.
 - `_enqueue` 콜백은 누른 순간의 세션 값을 읽고, 비었으면 넣지 않는다.
   넣은 뒤 카테고리 선택은 질문 선택처럼 남긴다.
@@ -715,8 +731,8 @@ YouTube 영상 URL [__________________]
 ### 8.3 `pages/channels.py` — 등록 탭과 목록 탭
 
 - **등록 탭** — 카테고리가 하나라도 있으면 기준일 아래에
-  `st.multiselect("기본 카테고리", key="channels_new_categories", …)` 를
-  그린다. 비워도 된다. `_add` 가 `channels.add_channel(…,
+  `category_picker.render("기본 카테고리", …,
+  key="channels_new_categories", …)` 를 그린다. 비워도 된다. `_add` 가 `channels.add_channel(…,
   category_ids=…)` 로 넘긴다. 카테고리가 없으면 그리지 않는다.
 - **목록 탭** — 채널 행의 펼침 안, 채널명 칸 아래에 "기본 카테고리"
   선택을 그린다. key 는 `f"channels_default_categories_{channel.id}"`
@@ -733,7 +749,12 @@ YouTube 영상 URL [__________________]
   세션에 없을 때만 그 채널의 기본 카테고리(지금 있는 ID 만)로 채운다.
   바꾼 값은 채널에 적지 않는다.
 - 카테고리가 하나도 없으면 위젯 대신 8.2 와 같은 안내를 보이고, 넣기
-  버튼을 잠근다.
+  쪽(자동 저장 체크·대기열 안내·넣기 버튼)을 그리지 않는다. 표는
+  그린다. 질문이 없을 때와 같은 모양이다.
+- 질문 선택과 카테고리 선택은 `_render_choices` 로 묶어 떼고, 고른
+  질문·카테고리 ID·넣기 쪽을 그릴 수 있는지를 화면 전용 값
+  `_Choices` 로 돌려준다. `_render_found` 가 40줄을 크게 넘지 않게
+  한다.
 - `_channel_enqueue.render` 는 카테고리 선택 key 와 지금 고른 값을 더
   받는다. 고른 것이 없으면 "카테고리를 하나 이상 고르세요." 를 보이고
   버튼을 잠근다. 콜백은 누른 순간의 세션 값을 읽어 `runner.enqueue(…,
@@ -787,7 +808,7 @@ YouTube 영상 URL [__________________]
 
 | 상황 | 처리 |
 |---|---|
-| 카테고리가 하나도 없음 | 질의 화면은 안내 후 돌아가고, 채널 화면은 안내 후 넣기를 잠근다 |
+| 카테고리가 하나도 없음 | 질의 화면은 안내 후 돌아가고, 채널 화면은 안내하고 넣기 쪽을 그리지 않는다(표는 보인다) |
 | 이름이 비었거나 30자 초과, 허용하지 않는 글자 | `ValueError` → `st.error`. 저장하지 않는다 |
 | 같은 이름 | 위와 같다 |
 | 사용 중인 카테고리의 이름 변경·삭제 | 화면이 잠그고 이유를 적는다. 경합으로 버튼이 눌려도 서비스가 `ValueError` 로 막는다 |
@@ -860,7 +881,7 @@ YouTube 영상 URL [__________________]
 
 ## 12. 건드리는 파일
 
-**신규 — 소스 6**
+**신규 — 소스 7**
 
 - `src/notebooklm_st/core/category_names.py` — 이름 규칙(6.1)
 - `src/notebooklm_st/core/material_filter.py` — 재료 거르기(6.5)
@@ -868,6 +889,8 @@ YouTube 영상 URL [__________________]
   추가분(5.3)
 - `src/notebooklm_st/services/categories.py` — CRUD 와 `ensure`(7.2)
 - `src/notebooklm_st/services/run_steps.py` — 워커 두 단계(7.7)
+- `src/notebooklm_st/components/category_picker.py` — 카테고리 선택
+  위젯과 안내 문구(8.2)
 - `src/notebooklm_st/pages/category_admin.py` — 관리 화면(8.1)
 
 **수정 — 소스**
