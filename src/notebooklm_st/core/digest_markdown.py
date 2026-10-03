@@ -4,7 +4,7 @@
 요약본 하나를 옮긴다면 이쪽은 정리본 하나를 옮긴다.
 """
 
-from notebooklm_st.core import markdown_export, models
+from notebooklm_st.core import category_names, markdown_export, models
 
 _NESTED_INDENT = "    "
 """하위 목록 항목 앞에 붙일 들여쓰기.
@@ -52,17 +52,25 @@ def _metadata_block(draft: models.DigestDraft) -> str:
     아래 순번 있는 하위 목록으로 적는다. 번호는 1 부터다 — CommonMark
     에서 문단 바로 뒤의 순번 목록은 1 로 시작해야 목록으로 읽힌다.
 
+    카테고리는 재료들의 것을 합쳐 중복을 빼고 이름 순으로 적는다.
+    하나도 없으면 줄째 뺀다. 정리본은 동기화가 건너뛰므로 이 줄은
+    Outline 에서 읽는 사람을 위한 표시다.
+
     Args:
         draft: 저장할 초안.
 
     Returns:
         ``- 라벨: 값`` 꼴의 마크다운 리스트.
     """
-    lines = [
-        "- 종류: 정리본",
-        f"- 작성일자: {draft.created_on}",
-        "- 출처:",
-    ]
+    lines = ["- 종류: 정리본", f"- 작성일자: {draft.created_on}"]
+    categories = markdown_export.category_line(
+        category_names.ordered(
+            name for run in draft.sources for name in run.categories
+        )
+    )
+    if categories is not None:
+        lines.append(categories)
+    lines.append("- 출처:")
     lines.extend(
         f"{_NESTED_INDENT}{number}. {_source_link(run)}"
         for number, run in enumerate(draft.sources, start=1)

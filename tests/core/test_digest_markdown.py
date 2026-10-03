@@ -13,6 +13,7 @@ def make_source(
     title: str | None = "영상 제목",
     video_id: str = "dQw4w9WgXcQ",
     url: str = "https://youtu.be/dQw4w9WgXcQ?si=share",
+    categories: tuple[str, ...] = (),
 ) -> models.RunSummary:
     """저장된 요약본 하나를 만든다."""
     return models.RunSummary(
@@ -26,6 +27,7 @@ def make_source(
         outline_url=f"https://wiki.example.com/doc/summary-{run_id}",
         outline_title=outline_title,
         exported_at="2026-09-20T15:00:00",
+        categories=categories,
     )
 
 
@@ -139,3 +141,29 @@ def test_body_comes_last() -> None:
     assert "## 공통" not in head
     assert "셋 다 같은 말을 한다." in tail
     assert document.endswith("\n")
+
+
+def test_the_categories_of_the_sources_follow_the_date() -> None:
+    """재료들의 카테고리를 합쳐 중복을 빼고 이름 순으로 적는다."""
+    draft = make_draft(
+        sources=[
+            make_source(categories=("인공지능", "경제")),
+            make_source(run_id=2, categories=("경제", "정치")),
+        ]
+    )
+
+    lines = digest_markdown.to_markdown(draft).splitlines()
+
+    assert lines[:4] == [
+        "- 종류: 정리본",
+        "- 작성일자: 2026-09-23",
+        "- 카테고리: 경제, 인공지능, 정치",
+        "- 출처:",
+    ]
+
+
+def test_no_category_line_without_categories() -> None:
+    """재료에 카테고리가 하나도 없으면 줄째 뺀다."""
+    document = digest_markdown.to_markdown(make_draft())
+
+    assert "- 카테고리:" not in document

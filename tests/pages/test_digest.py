@@ -654,6 +654,42 @@ def test_saving_creates_an_outline_document(
     assert len(app.success) == 1
 
 
+def test_saved_body_carries_the_union_of_the_categories(
+    app_db, outline_env, monkeypatch
+) -> None:
+    """저장하는 본문 머리에 재료들의 카테고리를 이름 순으로 적는다."""
+    from notebooklm_st.pages import digest as digest_page
+
+    draft = make_draft()
+    first = dataclasses.replace(draft.sources[0], categories=("경제",))
+    second = dataclasses.replace(first, id=2, categories=("인공지능", "경제"))
+    finished_registry(dataclasses.replace(draft, sources=(first, second)))
+    received: dict[str, object] = {}
+
+    def fake_create(config, title, markdown, **kwargs):
+        """넘어온 본문을 기록한다."""
+        received["markdown"] = markdown
+        return outline.SavedDocument(
+            id="doc-9",
+            title=title,
+            url=f"{BASE_URL}/doc/doc-9",
+        )
+
+    monkeypatch.setattr(digest_page.outline, "create_document", fake_create)
+
+    app = v1.AppTest.from_function(script).run()
+    app.button[0].click().run()
+
+    assert not app.exception
+    lines = str(received["markdown"]).splitlines()
+    assert lines[:4] == [
+        "- 종류: 정리본",
+        "- 작성일자: 2026-09-23",
+        "- 카테고리: 경제, 인공지능",
+        "- 출처:",
+    ]
+
+
 def test_saving_empties_the_slot(app_db, outline_env, monkeypatch) -> None:
     """저장하면 초안이 사라지고 새 정리를 시작할 수 있다."""
     from notebooklm_st import session
