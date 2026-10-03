@@ -498,3 +498,30 @@ def test_a_renamed_category_stays_chosen(app_db, category) -> None:
     assert not app.exception
     assert picker.value == [category.id]
     assert picker.options == ["거시경제"]
+
+
+def test_a_press_after_the_category_was_deleted_adds_nothing(
+    app_db, monkeypatch, category
+) -> None:
+    """그린 뒤 고른 카테고리가 지워지면 눌러도 넣지 않는다.
+
+    다른 탭이 지운 뒤 이 탭이 다시 그려지기 전에 누르면, 직전 그림의
+    버튼이 열려 있어 콜백이 돈다. 지워진 ID 를 러너로 넘기지 않는다.
+    """
+    questions.add_question(app_db, "핵심 주장", "핵심 주장은?")
+    received = record_categories(monkeypatch)
+
+    app = v1.AppTest.from_function(ask_page).run()
+    app.text_input[0].set_value(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ).run()
+    app.multiselect[0].set_value(questions.list_questions(app_db)).run()
+    choose_categories(app, app_db)
+    assert app.button[0].disabled is False
+
+    categories.delete_category(app_db, category.id)
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert received == []
+    assert session.get_registry().list_all() == []

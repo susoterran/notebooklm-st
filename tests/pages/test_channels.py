@@ -1101,6 +1101,31 @@ def test_enqueue_hands_the_chosen_categories(app_db, monkeypatch) -> None:
     assert received == [(category.id,), (category.id,)]
 
 
+def test_a_press_after_the_category_was_deleted_adds_nothing(
+    app_db, monkeypatch
+) -> None:
+    """그린 뒤 고른 카테고리가 지워지면 눌러도 넣지 않는다.
+
+    다른 탭이 지운 뒤 이 탭이 다시 그려지기 전에 누르면, 직전 그림의
+    버튼이 열려 있어 콜백이 돈다. 지워진 ID 를 러너로 넘기지 않는다.
+    """
+    entries = (make_entry(),)
+    received = record_categories(monkeypatch)
+    app = checked(app_db, monkeypatch, *entries)
+    [category] = categories.list_categories(app_db)
+    select_videos(app, entries, [0])
+    app.run()
+    assert app.button(key="channels_enqueue").disabled is False
+
+    categories.delete_category(app_db, category.id)
+    select_videos(app, entries, [0])
+    app.button(key="channels_enqueue").click().run()
+
+    assert not app.exception
+    assert received == []
+    assert session.get_registry().list_all() == []
+
+
 def test_without_categories_the_check_tab_says_so(app_db, monkeypatch) -> None:
     """카테고리가 없으면 안내하고, 넣기 버튼 없이 표만 보인다."""
     registered(app_db)

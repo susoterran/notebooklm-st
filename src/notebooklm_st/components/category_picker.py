@@ -4,11 +4,13 @@
 쓰면 이름이 바뀐 카테고리가 선택지와 같지 않게 된다.
 """
 
+import sqlite3
 from collections.abc import Callable, Sequence
 
 import streamlit as st
 
 from notebooklm_st.core import models
+from notebooklm_st.services import categories
 
 NO_CATEGORIES = (
     "카테고리 관리 화면에서 카테고리를 먼저 등록하세요."
@@ -52,3 +54,22 @@ def render(
         on_change=on_change,
     )
     return chosen
+
+
+def keep_registered(
+    connection: sqlite3.Connection, chosen: Sequence[int]
+) -> list[int]:
+    """고른 ID 중 지금 등록된 것만 고른 순서대로 남긴다.
+
+    넣기 콜백이 누른 순간에 쓴다. 다른 탭이 고른 카테고리를 지운 뒤
+    이 탭이 다시 그려지기 전에 누르면 세션에 지워진 ID 가 남아 있다.
+
+    Args:
+        connection: 열린 커넥션.
+        chosen: 세션에 남은 고른 ID.
+
+    Returns:
+        아직 있는 카테고리의 ID. 모두 지워졌으면 빈 목록.
+    """
+    known = {item.id for item in categories.list_categories(connection)}
+    return [category_id for category_id in chosen if category_id in known]

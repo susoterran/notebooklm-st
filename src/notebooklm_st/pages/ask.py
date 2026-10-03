@@ -109,9 +109,10 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
 
     실행 버튼의 ``on_click`` 콜백이다. 콜백은 재실행 전에 돌므로 URL
     위젯의 키를 바꿔도 예외가 없다. URL·질문·카테고리는 버튼을 그릴
-    때가 아니라 누른 순간의 세션 값을 읽는다. 질문과 카테고리 선택은
-    남겨 다음 영상을 바로 붙여 넣게 한다. 결과 문구는 세션에 적어
-    다음 그림에서 한 번 보인다.
+    때가 아니라 누른 순간의 세션 값을 읽는다. 카테고리는 그사이 다른
+    탭이 지운 것을 빼고, 남은 것이 없으면 넣지 않는다. 질문과
+    카테고리 선택은 남겨 다음 영상을 바로 붙여 넣게 한다. 결과 문구는
+    세션에 적어 다음 그림에서 한 번 보인다.
 
     Args:
         registry: 실행 레지스트리.
@@ -119,7 +120,9 @@ def _enqueue(registry: run_registry.RunRegistry, auto_save: bool) -> None:
     """
     url = st.session_state.get(_URL_KEY, "")
     selected = st.session_state.get(_SELECTED_KEY, [])
-    chosen = st.session_state.get(_CATEGORIES_KEY, [])
+    chosen = category_picker.keep_registered(
+        session.get_connection(), st.session_state.get(_CATEGORIES_KEY, [])
+    )
     video_id = youtube.extract_video_id(url)
     if (
         video_id is None

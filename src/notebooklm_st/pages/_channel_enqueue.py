@@ -13,7 +13,7 @@ import dataclasses
 import streamlit as st
 
 from notebooklm_st import session
-from notebooklm_st.components import queue_notice
+from notebooklm_st.components import category_picker, queue_notice
 from notebooklm_st.core import models, youtube
 from notebooklm_st.pages import _channel_videos
 from notebooklm_st.services import run_registry, runner, store
@@ -96,8 +96,9 @@ def _enqueue_selected(
     """고른 영상을 목록 순서로 대기열에 넣고 표의 선택을 비운다.
 
     넣기 버튼의 ``on_click`` 콜백이다. 표 선택·질문·카테고리는 버튼을
-    그릴 때가 아니라 누른 순간의 세션 값을 읽는다. 결과 문구는
-    세션에 적어 다음 그림에서 한 번 보인다.
+    그릴 때가 아니라 누른 순간의 세션 값을 읽는다. 카테고리는 그사이
+    다른 탭이 지운 것을 빼고, 남은 것이 없으면 넣지 않는다. 결과
+    문구는 세션에 적어 다음 그림에서 한 번 보인다.
 
     Args:
         registry: 실행 레지스트리.
@@ -110,7 +111,9 @@ def _enqueue_selected(
     state = st.session_state.get(table_key) or {}
     rows = state.get("selection", {}).get("rows", [])
     chosen = st.session_state.get(questions_key, [])
-    category_ids = st.session_state.get(categories_key, [])
+    category_ids = category_picker.keep_registered(
+        session.get_connection(), st.session_state.get(categories_key, [])
+    )
     targets = _channel_videos.selected_entries(entries, rows)
     if not targets or not chosen or not category_ids:
         return
