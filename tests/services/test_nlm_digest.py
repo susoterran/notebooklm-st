@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from notebooklm import exceptions
 
-from notebooklm_st.core import digest_title, models
+from notebooklm_st.core import digest_sources, digest_title, models
 from notebooklm_st.services import nlm
 
 
@@ -172,14 +172,14 @@ def test_notebook_title_is_temporary():
 
 
 def test_each_source_is_added_with_its_title_and_text():
-    """재료의 제목과 본문이 그대로 소스가 된다."""
+    """S 번호가 붙은 재료 제목과 본문 그대로가 소스가 된다."""
     calls = []
 
     digest(make_sources("요약 A"), FakeClient(calls))
 
     _, notebook_id, title, content, wait, timeout = calls[1]
     assert notebook_id == "nb-1"
-    assert title == "요약 A"
+    assert title == "S1: 요약 A"
     assert content == "요약 A 의 본문"
     assert wait is True
     assert timeout == nlm.SOURCE_WAIT_TIMEOUT
@@ -206,20 +206,38 @@ def test_the_prompt_asks_for_a_title():
     assert digest_title.DIRECTIVE in asks[0][2]
 
 
-def test_the_prompt_starts_with_the_source_list():
-    """소스 목록이 맨 앞, 정리 지시가 그 뒤, 제목 요구가 끝에 온다."""
+def test_sources_are_numbered_in_the_order_they_are_added():
+    """소스 이름의 S 번호가 넣는 순서대로 1 부터 붙는다."""
+    calls = []
+
+    digest(make_sources("요약 A", "요약 B", "요약 C"), FakeClient(calls))
+
+    titles = [call[2] for call in calls if call[0] == "add_text"]
+    assert titles == ["S1: 요약 A", "S2: 요약 B", "S3: 요약 C"]
+
+
+def test_the_prompt_starts_with_the_source_rule():
+    """S 번호 규칙이 맨 앞, 정리 지시가 그 뒤, 제목 요구가 끝에 온다."""
     calls = []
 
     digest(make_sources("요약 A", "요약 B"), FakeClient(calls))
 
     prompt = next(call for call in calls if call[0] == "ask")[2]
-    assert prompt.startswith("[소스 목록]\n")
-    assert prompt.splitlines()[2:4] == ["- S1: 요약 A", "- S2: 요약 B"]
-    assert (
-        prompt.index("- S2: 요약 B")
-        < prompt.index(INSTRUCTION)
-        < prompt.index(digest_title.DIRECTIVE)
+    assert prompt.startswith(
+        f"[소스 목록]\n{digest_sources.RULE}\n\n{INSTRUCTION}"
     )
+    assert prompt.index(INSTRUCTION) < prompt.index(digest_title.DIRECTIVE)
+
+
+def test_the_prompt_carries_no_source_titles():
+    """제목은 소스 이름에만 있고 질의 길이를 늘리지 않는다."""
+    calls = []
+
+    digest(make_sources("요약 A", "요약 B"), FakeClient(calls))
+
+    prompt = next(call for call in calls if call[0] == "ask")[2]
+    assert "요약 A" not in prompt
+    assert "요약 B" not in prompt
 
 
 def test_the_topic_comes_from_the_title_line():

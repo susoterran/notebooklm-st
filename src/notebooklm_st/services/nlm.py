@@ -236,10 +236,11 @@ async def run_digest_pipeline(
     ``run_pipeline`` 과 대칭이다 — 임시 노트북을 만들어 쓰고 반드시
     지운다. 다른 점은 소스가 여럿이고 질문이 하나라는 것뿐이다.
 
-    지시 앞에는 넣은 순서대로 S 번호를 매긴 소스 목록이 붙고
-    (→ ``core.digest_sources``), 뒤에는 제목 요구가 함께 실려 나간다
-    (→ ``core.digest_title``). 돌아온 답변에서 그 줄을 떼어 주제로
-    돌려준다. 질의를 두 번 던지지 않는다.
+    소스 이름 앞에는 넣은 순서대로 ``S1: `` 같은 번호가 붙고, 지시
+    앞에는 그 번호만 쓰라는 규칙이 붙는다(→ ``core.digest_sources``).
+    지시 뒤에는 제목 요구가 함께 실려 나가고(→ ``core.digest_title``)
+    돌아온 답변에서 그 줄을 떼어 주제로 돌려준다. 질의를 두 번 던지지
+    않는다.
 
     Args:
         sources: 노트북에 넣을 글들. 상한은 호출자가 지킨다
@@ -272,17 +273,13 @@ async def run_digest_pipeline(
                 )
                 await client.sources.add_text(
                     notebook.id,
-                    source.title,
+                    digest_sources.source_title(index, source.title),
                     source.text,
                     wait=True,
                     wait_timeout=SOURCE_WAIT_TIMEOUT,
                 )
             on_progress("정리 중")
-            prompt = digest_title.wrap(
-                digest_sources.prepend(
-                    instruction, [source.title for source in sources]
-                )
-            )
+            prompt = digest_title.wrap(digest_sources.prepend(instruction))
             result = await client.chat.ask(notebook.id, prompt)
         finally:
             # run_pipeline 과 같은 이유로 여기서 on_progress 를 부르지
