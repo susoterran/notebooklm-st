@@ -38,6 +38,13 @@ CHANNEL_LABEL = "채널"
 UPLOAD_DATE_LABEL = "업로드 일자"
 """메타데이터 리스트에서 업로드 일자 줄의 라벨. 읽는 쪽은 채널과 같다."""
 
+CATEGORY_SEPARATOR = ","
+"""카테고리 줄에서 이름을 가르는 글자.
+
+``category_names`` 가 이 글자를 이름에 쓰지 못하게 막고, 같은 글자로
+줄을 다시 나눈다.
+"""
+
 
 def to_markdown(
     summary: models.RunSummary,
