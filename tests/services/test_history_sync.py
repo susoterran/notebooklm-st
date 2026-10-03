@@ -920,3 +920,29 @@ def test_apply_counts_only_the_categories_it_added(connection) -> None:
     assert run_history_sync.list_exported(connection)[0].categories == (
         DOC_CATEGORIES
     )
+
+
+def test_apply_registers_a_known_name_deleted_meanwhile(connection) -> None:
+    """미리보기 때 있던 이름이 적용 전에 지워져도 다시 등록해 잇는다.
+
+    다른 탭이 이력에서 쓰지 않는 카테고리를 지운 경우다. 결과의 새
+    카테고리 수에는 이 적용이 다시 등록한 이름이 든다.
+    """
+    save_exported(connection, "doc-1")
+    economy = categories.add_category(connection, "경제")
+    categories.add_category(connection, "인공지능")
+    plan = history_sync.plan(
+        run_history_sync.list_exported(connection),
+        [make_document("doc-1", CATEGORY_BODY)],
+        known_names(connection),
+    )
+    assert plan.new_categories == ()
+    categories.delete_category(connection, economy.id)
+
+    result = history_sync.apply(connection, plan)
+
+    assert result.categories_added == 1
+    assert result.recategorized == 1
+    assert run_history_sync.list_exported(connection)[0].categories == (
+        DOC_CATEGORIES
+    )

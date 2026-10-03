@@ -148,11 +148,19 @@ def _new_categories(
     known: Collection[str],
 ) -> tuple[str, ...]:
     """생성·카테고리 갱신 대상의 이름 중 로컬에 없는 것을 모은다."""
-    names = itertools.chain(
+    names = _referenced_names(creates, category_updates)
+    return category_names.ordered(name for name in names if name not in known)
+
+
+def _referenced_names(
+    creates: Sequence[sync_models.SyncCreate],
+    category_updates: Sequence[sync_models.SyncCategoryUpdate],
+) -> Iterator[str]:
+    """생성·카테고리 갱신 대상이 가리키는 이름을 모두 낸다."""
+    return itertools.chain(
         (name for create in creates for name in create.categories),
         (name for change in category_updates for name in change.categories),
     )
-    return category_names.ordered(name for name in names if name not in known)
 
 
 def _merge(
@@ -186,7 +194,7 @@ class SyncResult:
     """카테고리를 바꾼 행 수."""
     categories_added: int = 0
     """새로 등록한 카테고리 수. 다른 탭이 먼저 등록했으면 계획보다
-    작다."""
+    작고, 미리보기 때 있던 이름을 다른 탭이 지웠으면 계획보다 크다."""
 
 
 def apply(
@@ -194,8 +202,10 @@ def apply(
 ) -> SyncResult:
     """계획을 DB 에 쓴다. 등록·삭제·삽입·갱신을 커밋 하나로 묶는다.
 
-    새 카테고리를 먼저 등록한다. 삽입과 카테고리 교체가 이름으로
-    잇기 때문이다.
+    카테고리를 먼저 등록한다. 삽입과 카테고리 교체가 이름으로 잇기
+    때문이다. 계획의 새 이름만이 아니라 생성·카테고리 갱신 대상이
+    가리키는 이름을 모두 넘긴다. 미리보기 때 있던 이름을 그사이 다른
+    탭이 지웠어도 다시 등록해 잇는다. 이미 있는 이름은 건너뛴다.
 
     어느 것이든 실패하면 전부 되돌리고 다시 던진다. 커넥션은 앱
     전체가 함께 쓰므로 반쪽만 걸린 채 나가면 다른 곳의 commit 이
@@ -218,7 +228,10 @@ def apply(
     """
     try:
         categories_added = categories.ensure(
-            connection, sync_plan.new_categories
+            connection,
+            category_names.ordered(
+                _referenced_names(sync_plan.creates, sync_plan.category_updates)
+            ),
         )
         deleted = run_history_sync.delete_runs(
             connection,
