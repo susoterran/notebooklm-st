@@ -18,6 +18,7 @@ from streamlit.testing import v1
 from notebooklm_st import session
 from notebooklm_st.core import models, youtube
 from notebooklm_st.services import (
+    categories,
     channel_feed,
     channel_lookup,
     channels,
@@ -929,3 +930,67 @@ def test_video_table_returns_the_picked_entries(app_db) -> None:
     assert "고른 영상: aaaaaaaaaaa,bbbbbbbbbbb" in [
         item.value for item in app.markdown
     ]
+
+
+def test_registering_saves_the_default_categories(app_db, fake_sources) -> None:
+    """등록 탭에서 고른 기본 카테고리가 채널과 함께 저장된다."""
+    economy = categories.add_category(app_db, "경제")
+    categories.add_category(app_db, "정치")
+
+    app = v1.AppTest.from_function(script)
+    app.run()
+    text_input_by(app, "채널 URL").set_value(HANDLE_URL).run()
+    app.multiselect(key="channels_new_categories").set_value([economy.id]).run()
+    button_by(app, "등록").click().run()
+
+    assert not app.exception
+    [channel] = channels.list_channels(app_db)
+    assert channels.default_category_ids(app_db, channel.id) == (economy.id,)
+
+
+def test_without_categories_there_is_no_default_picker(app_db) -> None:
+    """카테고리가 없으면 기본 카테고리 선택을 그리지 않는다."""
+    registered(app_db)
+
+    app = v1.AppTest.from_function(script).run()
+
+    assert not app.exception
+    assert all(item.label != "기본 카테고리" for item in app.multiselect)
+
+
+def test_the_default_categories_start_from_the_saved_ones(app_db) -> None:
+    """목록 탭의 기본 카테고리는 저장된 값으로 시작한다."""
+    economy = categories.add_category(app_db, "경제")
+    channel = registered(app_db)
+    channels.set_default_categories(app_db, channel.id, [economy.id])
+
+    app = v1.AppTest.from_function(script).run()
+
+    picker = app.multiselect(key=f"channels_default_categories_{channel.id}")
+    assert picker.label == "기본 카테고리"
+    assert picker.value == [economy.id]
+
+
+def test_default_categories_survive_quick_changes(app_db) -> None:
+    """목록 탭에서 연달아 바꿔도 조작 하나 버려지지 않고 저장된다.
+
+    key 없는 위젯에 DB 값을 초기값으로 주면 DB 에 적는 순간 위젯
+    ID 가 바뀌어, 바로 다음 조작이 옛 위젯으로 가서 버려진다.
+    """
+    economy = categories.add_category(app_db, "경제")
+    politics = categories.add_category(app_db, "정치")
+    channel = registered(app_db)
+    key = f"channels_default_categories_{channel.id}"
+
+    app = v1.AppTest.from_function(script).run()
+    app.multiselect(key=key).set_value([economy.id]).run()
+    app.multiselect(key=key).set_value([economy.id, politics.id]).run()
+
+    assert channels.default_category_ids(app_db, channel.id) == (
+        economy.id,
+        politics.id,
+    )
+    app.multiselect(key=key).set_value([]).run()
+
+    assert not app.exception
+    assert channels.default_category_ids(app_db, channel.id) == ()
