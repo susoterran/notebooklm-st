@@ -43,6 +43,8 @@ class FeedEntry:
     title: str
     published: datetime.datetime
     """타임존이 붙은 시각. 피드가 UTC 로 준다."""
+    is_short: bool = False
+    """Shorts 인지. 모르면 거짓이다(→ ``services.channel_feed``)."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

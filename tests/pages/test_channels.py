@@ -62,12 +62,18 @@ def text_input_by(app, label):
     return next(item for item in app.text_input if item.label == label)
 
 
-def make_entry(video_id="TbkUKCm3CHQ", published="2026-09-25T01:00:00+00:00"):
+def make_entry(
+    video_id="TbkUKCm3CHQ",
+    published="2026-09-25T01:00:00+00:00",
+    title="새 영상",
+    is_short=False,
+):
     """피드 항목 하나를 만든다."""
     return models.FeedEntry(
         video_id=video_id,
-        title="새 영상",
+        title=title,
         published=datetime.datetime.fromisoformat(published),
+        is_short=is_short,
     )
 
 
@@ -359,6 +365,40 @@ def test_checking_lists_new_videos(app_db, monkeypatch) -> None:
     assert not app.exception
     assert [item.value for item in app.subheader] == ["Fireship"]
     assert list(app.dataframe[0].value["title"]) == ["새 영상"]
+
+
+SHORTS = (
+    make_entry("sssssssss01", "2026-09-27T01:00:00+00:00", "숏츠 1", True),
+    make_entry("sssssssss02", "2026-09-26T12:00:00+00:00", "숏츠 2", True),
+)
+"""신규 Shorts 둘. 일반 영상보다 늦게 올라와 표의 맨 위를 노린다."""
+
+
+def test_shorts_are_left_out_with_a_count(app_db, monkeypatch) -> None:
+    """Shorts 는 표에서 빠지고, 뺀 건수를 표 위에 알린다."""
+    app = checked(app_db, monkeypatch, *SHORTS, make_entry())
+
+    assert not app.exception
+    assert list(app.dataframe[0].value["title"]) == ["새 영상"]
+    assert any("숏츠 2건" in item.value for item in app.caption)
+
+
+def test_only_shorts_means_no_new_videos(app_db, monkeypatch) -> None:
+    """신규가 모두 Shorts 면 새 영상이 없다고 하고 뺀 건수를 알린다."""
+    app = checked(app_db, monkeypatch, *SHORTS)
+
+    assert not app.exception
+    assert len(app.dataframe) == 0
+    assert any("새 영상이 없습니다" in item.value for item in app.info)
+    assert any("숏츠 2건" in item.value for item in app.caption)
+
+
+def test_no_shorts_means_no_shorts_note(app_db, monkeypatch) -> None:
+    """뺀 Shorts 가 없으면 알림도 없다."""
+    app = checked(app_db, monkeypatch, make_entry())
+
+    assert not app.exception
+    assert all("숏츠" not in item.value for item in app.caption)
 
 
 def test_an_already_summarized_video_is_not_listed(app_db, monkeypatch) -> None:

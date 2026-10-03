@@ -15,11 +15,13 @@ FEED_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <entry>
     <yt:videoId>TbkUKCm3CHQ</yt:videoId>
     <title>첫 영상</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=TbkUKCm3CHQ"/>
     <published>2026-09-21T17:52:29+00:00</published>
   </entry>
   <entry>
     <yt:videoId>LoLYw--s-5w</yt:videoId>
     <title>둘째 영상</title>
+    <link rel="alternate" href="https://www.youtube.com/shorts/LoLYw--s-5w"/>
     <published>2026-09-17T20:33:55+00:00</published>
   </entry>
 </feed>
@@ -49,6 +51,46 @@ def test_entries_come_back_with_id_title_and_time():
     assert result.entries[0].published == datetime.datetime(
         2026, 9, 21, 17, 52, 29, tzinfo=datetime.UTC
     )
+
+
+def test_the_link_tells_shorts_from_regular_videos():
+    """링크가 ``/shorts/`` 면 Shorts, ``/watch`` 면 일반 영상이다."""
+    result = channel_feed.fetch(CHANNEL_ID, getter=responder())
+
+    assert [item.is_short for item in result.entries] == [False, True]
+
+
+def test_an_entry_without_a_link_is_not_short():
+    """링크가 없으면 Shorts 로 보지 않는다.
+
+    YouTube 가 표기를 바꿔도 영상이 목록에서 몰래 사라지지 않게 한다.
+    """
+    shorts_link = (
+        '<link rel="alternate"'
+        ' href="https://www.youtube.com/shorts/LoLYw--s-5w"/>'
+    )
+    bare = FEED_XML.replace(shorts_link, "")
+    assert bare != FEED_XML
+
+    result = channel_feed.fetch(CHANNEL_ID, getter=responder(text=bare))
+
+    assert [item.video_id for item in result.entries] == [
+        "TbkUKCm3CHQ",
+        "LoLYw--s-5w",
+    ]
+    assert result.entries[1].is_short is False
+
+
+def test_a_malformed_link_is_not_short():
+    """해석할 수 없는 링크는 Shorts 가 아니라고 보고 항목은 살린다."""
+    broken = FEED_XML.replace(
+        "https://www.youtube.com/shorts/LoLYw--s-5w", "http://[shorts"
+    )
+
+    result = channel_feed.fetch(CHANNEL_ID, getter=responder(text=broken))
+
+    assert result.error is None
+    assert [item.is_short for item in result.entries] == [False, False]
 
 
 def test_the_channel_id_goes_into_the_query():

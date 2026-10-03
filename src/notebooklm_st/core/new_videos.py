@@ -43,6 +43,25 @@ def select(
     return tuple(picked)
 
 
+def drop_shorts(
+    entries: Sequence[models.FeedEntry],
+) -> tuple[tuple[models.FeedEntry, ...], int]:
+    """Shorts 를 빼고 몇 건을 뺐는지 함께 돌려준다.
+
+    Shorts 는 요약할 만큼 길지 않다. 건수를 돌려주는 까닭은 화면이
+    뺀 사실을 알리게 하려는 것이다 — 말없이 빼면 피드가 덜 준 것과
+    구분되지 않는다.
+
+    Args:
+        entries: 고를 항목들. 보통 ``select`` 가 돌려준 신규다.
+
+    Returns:
+        Shorts 가 아닌 항목들(받은 순서 그대로)과 뺀 Shorts 의 건수.
+    """
+    kept = tuple(item for item in entries if not item.is_short)
+    return kept, len(entries) - len(kept)
+
+
 def _start_of_day(
     baseline: str, tz: datetime.tzinfo | None
 ) -> datetime.datetime:

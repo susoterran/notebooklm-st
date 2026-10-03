@@ -50,6 +50,8 @@ class _Checked:
     title: str
     entries: tuple[models.FeedEntry, ...]
     error: str | None
+    shorts: int = 0
+    """``entries`` 에서 뺀 신규 Shorts 의 건수."""
 
 
 def render(
@@ -116,7 +118,7 @@ def _check(
     target: models.Channel,
     baseline: datetime.date,
 ) -> _Checked:
-    """피드를 읽어 신규를 고른다.
+    """피드를 읽어 신규를 고르고 Shorts 를 뺀다.
 
     방금 고른 기준일을 쓴다. ``target.baseline`` 은 이번 실행에서
     읽어 온 값이라 아직 옛 날짜다.
@@ -134,12 +136,10 @@ def _check(
         feed = channel_feed.fetch(target.channel_id)
     if feed.error is not None:
         return _Checked(target.id, target.title, (), feed.error)
-    return _Checked(
-        target.id,
-        target.title,
-        new_videos.select(feed.entries, baseline.isoformat(), known),
-        None,
+    videos, shorts = new_videos.drop_shorts(
+        new_videos.select(feed.entries, baseline.isoformat(), known)
     )
+    return _Checked(target.id, target.title, videos, None, shorts)
 
 
 def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
@@ -165,6 +165,7 @@ def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
         return
     if not found.entries:
         st.info("새 영상이 없습니다.")
+        _render_shorts_note(found.shorts)
         return
     registry = session.get_registry()
     auto_save = False
@@ -174,6 +175,7 @@ def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
         )
         queue_notice.render(registry)
     st.subheader(found.title)
+    _render_shorts_note(found.shorts)
     key = _channel_videos.widget_key(
         found.entries, _channel_enqueue.generation()
     )
@@ -188,3 +190,15 @@ def _render_found(connection: sqlite3.Connection, found: _Checked) -> None:
             chosen,
             auto_save,
         )
+
+
+def _render_shorts_note(count: int) -> None:
+    """뺀 Shorts 의 건수를 알린다. 뺀 것이 없으면 그리지 않는다.
+
+    말없이 빼면 표가 짧은 이유를 피드 한도(최신 15건)와 가릴 수 없다.
+
+    Args:
+        count: 뺀 신규 Shorts 의 건수.
+    """
+    if count:
+        st.caption(f"숏츠 {count}건은 목록에서 뺐습니다.")
