@@ -69,12 +69,14 @@ Outline 문서이고, 로컬 값은 표를 그리려고 들고 있는 사본이�
 ### 2.2 값은 Outline 문서 머리 블록에 남아 있다
 
 `core/markdown_export._metadata_block` 은 문서 첫머리에 이 리스트를
-쓴다. 값이 없는 줄은 통째로 빠진다.
+쓴다. 값이 없는 줄은 통째로 빠진다. 카테고리가 없으면 카테고리 줄도
+빠진다(`2026-10-03-categories-design.md`).
 
 ```markdown
 - 제목: …
 - 채널: …
 - 업로드 일자: 2026-09-20
+- 카테고리: …
 - 영상 URL: https://www.youtube.com/watch?v=…
 ```
 
@@ -120,9 +122,12 @@ ID 의 행이 지워지고 새 미저장 실행이 그 ID 를 받을 수 있다(
 
 ### 2.7 재료 표의 key 는 실행 ID 로만 만든다
 
-`pages/_digest_materials.widget_key` 는 실행 ID 를 순서대로 이은 문자열
-에서 key 를 만든다. 메타데이터가 바뀌어도 ID 와 순서는 그대로이므로,
-동기화로 두 값이 채워져도 **고른 재료가 비워지지 않는다.**
+`pages/_digest_materials.widget_key` 는 표에 오른 목록 — 카테고리·채널
+필터로 거른 목록 — 의 실행 ID 를 순서대로 이은 문자열에서 key 를
+만든다. 필터를 켜지 않았으면 메타데이터가 바뀌어도 ID 와 순서는
+그대로이므로, 동기화로 두 값이 채워져도 **고른 재료가 비워지지
+않는다.** 필터를 켠 채 동기화가 채널·카테고리를 바꾸면 거른 목록이
+달라져 key 도 바뀔 수 있다(`2026-10-03-categories-design.md`).
 
 ---
 
@@ -142,7 +147,7 @@ ID 의 행이 지워지고 새 미저장 실행이 그 ID 를 받을 수 있다(
 | `RunSummary` 에 싣는 모양 | **`metadata: VideoMetadata \| None`** | 행이 없으면 `None`. "행 없음" 과 "값 빔" 의 구분이 조회 뒤에도 남는다 |
 | 업로드일 형식 | **`YYYY-MM-DD` 로 읽히는 값만 받는다** | 우리가 쓴 형식이다. 다른 모양은 손상으로 보고 그 칸을 읽지 못한 것으로 친다 |
 | 라벨 문자열 | **`markdown_export` 의 상수를 쓰는 쪽과 읽는 쪽이 함께 쓴다** | `SOURCE_URL_LABEL` 과 같다. 한쪽만 바뀌면 모든 문서가 조용히 빈칸이 된다 |
-| 표의 열 | **문서 제목 · 채널 · 업로드일 · 시각 · Outline** | 고르는 기준이 제목 다음에 온다. 시각은 요약한 때라 뒤로 민다 |
+| 표의 열 | **문서 제목 · 카테고리 · 채널 · 업로드일 · 시각 · Outline** | 고르는 기준이 제목 다음에 온다. 시각은 요약한 때라 뒤로 민다. 카테고리 칸은 `2026-10-03-categories-design.md` 가 둔다 |
 | 스키마 | **바꾸지 않는다** | `run_metadata` 가 이미 있다. DB 파일을 지울 일이 없다 |
 
 ### 3.1 기각한 안
@@ -170,24 +175,29 @@ ID 의 행이 지워지고 새 미저장 실행이 그 ID 를 받을 수 있다(
 ## 4. 구조
 
 ```
-요약 실행 끝 → runs + answers + run_metadata          (그대로)
+요약 실행 끝 → runs + answers + run_metadata + run_categories   (그대로)
         ↓
 이력 화면 "Outline 에 저장"
-  to_markdown() → 문서 머리에 채널·업로드 일자 줄     (그대로)
-  mark_exported() → 링크 기록 + answers 삭제          (run_metadata 는 남김)
+  to_markdown() → 문서 머리에 채널·업로드 일자·카테고리 줄       (그대로)
+  mark_exported() → 링크 기록 + answers 삭제    (run_metadata·run_categories 는 남김)
         ↓
 이력 화면 "Outline 과 동기화"
   list_documents() → ListedDocument(markdown 포함)    (그대로)
-  plan(list_exported(), documents)
-     ├ creates  : 새 행 + 문서에서 읽은 메타데이터
-     ├ updates  : 기존 행 중 문서 값과 다른 것        (신규)
-     ├ deletes  / skips                               (그대로)
-  apply() → 삭제 · 삽입 · 갱신을 커밋 하나로
+  plan(list_exported(), documents, 알려진 카테고리)
+     ├ creates           : 새 행 + 문서에서 읽은 메타데이터·카테고리
+     ├ updates           : 기존 행 중 문서 값과 다른 것        (신규)
+     ├ category_updates  : 기존 행 중 카테고리 이름 집합이 다른 것
+     ├ new_categories    : 로컬에 없는 카테고리 이름
+     ├ deletes  / skips                                        (그대로)
+  apply() → 새 카테고리 등록 · 삭제 · 삽입 · 갱신 · 카테고리 교체를 커밋 하나로
         ↓
 정리본 화면
-  list_exported() → RunSummary.metadata               (LEFT JOIN)
-  재료 표: 문서 제목 · 채널 · 업로드일 · 시각 · Outline
+  list_exported() → RunSummary.metadata·categories    (LEFT JOIN · 서브쿼리)
+  재료 표: 카테고리·채널 필터 → 문서 제목 · 카테고리 · 채널 · 업로드일 · 시각 · Outline
 ```
+
+카테고리 쪽(`run_categories`·`category_updates`·`new_categories`·필터·
+카테고리 칸)은 `2026-10-03-categories-design.md` 가 다룬다.
 
 모듈 경계는 그대로다. `core/outline_import` 가 문서를 읽고,
 `services/history_sync` 가 계획을 세우고 적용하며,
@@ -242,7 +252,7 @@ def find_metadata(markdown: str) -> models.VideoMetadata | None
 
 ---
 
-## 7. `core/models.py`
+## 7. `core/models.py`·`core/sync_models.py`
 
 - `VideoMetadata` 를 `RunSummary` **위로** 옮긴다(2.6). 내용은 그대로다.
 - `RunSummary` 에 필드를 더한다. 기본값이 있어 기존 생성 코드가
@@ -254,10 +264,13 @@ def find_metadata(markdown: str) -> models.VideoMetadata | None
   ```
 
   클래스 독스트링의 "로컬에는 링크만 남아 있다" 는 "로컬에는 링크와
-  영상 메타데이터가 남아 있다" 로 고친다.
+  영상 메타데이터, 카테고리만 남아 있다" 로 고친다.
 
-- `SyncCreate` 에 `metadata: VideoMetadata | None = None` 을 더한다.
-  문서에서 읽은 값이다.
+- 아래 동기화 값 객체는 `core/sync_models.py` 에 있다
+  (`2026-10-03-categories-design.md` 5.3). `core/models.py` 를 import 해
+  `models.RunSummary`·`models.VideoMetadata` 로 쓴다.
+- `SyncCreate` 에 `metadata: models.VideoMetadata | None = None` 을
+  더한다. 문서에서 읽은 값이다.
 - 새 값 객체를 더한다. `SyncPlan` 이 주석에 쓰므로 **`SyncPlan` 위에**
   둔다(2.6 과 같은 이유).
 
@@ -266,14 +279,15 @@ def find_metadata(markdown: str) -> models.VideoMetadata | None
   class SyncUpdate:
       """동기화가 메타데이터를 갱신할 기존 행 한 건."""
 
-      run: RunSummary
-      metadata: VideoMetadata
+      run: models.RunSummary
+      metadata: models.VideoMetadata
       """쓸 값. 문서가 준 칸과 로컬에 남길 칸을 합친 결과다."""
   ```
 
 - `SyncPlan` 에 `updates: tuple[SyncUpdate, ...] = ()` 를 더하고,
-  `is_empty` 는 `updates` 까지 비었을 때만 참이다. 독스트링의 "지울 것도
-  만들 것도 없다" 는 "지울 것도 만들 것도 갱신할 것도 없다" 가 된다.
+  `is_empty` 는 `updates` 와 `category_updates` 까지 비었을 때만 참이다.
+  독스트링의 "지울 것도 만들 것도 없다" 는 "지울 것도 만들 것도 갱신할
+  것도 없다" 가 된다.
 
 ---
 
@@ -281,12 +295,18 @@ def find_metadata(markdown: str) -> models.VideoMetadata | None
 
 ### 8.1 `services/run_history.py`
 
-**`SUMMARY_SELECT`** 에 조인과 세 컬럼을 더한다.
+**`SUMMARY_SELECT`** 에 조인과 세 컬럼을 더한다. 카테고리 이름 칸
+(`category_names`)은 `2026-10-03-categories-design.md` 7.3 의 상관
+서브쿼리다.
 
 ```sql
 SELECT r.id, r.url, r.video_id, r.title, r.created_at,
        r.outline_id, r.outline_url, r.outline_title, r.exported_at,
        m.run_id AS metadata_run_id, m.channel, m.upload_date,
+       (SELECT group_concat(c.name, ',')
+          FROM run_categories AS rc
+          JOIN categories AS c ON c.id = rc.category_id
+         WHERE rc.run_id = r.id) AS category_names,
        COUNT(a.id) AS answer_count
 FROM runs AS r
 LEFT JOIN answers AS a ON a.run_id = r.id
@@ -299,8 +319,9 @@ LEFT JOIN run_metadata AS m ON m.run_id = r.id
 
 **`row_to_summary`** 는 `metadata_run_id` 가 `NULL` 이면
 `metadata=None`, 아니면 `VideoMetadata(channel, upload_date)` 를 싣는다.
-`list_runs` 와 `run_history_sync.list_exported` 가 이 둘을 함께 쓰므로
-두 목록 모두 메타데이터를 싣고 온다.
+카테고리는 `category_names` 를 쉼표로 나눠 파이썬에서 이름 순으로
+`categories` 에 싣는다. `list_runs` 와 `run_history_sync.list_exported`
+가 이 둘을 함께 쓰므로 두 목록 모두 메타데이터와 카테고리를 싣고 온다.
 
 **`mark_exported`** 는 `run_metadata` DELETE 를 뺀다. UPDATE 와
 `answers` DELETE 를 커밋 하나로 묶고 어떤 예외든 롤백해 다시 던지는
@@ -311,9 +332,10 @@ LEFT JOIN run_metadata AS m ON m.run_id = r.id
 ### 8.2 `services/run_history_sync.py`
 
 **`insert_exported`** — `create.metadata` 가 있으면 새 행의 ID 로
-`run_metadata` 행도 넣는다. 없으면 넣지 않는다. 같은 문서의 행이 이미
-있어 `None` 을 돌려주는 경우에는 아무것도 쓰지 않는다. 커밋하지 않는
-규칙은 그대로다.
+`run_metadata` 행도 넣는다. 없으면 넣지 않는다. `create.categories` 의
+카테고리는 이름으로 잇는다(`2026-10-03-categories-design.md` 7.4).
+같은 문서의 행이 이미 있어 `None` 을 돌려주는 경우에는 아무것도 쓰지
+않는다. 커밋하지 않는 규칙은 그대로다.
 
 **`write_metadata`** 를 더한다.
 
@@ -361,6 +383,9 @@ def write_metadata(
 | 합친 값이 로컬과 같음 | 손대지 않음 |
 | 합친 값이 로컬과 다름 | **갱신 대상** |
 
+이 표는 메타데이터의 판정이다. 카테고리는 따로 판정한다
+(`2026-10-03-categories-design.md` 7.6).
+
 "합친 값" 은 칸마다 정한다. 문서가 준 칸은 문서 값, 문서가 주지 않은
 칸은 로컬 값이다. 로컬에 행이 없으면 로컬 값은 두 칸 모두 `None` 으로
 본다.
@@ -387,8 +412,10 @@ def write_metadata(
 
 ### 9.2 `apply`
 
-삭제 → 삽입 → 갱신 순으로 쓰고 **커밋 하나**로 묶는다. 어느 쪽이든
-실패하면 전부 되돌리고 다시 던지는 구조는 그대로다.
+새 카테고리 등록 → 삭제 → 삽입 → 메타데이터 갱신 → 카테고리 교체 순으로
+쓰고 **커밋 하나**로 묶는다. 카테고리 등록과 교체는
+`2026-10-03-categories-design.md` 7.6 이 다룬다. 어느 쪽이든 실패하면
+전부 되돌리고 다시 던지는 구조는 그대로다.
 
 갱신은 `write_metadata(connection, update.run.id,
 update.run.outline_id or "", update.metadata)` 로 쓴다. `False` 면
@@ -410,37 +437,46 @@ update.run.outline_id or "", update.metadata)` 로 쓴다. `False` 면
     Outline 컬렉션의 문서 목록과 저장된 이력을 맞춥니다.
     Outline 에 없는 이력은 지우고, 이력에 없는 문서는 새로 만듭니다.
     채널·업로드일은 문서 머리에서 읽어 채웁니다.
+    카테고리는 문서 머리에서 읽어 맞추고, 모르는 이름은 새로 등록합니다.
     [ 확인 ]
 
     ── 확인 후 ──
-    지울 이력 2건 · 만들 문서 3건 · 채널·업로드일 갱신 40건 · 건너뛴 문서 1건
+    지울 이력 2건 · 만들 문서 3건 · 채널·업로드일 갱신 40건 · 카테고리 갱신 5건 · 새 카테고리 2개 · 건너뛴 문서 1건
+    **새 카테고리** 경제, 인공지능
     지울 이력      - 제목 · 실행 시각
     만들 문서      - 제목 · 문서 생성 시각 · 영상 URL
     건너뛴 문서    - 제목 · 사유
     [ 적용 ]  [ 취소 ]
 ```
 
-- 설명 문구에 셋째 문장을 더한다.
+- 설명 문구에 셋째 문장을 더한다. 넷째 문장(카테고리)과 개수 한 줄의
+  `카테고리 갱신 R건 · 새 카테고리 C개`, `**새 카테고리**` 줄은
+  `2026-10-03-categories-design.md` 8.5 가 다룬다.
 - 개수 한 줄에 `채널·업로드일 갱신 K건` 을 `만들 문서` 와 `건너뛴 문서`
   사이에 넣는다. 갱신 대상의 **목록은 그리지 않는다**(3).
-- 갱신만 있어도 적용 버튼이 나온다(`is_empty` 가 거짓이다). 셋 다
-  없으면 지금처럼 "이미 맞습니다. 건너뛴 문서 N건." 만 낸다.
-- 결과 문구는 `동기화 완료 · 지움 N건 · 만듦 M건 · 갱신 K건` 이다.
+- 갱신만 있어도 적용 버튼이 나온다(`is_empty` 가 거짓이다). 지울 것·
+  만들 것·갱신할 것·카테고리 갱신 넷 다 없으면 지금처럼 "이미
+  맞습니다. 건너뛴 문서 N건." 만 낸다.
+- 결과 문구는 `동기화 완료 · 지움 N건 · 만듦 M건 · 갱신 K건 · 카테고리
+  갱신 R건 · 새 카테고리 C개` 이다.
 
 ### 10.2 `pages/_digest_materials.py`
 
-- 표의 열은 **문서 제목 · 채널 · 업로드일 · 시각 · Outline** 순서다.
-  `_row` 가 `run.metadata` 에서 두 값을 꺼내고, 없으면 빈칸이다.
+- 표의 열은 **문서 제목 · 카테고리 · 채널 · 업로드일 · 시각 · Outline**
+  순서다. `_row` 가 `run.metadata` 에서 두 값을 꺼내고, 없으면 빈칸이다.
 - 업로드일은 `YYYY-MM-DD` 문자열이라 머리글 정렬이 날짜 순서와 같다.
   날짜 열 형식(`DateColumn`)으로 바꾸지 않는다.
-- `widget_key` 는 바꾸지 않는다(2.7).
-- 표 위 안내 문구는 그대로다.
+- `widget_key` 함수는 바꾸지 않는다(2.7). 다만 카테고리·채널 필터로
+  거른 목록을 받는다.
+- 표 위 안내 문구는 고르는 법·상한·정렬·검색을 말한 뒤 "필터를 바꾸면
+  고른 재료가 풀립니다." 로 끝나고, 그 위에 카테고리·채널 필터 둘이
+  있다(`2026-10-03-categories-design.md` 8.6).
 
 ### 10.3 `pages/history.py`
 
 "Outline 에 저장" 버튼의 도움말만 고친다. 지금 문구 "올린 뒤에는
 로컬에 링크만 남습니다." 는 이 설계 뒤로 사실이 아니다. "올린 뒤에는
-로컬에 링크와 채널·업로드일만 남습니다." 로 바꾼다.
+로컬에 링크와 채널·업로드일·카테고리만 남습니다." 로 바꾼다.
 
 저장된 실행을 그리는 `_render_saved` 는 두 값을 보여 주지 않는다(16).
 
@@ -498,8 +534,8 @@ update.run.outline_id or "", update.metadata)` 로 쓴다. `False` 면
 - `src/notebooklm_st/core/outline_import.py` — `find_metadata`, 머리
   블록 줄 공유
 - `src/notebooklm_st/core/models.py` — `VideoMetadata` 위치,
-  `RunSummary.metadata`, `SyncCreate.metadata`, `SyncUpdate`,
-  `SyncPlan.updates`
+  `RunSummary.metadata`. 동기화 값 객체(`SyncCreate.metadata`,
+  `SyncUpdate`, `SyncPlan.updates`)는 `core/sync_models.py` 에 있다
 - `src/notebooklm_st/services/run_history.py` — `SUMMARY_SELECT`,
   `row_to_summary`
 - `src/notebooklm_st/services/run_links.py` — `mark_exported`
@@ -517,10 +553,10 @@ update.run.outline_id or "", update.metadata)` 로 쓴다. `False` 면
 
 - `README.md` — 사실이 아니게 되는 두 문장과 동기화 설명을 고친다.
   - 처리 순서의 "Outline 에 올리면 로컬에는 링크만 남음" → "링크와
-    채널·업로드일만 남음"
-  - 사용 순서 5 의 "로컬에는 문서명과 링크만 남고" → "문서명·링크·
-    채널·업로드일만 남고", 미리보기 목록에 "채널·업로드일 갱신" 을
-    더하고, "채널·업로드일은 문서 머리에서 읽어 채우며 줄이 없는
+    채널·업로드일·카테고리만 남음"
+  - 사용 순서 6 의 "로컬에는 문서명과 링크만 남고" → "문서명·링크·
+    채널·업로드일·카테고리만 남고", 미리보기 목록에 "채널·업로드일
+    갱신" 을 더하고, "채널·업로드일은 문서 머리에서 읽어 채우며 줄이 없는
     문서는 빈칸으로 둔다" 와 "올린 직후 한 번 동기화해야 기존 재료가
     채워진다" 를 적는다
 - 기존 명세 셋을 이 설계가 끝난 상태로 **통째로 다시 쓴다.**
@@ -573,7 +609,7 @@ update.run.outline_id or "", update.metadata)` 로 쓴다. `False` 면
 
 - 이력 화면에 채널·업로드일을 보여 주기
 - 줄이 없는 문서를 yt-dlp 로 다시 받아 채우기
-- 재료 표를 채널·날짜로 거르기
+- 재료 표를 날짜로 거르기
 - Outline 에서 줄을 지운 것을 로컬에 반영하기(지우지 않는다, 3)
 - 정리본 문서에 채널·업로드일을 적기
 - 동기화 없이 기존 행을 채우는 자동 경로
