@@ -45,6 +45,12 @@ CATEGORY_SEPARATOR = ","
 줄을 다시 나눈다.
 """
 
+CATEGORY_LABEL = "카테고리"
+"""메타데이터 리스트에서 카테고리 줄의 라벨.
+
+``outline_import.find_categories`` 가 같은 줄을 거꾸로 읽는다.
+"""
+
 
 def to_markdown(
     summary: models.RunSummary,
@@ -109,8 +115,30 @@ def _metadata_block(
         lines.append(f"- {CHANNEL_LABEL}: {one_line(metadata.channel)}")
     if metadata is not None and metadata.upload_date:
         lines.append(f"- {UPLOAD_DATE_LABEL}: {metadata.upload_date}")
+    categories = category_line(summary.categories)
+    if categories is not None:
+        lines.append(categories)
     lines.append(f"- {SOURCE_URL_LABEL}: {source_url(summary)}")
     return "\n".join(lines)
+
+
+def category_line(names: Sequence[str]) -> str | None:
+    """카테고리 이름들을 메타데이터 리스트의 한 줄로 만든다.
+
+    정리본도 같은 줄을 쓴다(→ ``digest_markdown``). 이름은 규칙을
+    통과한 값이라 다시 다듬지 않는다(→ ``category_names``).
+
+    Args:
+        names: 적을 이름. 부르는 쪽이 이름 순으로 넘긴다.
+
+    Returns:
+        ``- 카테고리: 경제, 인공지능`` 꼴의 줄. 이름이 없으면
+        ``None`` — 값이 없는 줄은 줄째 뺀다.
+    """
+    if not names:
+        return None
+    joined = f"{CATEGORY_SEPARATOR} ".join(names)
+    return f"- {CATEGORY_LABEL}: {joined}"
 
 
 def source_url(summary: models.RunSummary) -> str:

@@ -6,6 +6,7 @@ from notebooklm_st.core import markdown_export, models
 def make_summary(
     title: str | None = "어떻게 AI는 생각하는가",
     video_id: str = "dQw4w9WgXcQ",
+    categories: tuple[str, ...] = (),
 ) -> models.RunSummary:
     """테스트용 실행 요약을 만든다."""
     return models.RunSummary(
@@ -15,6 +16,7 @@ def make_summary(
         title=title,
         created_at="2026-08-31T14:02:11",
         answer_count=1,
+        categories=categories,
     )
 
 
@@ -259,3 +261,51 @@ def test_to_markdown_keeps_a_raw_url_without_a_video_id() -> None:
     text = export(summary=make_summary(video_id=""))
 
     assert "- 영상 URL: https://youtu.be/dQw4w9WgXcQ" in text
+
+
+def test_category_line_joins_the_names_with_a_comma() -> None:
+    """이름들을 받은 순서대로 쉼표와 공백으로 잇는다."""
+    line = markdown_export.category_line(("경제", "인공지능"))
+
+    assert line == "- 카테고리: 경제, 인공지능"
+
+
+def test_category_line_is_none_without_names() -> None:
+    """이름이 없으면 줄을 만들지 않는다."""
+    assert markdown_export.category_line(()) is None
+
+
+def test_to_markdown_writes_the_categories_before_the_url() -> None:
+    """카테고리 줄은 업로드 일자 줄 다음, 영상 URL 줄 앞이다."""
+    metadata = models.VideoMetadata(
+        channel="안될공학", upload_date="2026-09-15"
+    )
+    summary = make_summary(categories=("경제", "인공지능"))
+
+    lines = export(summary=summary, metadata=metadata).splitlines()
+
+    assert lines[:5] == [
+        "- 제목: 어떻게 AI는 생각하는가",
+        "- 채널: 안될공학",
+        "- 업로드 일자: 2026-09-15",
+        "- 카테고리: 경제, 인공지능",
+        "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    ]
+
+
+def test_to_markdown_writes_categories_without_metadata() -> None:
+    """메타데이터가 없어도 카테고리 줄은 나온다."""
+    summary = make_summary(categories=("경제",))
+
+    lines = export(summary=summary).splitlines()
+
+    assert lines[:3] == [
+        "- 제목: 어떻게 AI는 생각하는가",
+        "- 카테고리: 경제",
+        "- 영상 URL: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    ]
+
+
+def test_to_markdown_omits_the_category_line_without_categories() -> None:
+    """카테고리가 없으면 줄째 뺀다."""
+    assert "- 카테고리:" not in export()

@@ -733,3 +733,33 @@ def test_finished_run_keeps_the_chosen_categories(db_path) -> None:
     finally:
         connection.close()
     assert summary.categories == ("경제",)
+
+
+def test_auto_save_writes_the_category_line(db_path, monkeypatch) -> None:
+    """자동 저장한 문서 머리에 고른 카테고리가 이름 순으로 적힌다."""
+    set_outline_env(monkeypatch)
+    calls = record_create(monkeypatch)
+    connection = store.connect(db_path)
+    try:
+        ids = [
+            categories.add_category(connection, name).id
+            for name in ("인공지능", "경제")
+        ]
+    finally:
+        connection.close()
+    registry = run_registry.RunRegistry()
+
+    started = runner.enqueue(
+        registry,
+        URL,
+        make_questions("핵심 주장은?"),
+        db_path,
+        True,
+        never_blocked,
+        answering(),
+        category_ids=ids,
+    )
+    wait_for(registry, started.run_id)
+
+    [(_, markdown)] = calls
+    assert "- 카테고리: 경제, 인공지능" in markdown.splitlines()

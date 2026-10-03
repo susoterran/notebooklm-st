@@ -162,7 +162,7 @@ def _render_export(
         key=f"history_export_{selected.id}",
         disabled=not title.strip(),
         help="지금 보이는 그대로 올립니다. 올린 뒤에는 로컬에 링크와"
-        " 채널·업로드일만 남습니다.",
+        " 채널·업로드일·카테고리만 남습니다.",
     ):
         _export(connection, config, selected, title.strip(), items, metadata)
 

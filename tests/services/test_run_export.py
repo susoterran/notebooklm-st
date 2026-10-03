@@ -9,6 +9,7 @@ import pytest
 
 from notebooklm_st.core import models
 from notebooklm_st.services import (
+    categories,
     outline,
     run_export,
     run_history,
@@ -279,3 +280,29 @@ def test_save_releases_the_run_after_a_failure(connection, monkeypatch) -> None:
 
     assert document.url == DOC_URL
     assert len(calls) == 1
+
+
+def test_save_writes_the_category_line(connection, monkeypatch) -> None:
+    """이력 화면의 저장도 그 실행의 카테고리를 문서 머리에 적는다.
+
+    이력 화면은 목록(``list_runs``)이 준 요약을 그대로 넘긴다.
+    """
+    calls = record_create(monkeypatch)
+    category = categories.add_category(connection, "경제")
+    run_id = run_history.save_run(
+        connection,
+        models.RunResult(
+            url="https://youtu.be/dQw4w9WgXcQ",
+            video_id="dQw4w9WgXcQ",
+            title="어떤 영상",
+            items=(),
+        ),
+        category_ids=[category.id],
+    )
+    [summary] = run_history.list_runs(connection)
+    assert summary.id == run_id
+
+    run_export.save(connection, CONFIG, summary, "제목", [], None)
+
+    [(_, markdown)] = calls
+    assert "- 카테고리: 경제" in markdown.splitlines()
